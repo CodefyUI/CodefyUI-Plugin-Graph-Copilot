@@ -115,11 +115,15 @@ export function ChatView({
       // Build the user turn
       const userTurn: ChatTurn = { role: 'user', content: userText.trim() };
 
-      // Update conversation: set title if first message, append user turn
+      // Update conversation: set title if first message, append user turn.
+      // Provider/model are stamped per send (not at creation) so history rows
+      // reflect what the conversation actually ran on.
       let conv = { ...conversation };
       if (!conv.title) {
         conv.title = titleFrom(userText.trim());
       }
+      conv.provider = settings.provider;
+      conv.model = settings.models[settings.provider] ?? '';
       conv.messages = [...conv.messages, userTurn];
       conv.updatedAt = Date.now();
       onConversationChange(conv);

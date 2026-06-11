@@ -92,11 +92,14 @@
 /* -------------------------------------------------------------------------- */
 
 .gcp-window {
-  position: absolute;
-  bottom: 60px;
-  right: 0;
+  /* Fixed to the viewport corner rather than anchored above the FAB: the
+     widget stack sits ~190px above the viewport bottom, so an above-FAB
+     panel clips its header off-screen on short windows. */
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
   width: 420px;
-  height: min(600px, 70vh);
+  height: min(600px, calc(100vh - 96px));
   background: var(--gcp-bg);
   border: 1px solid var(--gcp-border);
   border-radius: 12px;

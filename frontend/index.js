@@ -1,4 +1,4 @@
-(function(){"use strict";try{if(typeof document<"u"){var e=document.createElement("style");e.appendChild(document.createTextNode(`.gcp-root{--gcp-bg: #1e1e1e;--gcp-bg-deep: #16191f;--gcp-border: #2a2f3a;--gcp-text: #e5e7eb;--gcp-dim: #9ca3af;--gcp-accent: #06b6d4;--gcp-accent-ink: #0b1220;--gcp-danger: #f87171;position:relative;font-family:inherit;font-size:13px;color:var(--gcp-text);box-sizing:border-box}.gcp-root *,.gcp-root *:before,.gcp-root *:after{box-sizing:inherit}.gcp-root ::-webkit-scrollbar{width:5px;height:5px}.gcp-root ::-webkit-scrollbar-track{background:transparent}.gcp-root ::-webkit-scrollbar-thumb{background:var(--gcp-border);border-radius:3px}.gcp-root ::-webkit-scrollbar-thumb:hover{background:var(--gcp-dim)}.gcp-fab{width:48px;height:48px;border-radius:50%;background:var(--gcp-accent);color:var(--gcp-accent-ink);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px #06b6d44d;transition:filter .12s ease,transform .12s ease;outline:none}.gcp-fab:hover{filter:brightness(1.12);transform:scale(1.04)}.gcp-fab:active{transform:scale(.95)}.gcp-fab:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:3px}.gcp-window{position:absolute;bottom:60px;right:0;width:420px;height:min(600px,70vh);background:var(--gcp-bg);border:1px solid var(--gcp-border);border-radius:12px;display:flex;flex-direction:column;box-shadow:0 8px 32px #0006;overflow:hidden}.gcp-header{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--gcp-border);gap:8px;background:var(--gcp-bg-deep);flex-shrink:0}.gcp-header-title{flex:1;font-weight:600;font-size:13px;color:var(--gcp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gcp-icon-btn{width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--gcp-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s ease,color .12s ease;outline:none;flex-shrink:0}.gcp-icon-btn:hover{background:#ffffff12;color:var(--gcp-text)}.gcp-icon-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:1px}.gcp-icon-btn.active{color:var(--gcp-accent)}.gcp-view{flex:1;overflow:hidden;display:flex;flex-direction:column}.gcp-chat{flex:1;display:flex;flex-direction:column;overflow:hidden}.gcp-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}.gcp-msg-row{display:flex;flex-direction:column}.gcp-msg-row.user{align-items:flex-end}.gcp-msg-row.assistant{align-items:flex-start}.gcp-bubble{max-width:85%;padding:8px 11px;border-radius:10px;line-height:1.5;word-break:break-word;white-space:pre-wrap;font-size:13px}.gcp-msg-row.user .gcp-bubble{background:#06b6d426;border:1px solid rgba(6,182,212,.25);color:var(--gcp-text)}.gcp-msg-row.assistant .gcp-bubble{background:#262b36;border:1px solid var(--gcp-border);color:var(--gcp-text)}.gcp-bubble.error{background:#f871711f;border:1px solid rgba(248,113,113,.3);color:var(--gcp-text)}.gcp-bubble pre{background:var(--gcp-bg-deep);border:1px solid var(--gcp-border);border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;font-family:Cascadia Code,JetBrains Mono,Fira Code,monospace;margin:6px 0 0;white-space:pre}.gcp-bubble code{font-family:Cascadia Code,JetBrains Mono,Fira Code,monospace;font-size:12px}.gcp-caret{display:inline-block;width:2px;height:1em;background:var(--gcp-accent);margin-left:2px;vertical-align:text-bottom;animation:gcp-blink .9s step-end infinite}@keyframes gcp-blink{0%,to{opacity:1}50%{opacity:0}}.gcp-ops-chip{margin-top:5px;display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;background:#06b6d41a;border:1px solid rgba(6,182,212,.2);color:var(--gcp-accent);font-size:11px;line-height:1.4}.gcp-retry-btn{margin-top:6px;padding:4px 10px;border-radius:8px;border:1px solid var(--gcp-danger);background:transparent;color:var(--gcp-danger);font-size:12px;cursor:pointer;transition:background .12s ease;align-self:flex-end}.gcp-retry-btn:hover{background:#f871711a}.gcp-retry-btn:focus-visible{outline:2px solid var(--gcp-danger);outline-offset:1px}.gcp-input-area{position:relative;padding:10px 12px;border-top:1px solid var(--gcp-border);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;background:var(--gcp-bg-deep)}.gcp-textarea{flex:1;resize:none;background:var(--gcp-bg);border:1px solid var(--gcp-border);border-radius:8px;color:var(--gcp-text);font-family:inherit;font-size:13px;padding:7px 10px;outline:none;line-height:1.5;min-height:36px;max-height:110px;overflow-y:auto;transition:border-color .12s ease}.gcp-textarea:focus{border-color:var(--gcp-accent)}.gcp-textarea:disabled{opacity:.5;cursor:not-allowed}.gcp-send-btn{width:34px;height:34px;border-radius:8px;border:none;background:var(--gcp-accent);color:var(--gcp-accent-ink);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:filter .12s ease,transform .12s ease;outline:none}.gcp-send-btn:hover:not(:disabled){filter:brightness(1.1)}.gcp-send-btn:active:not(:disabled){transform:scale(.95)}.gcp-send-btn:disabled{opacity:.4;cursor:not-allowed}.gcp-send-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-stop-btn{width:34px;height:34px;border-radius:8px;border:1px solid var(--gcp-danger);background:transparent;color:var(--gcp-danger);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .12s ease;outline:none}.gcp-stop-btn:hover{background:#f871711a}.gcp-stop-btn:focus-visible{outline:2px solid var(--gcp-danger);outline-offset:2px}.gcp-not-ready-overlay{position:absolute;top:0;right:0;bottom:0;left:0;background:#16191fd9;display:flex;align-items:center;justify-content:center;gap:10px;border-radius:0 0 12px 12px;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}.gcp-not-ready-label{font-size:12px;color:var(--gcp-dim)}.gcp-cta-btn{padding:6px 14px;border-radius:8px;border:1px solid var(--gcp-accent);background:transparent;color:var(--gcp-accent);font-size:12px;cursor:pointer;transition:background .12s ease;outline:none;white-space:nowrap}.gcp-cta-btn:hover{background:#06b6d41a}.gcp-cta-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-history{flex:1;display:flex;flex-direction:column;overflow:hidden}.gcp-history-top{padding:10px 12px;border-bottom:1px solid var(--gcp-border);flex-shrink:0}.gcp-new-btn{width:100%;padding:7px 12px;border-radius:8px;border:1px solid var(--gcp-accent);background:#06b6d414;color:var(--gcp-accent);font-size:13px;font-family:inherit;cursor:pointer;transition:background .12s ease;outline:none}.gcp-new-btn:hover{background:#06b6d426}.gcp-new-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-history-list{flex:1;overflow-y:auto;padding:6px 0}.gcp-history-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;transition:background .12s ease;border-left:2px solid transparent}.gcp-history-item:hover{background:#ffffff0a}.gcp-history-item.active{border-left-color:var(--gcp-accent);background:#06b6d40f}.gcp-history-info{flex:1;min-width:0}.gcp-history-title{font-size:13px;color:var(--gcp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gcp-history-meta{font-size:11px;color:var(--gcp-dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gcp-history-delete{width:24px;height:24px;border-radius:6px;border:none;background:transparent;color:var(--gcp-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;transition:color .12s ease,background .12s ease;outline:none;opacity:0}.gcp-history-item:hover .gcp-history-delete{opacity:1}.gcp-history-delete:hover{color:var(--gcp-danger);background:#f871711a}.gcp-history-delete.confirm{color:var(--gcp-danger);opacity:1}.gcp-history-delete:focus-visible{outline:2px solid var(--gcp-danger);outline-offset:1px;opacity:1}.gcp-history-empty{padding:32px 16px;text-align:center;color:var(--gcp-dim);font-size:13px}.gcp-settings{flex:1;overflow-y:auto;padding:14px 14px 18px;display:flex;flex-direction:column;gap:16px}.gcp-field{display:flex;flex-direction:column;gap:5px}.gcp-label{font-size:11px;font-weight:600;color:var(--gcp-dim);text-transform:uppercase;letter-spacing:.05em}.gcp-select{width:100%;padding:7px 28px 7px 10px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-text);font-size:13px;font-family:inherit;outline:none;cursor:pointer;transition:border-color .12s ease;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%239ca3af' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}.gcp-select:focus{border-color:var(--gcp-accent)}.gcp-input{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-text);font-size:13px;font-family:inherit;outline:none;transition:border-color .12s ease}.gcp-input:focus{border-color:var(--gcp-accent)}.gcp-model-row{display:flex;gap:6px}.gcp-model-row .gcp-input{flex:1}.gcp-load-btn{padding:7px 12px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-dim);font-size:12px;font-family:inherit;cursor:pointer;white-space:nowrap;transition:border-color .12s ease,color .12s ease;outline:none;flex-shrink:0}.gcp-load-btn:hover:not(:disabled){border-color:var(--gcp-accent);color:var(--gcp-accent)}.gcp-load-btn:disabled{opacity:.5;cursor:not-allowed}.gcp-load-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-key-row{display:flex;gap:6px}.gcp-key-row .gcp-input{flex:1;font-family:monospace}.gcp-show-btn{padding:7px 10px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-dim);font-size:11px;font-family:inherit;cursor:pointer;transition:border-color .12s ease,color .12s ease;outline:none;flex-shrink:0}.gcp-show-btn:hover{border-color:var(--gcp-accent);color:var(--gcp-accent)}.gcp-show-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-codex-section{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg-deep)}.gcp-codex-status{font-size:12px;color:var(--gcp-dim)}.gcp-codex-status.signed-in{color:var(--gcp-accent)}.gcp-codex-status.pending{color:#fbbf24}.gcp-codex-btns{display:flex;gap:8px}.gcp-codex-btn{padding:6px 14px;border-radius:8px;border:1px solid var(--gcp-accent);background:transparent;color:var(--gcp-accent);font-size:12px;font-family:inherit;cursor:pointer;transition:background .12s ease;outline:none}.gcp-codex-btn:hover{background:#06b6d41a}.gcp-codex-btn.danger{border-color:var(--gcp-danger);color:var(--gcp-danger)}.gcp-codex-btn.danger:hover{background:#f871711a}.gcp-codex-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-codex-btn:disabled{opacity:.5;cursor:not-allowed}.gcp-field-hint{font-size:11px;color:var(--gcp-dim);margin-top:2px}.gcp-field-hint.error{color:var(--gcp-danger)}.gcp-footnote{font-size:11px;color:var(--gcp-dim);line-height:1.5;padding-top:4px;border-top:1px solid var(--gcp-border)}`)),document.head.appendChild(e)}}catch(o){console.error("vite-plugin-css-injected-by-js",o)}})();
+(function(){"use strict";try{if(typeof document<"u"){var e=document.createElement("style");e.appendChild(document.createTextNode(`.gcp-root{--gcp-bg: #1e1e1e;--gcp-bg-deep: #16191f;--gcp-border: #2a2f3a;--gcp-text: #e5e7eb;--gcp-dim: #9ca3af;--gcp-accent: #06b6d4;--gcp-accent-ink: #0b1220;--gcp-danger: #f87171;position:relative;font-family:inherit;font-size:13px;color:var(--gcp-text);box-sizing:border-box}.gcp-root *,.gcp-root *:before,.gcp-root *:after{box-sizing:inherit}.gcp-root ::-webkit-scrollbar{width:5px;height:5px}.gcp-root ::-webkit-scrollbar-track{background:transparent}.gcp-root ::-webkit-scrollbar-thumb{background:var(--gcp-border);border-radius:3px}.gcp-root ::-webkit-scrollbar-thumb:hover{background:var(--gcp-dim)}.gcp-fab{width:48px;height:48px;border-radius:50%;background:var(--gcp-accent);color:var(--gcp-accent-ink);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px #06b6d44d;transition:filter .12s ease,transform .12s ease;outline:none}.gcp-fab:hover{filter:brightness(1.12);transform:scale(1.04)}.gcp-fab:active{transform:scale(.95)}.gcp-fab:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:3px}.gcp-window{position:fixed;bottom:16px;right:16px;width:420px;height:min(600px,calc(100vh - 96px));background:var(--gcp-bg);border:1px solid var(--gcp-border);border-radius:12px;display:flex;flex-direction:column;box-shadow:0 8px 32px #0006;overflow:hidden}.gcp-header{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--gcp-border);gap:8px;background:var(--gcp-bg-deep);flex-shrink:0}.gcp-header-title{flex:1;font-weight:600;font-size:13px;color:var(--gcp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gcp-icon-btn{width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--gcp-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s ease,color .12s ease;outline:none;flex-shrink:0}.gcp-icon-btn:hover{background:#ffffff12;color:var(--gcp-text)}.gcp-icon-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:1px}.gcp-icon-btn.active{color:var(--gcp-accent)}.gcp-view{flex:1;overflow:hidden;display:flex;flex-direction:column}.gcp-chat{flex:1;display:flex;flex-direction:column;overflow:hidden}.gcp-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}.gcp-msg-row{display:flex;flex-direction:column}.gcp-msg-row.user{align-items:flex-end}.gcp-msg-row.assistant{align-items:flex-start}.gcp-bubble{max-width:85%;padding:8px 11px;border-radius:10px;line-height:1.5;word-break:break-word;white-space:pre-wrap;font-size:13px}.gcp-msg-row.user .gcp-bubble{background:#06b6d426;border:1px solid rgba(6,182,212,.25);color:var(--gcp-text)}.gcp-msg-row.assistant .gcp-bubble{background:#262b36;border:1px solid var(--gcp-border);color:var(--gcp-text)}.gcp-bubble.error{background:#f871711f;border:1px solid rgba(248,113,113,.3);color:var(--gcp-text)}.gcp-bubble pre{background:var(--gcp-bg-deep);border:1px solid var(--gcp-border);border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;font-family:Cascadia Code,JetBrains Mono,Fira Code,monospace;margin:6px 0 0;white-space:pre}.gcp-bubble code{font-family:Cascadia Code,JetBrains Mono,Fira Code,monospace;font-size:12px}.gcp-caret{display:inline-block;width:2px;height:1em;background:var(--gcp-accent);margin-left:2px;vertical-align:text-bottom;animation:gcp-blink .9s step-end infinite}@keyframes gcp-blink{0%,to{opacity:1}50%{opacity:0}}.gcp-ops-chip{margin-top:5px;display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;background:#06b6d41a;border:1px solid rgba(6,182,212,.2);color:var(--gcp-accent);font-size:11px;line-height:1.4}.gcp-retry-btn{margin-top:6px;padding:4px 10px;border-radius:8px;border:1px solid var(--gcp-danger);background:transparent;color:var(--gcp-danger);font-size:12px;cursor:pointer;transition:background .12s ease;align-self:flex-end}.gcp-retry-btn:hover{background:#f871711a}.gcp-retry-btn:focus-visible{outline:2px solid var(--gcp-danger);outline-offset:1px}.gcp-input-area{position:relative;padding:10px 12px;border-top:1px solid var(--gcp-border);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;background:var(--gcp-bg-deep)}.gcp-textarea{flex:1;resize:none;background:var(--gcp-bg);border:1px solid var(--gcp-border);border-radius:8px;color:var(--gcp-text);font-family:inherit;font-size:13px;padding:7px 10px;outline:none;line-height:1.5;min-height:36px;max-height:110px;overflow-y:auto;transition:border-color .12s ease}.gcp-textarea:focus{border-color:var(--gcp-accent)}.gcp-textarea:disabled{opacity:.5;cursor:not-allowed}.gcp-send-btn{width:34px;height:34px;border-radius:8px;border:none;background:var(--gcp-accent);color:var(--gcp-accent-ink);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:filter .12s ease,transform .12s ease;outline:none}.gcp-send-btn:hover:not(:disabled){filter:brightness(1.1)}.gcp-send-btn:active:not(:disabled){transform:scale(.95)}.gcp-send-btn:disabled{opacity:.4;cursor:not-allowed}.gcp-send-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-stop-btn{width:34px;height:34px;border-radius:8px;border:1px solid var(--gcp-danger);background:transparent;color:var(--gcp-danger);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .12s ease;outline:none}.gcp-stop-btn:hover{background:#f871711a}.gcp-stop-btn:focus-visible{outline:2px solid var(--gcp-danger);outline-offset:2px}.gcp-not-ready-overlay{position:absolute;top:0;right:0;bottom:0;left:0;background:#16191fd9;display:flex;align-items:center;justify-content:center;gap:10px;border-radius:0 0 12px 12px;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}.gcp-not-ready-label{font-size:12px;color:var(--gcp-dim)}.gcp-cta-btn{padding:6px 14px;border-radius:8px;border:1px solid var(--gcp-accent);background:transparent;color:var(--gcp-accent);font-size:12px;cursor:pointer;transition:background .12s ease;outline:none;white-space:nowrap}.gcp-cta-btn:hover{background:#06b6d41a}.gcp-cta-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-history{flex:1;display:flex;flex-direction:column;overflow:hidden}.gcp-history-top{padding:10px 12px;border-bottom:1px solid var(--gcp-border);flex-shrink:0}.gcp-new-btn{width:100%;padding:7px 12px;border-radius:8px;border:1px solid var(--gcp-accent);background:#06b6d414;color:var(--gcp-accent);font-size:13px;font-family:inherit;cursor:pointer;transition:background .12s ease;outline:none}.gcp-new-btn:hover{background:#06b6d426}.gcp-new-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-history-list{flex:1;overflow-y:auto;padding:6px 0}.gcp-history-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;transition:background .12s ease;border-left:2px solid transparent}.gcp-history-item:hover{background:#ffffff0a}.gcp-history-item.active{border-left-color:var(--gcp-accent);background:#06b6d40f}.gcp-history-info{flex:1;min-width:0}.gcp-history-title{font-size:13px;color:var(--gcp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gcp-history-meta{font-size:11px;color:var(--gcp-dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gcp-history-delete{width:24px;height:24px;border-radius:6px;border:none;background:transparent;color:var(--gcp-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;transition:color .12s ease,background .12s ease;outline:none;opacity:0}.gcp-history-item:hover .gcp-history-delete{opacity:1}.gcp-history-delete:hover{color:var(--gcp-danger);background:#f871711a}.gcp-history-delete.confirm{color:var(--gcp-danger);opacity:1}.gcp-history-delete:focus-visible{outline:2px solid var(--gcp-danger);outline-offset:1px;opacity:1}.gcp-history-empty{padding:32px 16px;text-align:center;color:var(--gcp-dim);font-size:13px}.gcp-settings{flex:1;overflow-y:auto;padding:14px 14px 18px;display:flex;flex-direction:column;gap:16px}.gcp-field{display:flex;flex-direction:column;gap:5px}.gcp-label{font-size:11px;font-weight:600;color:var(--gcp-dim);text-transform:uppercase;letter-spacing:.05em}.gcp-select{width:100%;padding:7px 28px 7px 10px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-text);font-size:13px;font-family:inherit;outline:none;cursor:pointer;transition:border-color .12s ease;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%239ca3af' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}.gcp-select:focus{border-color:var(--gcp-accent)}.gcp-input{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-text);font-size:13px;font-family:inherit;outline:none;transition:border-color .12s ease}.gcp-input:focus{border-color:var(--gcp-accent)}.gcp-model-row{display:flex;gap:6px}.gcp-model-row .gcp-input{flex:1}.gcp-load-btn{padding:7px 12px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-dim);font-size:12px;font-family:inherit;cursor:pointer;white-space:nowrap;transition:border-color .12s ease,color .12s ease;outline:none;flex-shrink:0}.gcp-load-btn:hover:not(:disabled){border-color:var(--gcp-accent);color:var(--gcp-accent)}.gcp-load-btn:disabled{opacity:.5;cursor:not-allowed}.gcp-load-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-key-row{display:flex;gap:6px}.gcp-key-row .gcp-input{flex:1;font-family:monospace}.gcp-show-btn{padding:7px 10px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg);color:var(--gcp-dim);font-size:11px;font-family:inherit;cursor:pointer;transition:border-color .12s ease,color .12s ease;outline:none;flex-shrink:0}.gcp-show-btn:hover{border-color:var(--gcp-accent);color:var(--gcp-accent)}.gcp-show-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-codex-section{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:8px;border:1px solid var(--gcp-border);background:var(--gcp-bg-deep)}.gcp-codex-status{font-size:12px;color:var(--gcp-dim)}.gcp-codex-status.signed-in{color:var(--gcp-accent)}.gcp-codex-status.pending{color:#fbbf24}.gcp-codex-btns{display:flex;gap:8px}.gcp-codex-btn{padding:6px 14px;border-radius:8px;border:1px solid var(--gcp-accent);background:transparent;color:var(--gcp-accent);font-size:12px;font-family:inherit;cursor:pointer;transition:background .12s ease;outline:none}.gcp-codex-btn:hover{background:#06b6d41a}.gcp-codex-btn.danger{border-color:var(--gcp-danger);color:var(--gcp-danger)}.gcp-codex-btn.danger:hover{background:#f871711a}.gcp-codex-btn:focus-visible{outline:2px solid var(--gcp-accent);outline-offset:2px}.gcp-codex-btn:disabled{opacity:.5;cursor:not-allowed}.gcp-field-hint{font-size:11px;color:var(--gcp-dim);margin-top:2px}.gcp-field-hint.error{color:var(--gcp-danger)}.gcp-footnote{font-size:11px;color:var(--gcp-dim);line-height:1.5;padding-top:4px;border-top:1px solid var(--gcp-border)}`)),document.head.appendChild(e)}}catch(o){console.error("vite-plugin-css-injected-by-js",o)}})();
 function sh(d) {
   return d && d.__esModule && Object.prototype.hasOwnProperty.call(d, "default") ? d.default : d;
 }
@@ -82,12 +82,12 @@ function rh() {
   function Bl() {
   }
   Bl.prototype = tl.prototype;
-  function il(r, _, H) {
+  function cl(r, _, H) {
     this.props = r, this.context = _, this.refs = yl, this.updater = H || ml;
   }
-  var ql = il.prototype = new Bl();
-  ql.constructor = il, W(ql, tl.prototype), ql.isPureReactComponent = !0;
-  var cl = Array.isArray;
+  var ql = cl.prototype = new Bl();
+  ql.constructor = cl, W(ql, tl.prototype), ql.isPureReactComponent = !0;
+  var fl = Array.isArray;
   function Dl() {
   }
   var w = { H: null, A: null, T: null, S: null }, Gl = Object.prototype.hasOwnProperty;
@@ -107,7 +107,7 @@ function rh() {
   function El(r) {
     return typeof r == "object" && r !== null && r.$$typeof === d;
   }
-  function sl(r) {
+  function ul(r) {
     var _ = { "=": "=0", ":": "=2" };
     return "$" + r.replace(/[=:]/g, function(H) {
       return _[H];
@@ -115,7 +115,7 @@ function rh() {
   }
   var Nt = /\/+/g;
   function Il(r, _) {
-    return typeof r == "object" && r !== null && r.key != null ? sl("" + r.key) : _.toString(36);
+    return typeof r == "object" && r !== null && r.key != null ? ul("" + r.key) : _.toString(36);
   }
   function Xl(r) {
     switch (r.status) {
@@ -169,7 +169,7 @@ function rh() {
           }
       }
     if (ol)
-      return K = K(r), ol = Y === "" ? "." + Il(r, 0) : Y, cl(K) ? (H = "", ol != null && (H = ol.replace(Nt, "$&/") + "/"), b(K, _, H, "", function(Oe) {
+      return K = K(r), ol = Y === "" ? "." + Il(r, 0) : Y, fl(K) ? (H = "", ol != null && (H = ol.replace(Nt, "$&/") + "/"), b(K, _, H, "", function(Oe) {
         return Oe;
       })) : K != null && (El(K) && (K = C(
         K,
@@ -180,7 +180,7 @@ function rh() {
       )), _.push(K)), 1;
     ol = 0;
     var kl = Y === "" ? "." : Y + ":";
-    if (cl(r))
+    if (fl(r))
       for (var Nl = 0; Nl < r.length; Nl++)
         Y = r[Nl], k = kl + Il(Y, Nl), ol += b(
           Y,
@@ -279,7 +279,7 @@ function rh() {
       return r;
     }
   };
-  return L.Activity = j, L.Children = bl, L.Component = tl, L.Fragment = z, L.Profiler = M, L.PureComponent = il, L.StrictMode = s, L.Suspense = O, L.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = w, L.__COMPILER_RUNTIME = {
+  return L.Activity = j, L.Children = bl, L.Component = tl, L.Fragment = z, L.Profiler = M, L.PureComponent = cl, L.StrictMode = s, L.Suspense = O, L.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = w, L.__COMPILER_RUNTIME = {
     __proto__: null,
     c: function(r) {
       return w.H.useMemoCache(r);
@@ -470,7 +470,7 @@ function yh() {
         return U.now() - q;
       };
     }
-    var O = [], T = [], x = 1, j = null, V = 3, pl = !1, ml = !1, W = !1, yl = !1, tl = typeof setTimeout == "function" ? setTimeout : null, Bl = typeof clearTimeout == "function" ? clearTimeout : null, il = typeof setImmediate < "u" ? setImmediate : null;
+    var O = [], T = [], x = 1, j = null, V = 3, pl = !1, ml = !1, W = !1, yl = !1, tl = typeof setTimeout == "function" ? setTimeout : null, Bl = typeof clearTimeout == "function" ? clearTimeout : null, cl = typeof setImmediate < "u" ? setImmediate : null;
     function ql(b) {
       for (var R = z(T); R !== null; ) {
         if (R.callback === null) s(T);
@@ -480,13 +480,13 @@ function yh() {
         R = z(T);
       }
     }
-    function cl(b) {
+    function fl(b) {
       if (W = !1, ql(b), !ml)
         if (z(O) !== null)
-          ml = !0, Dl || (Dl = !0, sl());
+          ml = !0, Dl || (Dl = !0, ul());
         else {
           var R = z(T);
-          R !== null && Xl(cl, R.startTime - b);
+          R !== null && Xl(fl, R.startTime - b);
         }
     }
     var Dl = !1, w = -1, Gl = 5, $l = -1;
@@ -523,7 +523,7 @@ function yh() {
                 else {
                   var r = z(T);
                   r !== null && Xl(
-                    cl,
+                    fl,
                     r.startTime - b
                   ), R = !1;
                 }
@@ -535,22 +535,22 @@ function yh() {
             R = void 0;
           }
         } finally {
-          R ? sl() : Dl = !1;
+          R ? ul() : Dl = !1;
         }
       }
     }
-    var sl;
-    if (typeof il == "function")
-      sl = function() {
-        il(El);
+    var ul;
+    if (typeof cl == "function")
+      ul = function() {
+        cl(El);
       };
     else if (typeof MessageChannel < "u") {
       var Nt = new MessageChannel(), Il = Nt.port2;
-      Nt.port1.onmessage = El, sl = function() {
+      Nt.port1.onmessage = El, ul = function() {
         Il.postMessage(null);
       };
     } else
-      sl = function() {
+      ul = function() {
         tl(El, 0);
       };
     function Xl(b, R) {
@@ -628,7 +628,7 @@ function yh() {
         startTime: Z,
         expirationTime: bl,
         sortIndex: -1
-      }, Z > hl ? (b.sortIndex = Z, S(T, b), z(O) === null && b === z(T) && (W ? (Bl(w), w = -1) : W = !0, Xl(cl, Z - hl))) : (b.sortIndex = bl, S(O, b), ml || pl || (ml = !0, Dl || (Dl = !0, sl()))), b;
+      }, Z > hl ? (b.sortIndex = Z, S(T, b), z(O) === null && b === z(T) && (W ? (Bl(w), w = -1) : W = !0, Xl(fl, Z - hl))) : (b.sortIndex = bl, S(O, b), ml || pl || (ml = !0, Dl || (Dl = !0, ul()))), b;
     }, d.unstable_shouldYield = C, d.unstable_wrapCallback = function(b) {
       var R = V;
       return function() {
@@ -926,8 +926,8 @@ function Sh() {
     }
     return null;
   }
-  var j = Object.assign, V = Symbol.for("react.element"), pl = Symbol.for("react.transitional.element"), ml = Symbol.for("react.portal"), W = Symbol.for("react.fragment"), yl = Symbol.for("react.strict_mode"), tl = Symbol.for("react.profiler"), Bl = Symbol.for("react.consumer"), il = Symbol.for("react.context"), ql = Symbol.for("react.forward_ref"), cl = Symbol.for("react.suspense"), Dl = Symbol.for("react.suspense_list"), w = Symbol.for("react.memo"), Gl = Symbol.for("react.lazy"), $l = Symbol.for("react.activity"), C = Symbol.for("react.memo_cache_sentinel"), El = Symbol.iterator;
-  function sl(l) {
+  var j = Object.assign, V = Symbol.for("react.element"), pl = Symbol.for("react.transitional.element"), ml = Symbol.for("react.portal"), W = Symbol.for("react.fragment"), yl = Symbol.for("react.strict_mode"), tl = Symbol.for("react.profiler"), Bl = Symbol.for("react.consumer"), cl = Symbol.for("react.context"), ql = Symbol.for("react.forward_ref"), fl = Symbol.for("react.suspense"), Dl = Symbol.for("react.suspense_list"), w = Symbol.for("react.memo"), Gl = Symbol.for("react.lazy"), $l = Symbol.for("react.activity"), C = Symbol.for("react.memo_cache_sentinel"), El = Symbol.iterator;
+  function ul(l) {
     return l === null || typeof l != "object" ? null : (l = El && l[El] || l["@@iterator"], typeof l == "function" ? l : null);
   }
   var Nt = Symbol.for("react.client.reference");
@@ -943,7 +943,7 @@ function Sh() {
         return "Profiler";
       case yl:
         return "StrictMode";
-      case cl:
+      case fl:
         return "Suspense";
       case Dl:
         return "SuspenseList";
@@ -954,7 +954,7 @@ function Sh() {
       switch (l.$$typeof) {
         case ml:
           return "Portal";
-        case il:
+        case cl:
           return l.displayName || "Context";
         case Bl:
           return (l._context.displayName || "Context") + ".Consumer";
@@ -2414,14 +2414,14 @@ Error generating stack: ` + e.message + `
           break;
         case tl:
           return l = ot(12, a, t, u | 2), l.elementType = tl, l.lanes = n, l;
-        case cl:
-          return l = ot(13, a, t, u), l.elementType = cl, l.lanes = n, l;
+        case fl:
+          return l = ot(13, a, t, u), l.elementType = fl, l.lanes = n, l;
         case Dl:
           return l = ot(19, a, t, u), l.elementType = Dl, l.lanes = n, l;
         default:
           if (typeof l == "object" && l !== null)
             switch (l.$$typeof) {
-              case il:
+              case cl:
                 i = 10;
                 break l;
               case Bl:
@@ -2734,7 +2734,7 @@ Error generating stack: ` + e.message + `
       });
     };
   }, $m = d.unstable_scheduleCallback, Wm = d.unstable_NormalPriority, jl = {
-    $$typeof: il,
+    $$typeof: cl,
     Consumer: null,
     Provider: null,
     _currentValue: null,
@@ -2970,7 +2970,7 @@ Error generating stack: ` + e.message + `
           case Gl:
             return o = xa(o), A(m, o, y);
         }
-        if (Xl(o) || sl(o))
+        if (Xl(o) || ul(o))
           return o = Ua(
             o,
             m.mode,
@@ -2979,7 +2979,7 @@ Error generating stack: ` + e.message + `
           ), o.return = m, o;
         if (typeof o.then == "function")
           return A(m, Wu(o), y);
-        if (o.$$typeof === il)
+        if (o.$$typeof === cl)
           return A(
             m,
             Ku(m, o),
@@ -3002,7 +3002,7 @@ Error generating stack: ` + e.message + `
           case Gl:
             return y = xa(y), v(m, o, y, E);
         }
-        if (Xl(y) || sl(y))
+        if (Xl(y) || ul(y))
           return X !== null ? null : p(m, o, y, E, null);
         if (typeof y.then == "function")
           return v(
@@ -3011,7 +3011,7 @@ Error generating stack: ` + e.message + `
             Wu(y),
             E
           );
-        if (y.$$typeof === il)
+        if (y.$$typeof === cl)
           return v(
             m,
             o,
@@ -3044,7 +3044,7 @@ Error generating stack: ` + e.message + `
               X
             );
         }
-        if (Xl(E) || sl(E))
+        if (Xl(E) || ul(E))
           return m = m.get(y) || null, p(o, m, E, X, null);
         if (typeof E.then == "function")
           return g(
@@ -3054,7 +3054,7 @@ Error generating stack: ` + e.message + `
             Wu(E),
             X
           );
-        if (E.$$typeof === il)
+        if (E.$$typeof === cl)
           return g(
             m,
             o,
@@ -3067,19 +3067,19 @@ Error generating stack: ` + e.message + `
       return null;
     }
     function B(m, o, y, E) {
-      for (var X = null, ul = null, G = o, $ = o = 0, ll = null; G !== null && $ < y.length; $++) {
+      for (var X = null, nl = null, G = o, $ = o = 0, ll = null; G !== null && $ < y.length; $++) {
         G.index > $ ? (ll = G, G = null) : ll = G.sibling;
-        var nl = v(
+        var il = v(
           m,
           G,
           y[$],
           E
         );
-        if (nl === null) {
+        if (il === null) {
           G === null && (G = ll);
           break;
         }
-        l && G && nl.alternate === null && t(m, G), o = n(nl, o, $), ul === null ? X = nl : ul.sibling = nl, ul = nl, G = ll;
+        l && G && il.alternate === null && t(m, G), o = n(il, o, $), nl === null ? X = il : nl.sibling = il, nl = il, G = ll;
       }
       if ($ === y.length)
         return a(m, G), al && Yt(m, $), X;
@@ -3089,7 +3089,7 @@ Error generating stack: ` + e.message + `
             G,
             o,
             $
-          ), ul === null ? X = G : ul.sibling = G, ul = G);
+          ), nl === null ? X = G : nl.sibling = G, nl = G);
         return al && Yt(m, $), X;
       }
       for (G = e(G); $ < y.length; $++)
@@ -3105,31 +3105,31 @@ Error generating stack: ` + e.message + `
           ll,
           o,
           $
-        ), ul === null ? X = ll : ul.sibling = ll, ul = ll);
+        ), nl === null ? X = ll : nl.sibling = ll, nl = ll);
       return l && G.forEach(function(Ea) {
         return t(m, Ea);
       }), al && Yt(m, $), X;
     }
     function Q(m, o, y, E) {
       if (y == null) throw Error(s(151));
-      for (var X = null, ul = null, G = o, $ = o = 0, ll = null, nl = y.next(); G !== null && !nl.done; $++, nl = y.next()) {
+      for (var X = null, nl = null, G = o, $ = o = 0, ll = null, il = y.next(); G !== null && !il.done; $++, il = y.next()) {
         G.index > $ ? (ll = G, G = null) : ll = G.sibling;
-        var Ea = v(m, G, nl.value, E);
+        var Ea = v(m, G, il.value, E);
         if (Ea === null) {
           G === null && (G = ll);
           break;
         }
-        l && G && Ea.alternate === null && t(m, G), o = n(Ea, o, $), ul === null ? X = Ea : ul.sibling = Ea, ul = Ea, G = ll;
+        l && G && Ea.alternate === null && t(m, G), o = n(Ea, o, $), nl === null ? X = Ea : nl.sibling = Ea, nl = Ea, G = ll;
       }
-      if (nl.done)
+      if (il.done)
         return a(m, G), al && Yt(m, $), X;
       if (G === null) {
-        for (; !nl.done; $++, nl = y.next())
-          nl = A(m, nl.value, E), nl !== null && (o = n(nl, o, $), ul === null ? X = nl : ul.sibling = nl, ul = nl);
+        for (; !il.done; $++, il = y.next())
+          il = A(m, il.value, E), il !== null && (o = n(il, o, $), nl === null ? X = il : nl.sibling = il, nl = il);
         return al && Yt(m, $), X;
       }
-      for (G = e(G); !nl.done; $++, nl = y.next())
-        nl = g(G, m, $, nl.value, E), nl !== null && (l && nl.alternate !== null && G.delete(nl.key === null ? $ : nl.key), o = n(nl, o, $), ul === null ? X = nl : ul.sibling = nl, ul = nl);
+      for (G = e(G); !il.done; $++, il = y.next())
+        il = g(G, m, $, il.value, E), il !== null && (l && il.alternate !== null && G.delete(il.key === null ? $ : il.key), o = n(il, o, $), nl === null ? X = il : nl.sibling = il, nl = il);
       return l && G.forEach(function(fh) {
         return t(m, fh);
       }), al && Yt(m, $), X;
@@ -3214,8 +3214,8 @@ Error generating stack: ` + e.message + `
             y,
             E
           );
-        if (sl(y)) {
-          if (X = sl(y), typeof X != "function") throw Error(s(150));
+        if (ul(y)) {
+          if (X = ul(y), typeof X != "function") throw Error(s(150));
           return y = X.call(y), Q(
             m,
             o,
@@ -3230,7 +3230,7 @@ Error generating stack: ` + e.message + `
             Wu(y),
             E
           );
-        if (y.$$typeof === il)
+        if (y.$$typeof === cl)
           return Sl(
             m,
             o,
@@ -3253,8 +3253,8 @@ Error generating stack: ` + e.message + `
         return se = null, X;
       } catch (G) {
         if (G === fe || G === wu) throw G;
-        var ul = ot(29, G, null, m.mode);
-        return ul.lanes = E, ul.return = m, ul;
+        var nl = ot(29, G, null, m.mode);
+        return nl.lanes = E, nl.return = m, nl;
       } finally {
       }
     };
@@ -3284,7 +3284,7 @@ Error generating stack: ` + e.message + `
   function ca(l, t, a) {
     var e = l.updateQueue;
     if (e === null) return null;
-    if (e = e.shared, (fl & 2) !== 0) {
+    if (e = e.shared, (sl & 2) !== 0) {
       var u = e.pending;
       return u === null ? t.next = t : (t.next = u.next, u.next = t), e.pending = t, t = Qu(l), ms(l, null, a), t;
     }
@@ -3555,7 +3555,7 @@ Error generating stack: ` + e.message + `
   function an(l) {
     if (l !== null && typeof l == "object") {
       if (typeof l.then == "function") return Fe(l);
-      if (l.$$typeof === il) return Kl(l);
+      if (l.$$typeof === cl) return Kl(l);
     }
     throw Error(s(438, String(l)));
   }
@@ -3956,7 +3956,7 @@ Error generating stack: ` + e.message + `
   function to(l) {
     var t = Cl().memoizedState;
     return ay({ ref: t, nextImpl: l }), function() {
-      if ((fl & 2) !== 0) throw Error(s(440));
+      if ((sl & 2) !== 0) throw Error(s(440));
       return t.impl.apply(void 0, arguments);
     };
   }
@@ -4384,7 +4384,7 @@ Error generating stack: ` + e.message + `
     useEffectEvent: function(l) {
       var t = Fl(), a = { impl: l };
       return t.memoizedState = a, function() {
-        if ((fl & 2) !== 0)
+        if ((sl & 2) !== 0)
           throw Error(s(440));
         return a.impl.apply(void 0, arguments);
       };
@@ -7209,9 +7209,9 @@ Error generating stack: ` + e.message + `
     cacheSignal: function() {
       return Kl(jl).controller.signal;
     }
-  }, yy = typeof WeakMap == "function" ? WeakMap : Map, fl = 0, Tl = null, F = null, P = 0, dl = 0, mt = null, da = !1, ve = !1, Ac = !1, Wt = 0, Ml = 0, ra = 0, Qa = 0, _c = 0, yt = 0, ge = 0, cu = null, ut = null, Oc = !1, vn = 0, cd = 0, gn = 1 / 0, Sn = null, ma = null, Yl = 0, ya = null, Se = null, kt = 0, Mc = 0, Dc = null, fd = null, fu = 0, Nc = null;
+  }, yy = typeof WeakMap == "function" ? WeakMap : Map, sl = 0, Tl = null, F = null, P = 0, dl = 0, mt = null, da = !1, ve = !1, Ac = !1, Wt = 0, Ml = 0, ra = 0, Qa = 0, _c = 0, yt = 0, ge = 0, cu = null, ut = null, Oc = !1, vn = 0, cd = 0, gn = 1 / 0, Sn = null, ma = null, Yl = 0, ya = null, Se = null, kt = 0, Mc = 0, Dc = null, fd = null, fu = 0, Nc = null;
   function ht() {
-    return (fl & 2) !== 0 && P !== 0 ? P & -P : b.T !== null ? xc() : zf();
+    return (sl & 2) !== 0 && P !== 0 ? P & -P : b.T !== null ? xc() : zf();
   }
   function sd() {
     if (yt === 0)
@@ -7227,7 +7227,7 @@ Error generating stack: ` + e.message + `
       P,
       yt,
       !1
-    )), Ne(l, a), ((fl & 2) === 0 || l !== Tl) && (l === Tl && ((fl & 2) === 0 && (Qa |= a), Ml === 4 && ha(
+    )), Ne(l, a), ((sl & 2) === 0 || l !== Tl) && (l === Tl && ((sl & 2) === 0 && (Qa |= a), Ml === 4 && ha(
       l,
       P,
       yt,
@@ -7235,7 +7235,7 @@ Error generating stack: ` + e.message + `
     )), Rt(l));
   }
   function od(l, t, a) {
-    if ((fl & 6) !== 0) throw Error(s(327));
+    if ((sl & 6) !== 0) throw Error(s(327));
     var e = !a && (t & 127) === 0 && (t & l.expiredLanes) === 0 || De(l, t), u = e ? gy(l, t) : Cc(l, t, !0), n = e;
     do {
       if (u === 0) {
@@ -7445,7 +7445,7 @@ Error generating stack: ` + e.message + `
     a !== 0 && bf(l, a, t);
   }
   function pn() {
-    return (fl & 6) === 0 ? (su(0), !1) : !0;
+    return (sl & 6) === 0 ? (su(0), !1) : !0;
   }
   function Uc() {
     if (F !== null) {
@@ -7496,8 +7496,8 @@ Error generating stack: ` + e.message + `
     );
   }
   function Cc(l, t, a) {
-    var e = fl;
-    fl |= 2;
+    var e = sl;
+    sl |= 2;
     var u = yd(), n = hd();
     (Tl !== l || P !== t) && (Sn = null, pe(l, t)), t = !1;
     var i = Ml;
@@ -7530,14 +7530,14 @@ Error generating stack: ` + e.message + `
         rd(l, p);
       }
     while (!0);
-    return t && l.shellSuspendCounter++, Gt = ja = null, fl = e, b.H = u, b.A = n, F === null && (Tl = null, P = 0, Gu()), i;
+    return t && l.shellSuspendCounter++, Gt = ja = null, sl = e, b.H = u, b.A = n, F === null && (Tl = null, P = 0, Gu()), i;
   }
   function vy() {
     for (; F !== null; ) vd(F);
   }
   function gy(l, t) {
-    var a = fl;
-    fl |= 2;
+    var a = sl;
+    sl |= 2;
     var e = yd(), u = hd();
     Tl !== l || P !== t ? (Sn = null, gn = it() + 500, pe(l, t)) : ve = De(
       l,
@@ -7608,7 +7608,7 @@ Error generating stack: ` + e.message + `
         rd(l, p);
       }
     while (!0);
-    return Gt = ja = null, b.H = e, b.A = u, fl = a, F !== null ? 0 : (Tl = null, P = 0, Gu(), Ml);
+    return Gt = ja = null, b.H = e, b.A = u, sl = a, F !== null ? 0 : (Tl = null, P = 0, Gu(), Ml);
   }
   function Sy() {
     for (; F !== null && !Qr(); )
@@ -7724,7 +7724,7 @@ Error generating stack: ` + e.message + `
     do
       En();
     while (Yl !== 0);
-    if ((fl & 6) !== 0) throw Error(s(327));
+    if ((sl & 6) !== 0) throw Error(s(327));
     if (t !== null) {
       if (t === l.current) throw Error(s(177));
       if (n = t.lanes | t.childLanes, n |= pi, Fr(
@@ -7737,11 +7737,11 @@ Error generating stack: ` + e.message + `
       ), l === Tl && (F = Tl = null, P = 0), Se = t, ya = l, kt = a, Mc = n, Dc = u, fd = e, (t.subtreeFlags & 10256) !== 0 || (t.flags & 10256) !== 0 ? (l.callbackNode = null, l.callbackPriority = 0, Ey(zu, function() {
         return Ad(), null;
       })) : (l.callbackNode = null, l.callbackPriority = 0), e = (t.flags & 13878) !== 0, (t.subtreeFlags & 13878) !== 0 || e) {
-        e = b.T, b.T = null, u = R.p, R.p = 2, i = fl, fl |= 4;
+        e = b.T, b.T = null, u = R.p, R.p = 2, i = sl, sl |= 4;
         try {
           dy(l, t, a);
         } finally {
-          fl = i, R.p = u, b.T = e;
+          sl = i, R.p = u, b.T = e;
         }
       }
       Yl = 1, bd(), Td(), Ed();
@@ -7755,8 +7755,8 @@ Error generating stack: ` + e.message + `
         a = b.T, b.T = null;
         var e = R.p;
         R.p = 2;
-        var u = fl;
-        fl |= 4;
+        var u = sl;
+        sl |= 4;
         try {
           ld(t, l);
           var n = Lc, i = ns(l.containerInfo), c = n.focusedElem, f = n.selectionRange;
@@ -7803,7 +7803,7 @@ Error generating stack: ` + e.message + `
           }
           Hn = !!Zc, Lc = Zc = null;
         } finally {
-          fl = u, R.p = e, b.T = a;
+          sl = u, R.p = e, b.T = a;
         }
       }
       l.current = t, Yl = 2;
@@ -7817,12 +7817,12 @@ Error generating stack: ` + e.message + `
         a = b.T, b.T = null;
         var e = R.p;
         R.p = 2;
-        var u = fl;
-        fl |= 4;
+        var u = sl;
+        sl |= 4;
         try {
           Wo(l, t.alternate, t);
         } finally {
-          fl = u, R.p = e, b.T = a;
+          sl = u, R.p = e, b.T = a;
         }
       }
       Yl = 3;
@@ -7874,14 +7874,14 @@ Error generating stack: ` + e.message + `
     try {
       R.p = 32 > a ? 32 : a, b.T = null, a = Dc, Dc = null;
       var n = ya, i = kt;
-      if (Yl = 0, Se = ya = null, kt = 0, (fl & 6) !== 0) throw Error(s(331));
-      var c = fl;
-      if (fl |= 4, nd(n.current), ad(
+      if (Yl = 0, Se = ya = null, kt = 0, (sl & 6) !== 0) throw Error(s(331));
+      var c = sl;
+      if (sl |= 4, nd(n.current), ad(
         n,
         n.current,
         i,
         a
-      ), fl = c, su(0, !1), ct && typeof ct.onPostCommitFiberRoot == "function")
+      ), sl = c, su(0, !1), ct && typeof ct.onPostCommitFiberRoot == "function")
         try {
           ct.onPostCommitFiberRoot(Me, n);
         } catch {
@@ -7933,7 +7933,7 @@ Error generating stack: ` + e.message + `
   }
   function py(l, t, a) {
     var e = l.pingCache;
-    e !== null && e.delete(t), l.pingedLanes |= l.suspendedLanes & a, l.warmLanes &= ~a, Tl === l && (P & a) === a && (Ml === 4 || Ml === 3 && (P & 62914560) === P && 300 > it() - vn ? (fl & 2) === 0 && pe(l, 0) : _c |= a, ge === P && (ge = 0)), Rt(l);
+    e !== null && e.delete(t), l.pingedLanes |= l.suspendedLanes & a, l.warmLanes &= ~a, Tl === l && (P & a) === a && (Ml === 4 || Ml === 3 && (P & 62914560) === P && 300 > it() - vn ? (sl & 2) === 0 && pe(l, 0) : _c |= a, ge === P && (ge = 0)), Rt(l);
   }
   function Od(l, t) {
     t === 0 && (t = pf()), l = Na(l, t), l !== null && (Ne(l, t), Rt(l));
@@ -8056,7 +8056,7 @@ Error generating stack: ` + e.message + `
   }
   function Ay() {
     By(function() {
-      (fl & 6) !== 0 ? Kn(
+      (sl & 6) !== 0 ? Kn(
         vf,
         zy
       ) : Md();
@@ -8432,20 +8432,20 @@ Error generating stack: ` + e.message + `
         }
         l: {
           if (v = h ? Ce(h) : window, g = v.nodeName && v.nodeName.toLowerCase(), g === "select" || g === "input" && v.type === "file")
-            var ul = Ff;
+            var nl = Ff;
           else if (Wf(v))
             if (If)
-              ul = Xm;
+              nl = Xm;
             else {
-              ul = Ym;
+              nl = Ym;
               var G = qm;
             }
           else
-            g = v.nodeName, !g || g.toLowerCase() !== "input" || v.type !== "checkbox" && v.type !== "radio" ? h && ti(h.elementType) && (ul = Ff) : ul = Gm;
-          if (ul && (ul = ul(l, h))) {
+            g = v.nodeName, !g || g.toLowerCase() !== "input" || v.type !== "checkbox" && v.type !== "radio" ? h && ti(h.elementType) && (nl = Ff) : nl = Gm;
+          if (nl && (nl = nl(l, h))) {
             kf(
               A,
-              ul,
+              nl,
               a,
               p
             );
@@ -9999,7 +9999,7 @@ Error generating stack: ` + e.message + `
     }
   }
   var hu = {
-    $$typeof: il,
+    $$typeof: cl,
     Provider: null,
     Consumer: null,
     _currentValue: Z,
@@ -10109,7 +10109,7 @@ Error generating stack: ` + e.message + `
                       var f = 1 << 31 - ft(i);
                       c.entanglements[1] |= f, i &= ~f;
                     }
-                    Rt(n), (fl & 6) === 0 && (gn = it() + 500, su(0));
+                    Rt(n), (sl & 6) === 0 && (gn = it() + 500, su(0));
                   }
                 }
                 break;
@@ -10992,14 +10992,14 @@ async function Zh(d) {
         S,
         Xh(z, O),
         {
-          onText(cl) {
-            x += cl, N.onTextDelta(cl);
+          onText(fl) {
+            x += fl, N.onTextDelta(fl);
           },
-          onDone(cl) {
-            j = cl;
+          onDone(fl) {
+            j = fl;
           },
-          onError(cl) {
-            V = cl;
+          onError(fl) {
+            V = fl;
           }
         },
         U
@@ -11013,41 +11013,41 @@ async function Zh(d) {
       }
       const pl = j, ml = pl.message.tool_calls ?? [], W = pl.message.content || x;
       if (pl.stop_reason === "end" || ml.length === 0) {
-        const cl = { role: "assistant", content: W };
-        q.push(cl), N.onTurnsCommitted(q), N.onFinished();
+        const fl = { role: "assistant", content: W };
+        q.push(fl), N.onTurnsCommitted(q), N.onFinished();
         return;
       }
       T++;
       const yl = [], tl = [], Bl = [];
-      for (const cl of ml) {
-        const Dl = Qh(cl, S, N, yl), w = {
+      for (const fl of ml) {
+        const Dl = Qh(fl, S, N, yl), w = {
           role: "tool",
           content: Dl,
-          tool_call_id: cl.id
+          tool_call_id: fl.id
         };
         tl.push(w), Bl.push({
           role: "tool",
           content: Dl,
-          tool_call_id: cl.id
+          tool_call_id: fl.id
         });
       }
-      const il = {
+      const cl = {
         role: "assistant",
         content: W,
         tool_calls: ml
       };
-      yl.length > 0 && (il.opsSummary = yl.join("; ")), q.push(il), q.push(...tl);
+      yl.length > 0 && (cl.opsSummary = yl.join("; ")), q.push(cl), q.push(...tl);
       const ql = {
         role: "assistant",
         content: W,
         tool_calls: ml
       };
       if (O.push(ql), O.push(...Bl), T >= Rr) {
-        const cl = {
+        const fl = {
           role: "assistant",
           content: `(stopped after ${Rr} tool rounds)`
         };
-        q.push(cl), N.onTurnsCommitted(q), N.onFinished();
+        q.push(fl), N.onTurnsCommitted(q), N.onFinished();
         return;
       }
     }
@@ -11121,7 +11121,7 @@ function Jh({
   onConversationChange: M,
   onOpenSettings: N
 }) {
-  const [U, q] = el.useState(""), [O, T] = el.useState(!1), [x, j] = el.useState(""), [V, pl] = el.useState(null), [ml, W] = el.useState(""), yl = el.useRef(null), tl = el.useRef(null), Bl = el.useRef(null), il = Ah(S, z);
+  const [U, q] = el.useState(""), [O, T] = el.useState(!1), [x, j] = el.useState(""), [V, pl] = el.useState(null), [ml, W] = el.useState(""), yl = el.useRef(null), tl = el.useRef(null), Bl = el.useRef(null), cl = Ah(S, z);
   el.useEffect(() => () => {
     var C;
     (C = Bl.current) == null || C.abort();
@@ -11139,20 +11139,20 @@ function Jh({
   el.useEffect(() => {
     ql();
   }, [U, ql]);
-  const cl = el.useCallback(
+  const fl = el.useCallback(
     async (C) => {
-      if (!C.trim() || O || !il) return;
+      if (!C.trim() || O || !cl) return;
       pl(null), W(C), q(""), T(!0), j("");
       const El = { role: "user", content: C.trim() };
-      let sl = { ...s };
-      sl.title || (sl.title = Oh(C.trim())), sl.messages = [...sl.messages, El], sl.updatedAt = Date.now(), M(sl), Dr(d, sl);
+      let ul = { ...s };
+      ul.title || (ul.title = Oh(C.trim())), ul.provider = S.provider, ul.model = S.models[S.provider] ?? "", ul.messages = [...ul.messages, El], ul.updatedAt = Date.now(), M(ul), Dr(d, ul);
       const Nt = new AbortController();
       Bl.current = Nt;
       let Il = "";
       await Zh({
         api: d,
         settings: S,
-        history: sl.messages.slice(0, -1),
+        history: ul.messages.slice(0, -1),
         // exclude the user turn we just added
         userText: C.trim(),
         callbacks: {
@@ -11162,11 +11162,11 @@ function Jh({
           onOpsApplied(Xl, b) {
           },
           onTurnsCommitted(Xl) {
-            j(""), Il = "", sl = {
-              ...sl,
-              messages: [...sl.messages, ...Xl],
+            j(""), Il = "", ul = {
+              ...ul,
+              messages: [...ul.messages, ...Xl],
               updatedAt: Date.now()
-            }, M(sl), Dr(d, sl);
+            }, M(ul), Dr(d, ul);
           },
           onError(Xl) {
             pl(Xl), j(""), Il = "";
@@ -11178,24 +11178,24 @@ function Jh({
         signal: Nt.signal
       });
     },
-    [d, O, s, M, il, S]
+    [d, O, s, M, cl, S]
   ), Dl = (C) => {
-    C.key === "Enter" && !C.shiftKey && (C.preventDefault(), cl(U));
+    C.key === "Enter" && !C.shiftKey && (C.preventDefault(), fl(U));
   }, w = () => {
     var C;
     (C = Bl.current) == null || C.abort();
   }, Gl = () => {
-    cl(ml);
+    fl(ml);
   }, $l = s.messages.filter((C) => C.role !== "tool");
   return /* @__PURE__ */ D.jsxs("div", { className: "gcp-chat", children: [
     /* @__PURE__ */ D.jsxs("div", { className: "gcp-messages", role: "log", "aria-live": "polite", "aria-label": "Conversation", children: [
       $l.map((C, El) => {
-        const sl = !O && El === $l.length - 1 && C.role === "assistant";
+        const ul = !O && El === $l.length - 1 && C.role === "assistant";
         return /* @__PURE__ */ D.jsx(
           Hr,
           {
             turn: C,
-            error: sl && V ? V : null,
+            error: ul && V ? V : null,
             onRetry: Gl,
             retryDisabled: O
           },
@@ -11223,9 +11223,9 @@ function Jh({
           value: U,
           onChange: (C) => q(C.target.value),
           onKeyDown: Dl,
-          disabled: O || !il,
+          disabled: O || !cl,
           "aria-label": "Message input",
-          "aria-disabled": il ? void 0 : "true"
+          "aria-disabled": cl ? void 0 : "true"
         }
       ),
       O ? /* @__PURE__ */ D.jsx(
@@ -11241,14 +11241,14 @@ function Jh({
         "button",
         {
           className: "gcp-send-btn",
-          onClick: () => cl(U),
-          disabled: !U.trim() || !il,
+          onClick: () => fl(U),
+          disabled: !U.trim() || !cl,
           "aria-label": "Send message",
           title: "Send",
           children: /* @__PURE__ */ D.jsx(Vh, {})
         }
       ),
-      !il && !O && /* @__PURE__ */ D.jsxs("div", { className: "gcp-not-ready-overlay", children: [
+      !cl && !O && /* @__PURE__ */ D.jsxs("div", { className: "gcp-not-ready-overlay", children: [
         /* @__PURE__ */ D.jsx("span", { className: "gcp-not-ready-label", children: "Configure a provider in Settings" }),
         /* @__PURE__ */ D.jsx(
           "button",
@@ -11395,14 +11395,14 @@ function Ph({
     }).catch(() => {
     });
   }, []);
-  function il(C) {
+  function cl(C) {
     N({ ...S, ...C });
   }
   function ql(C) {
-    il({ models: { ...S.models, [U]: C } });
+    cl({ models: { ...S.models, [U]: C } });
   }
-  function cl(C, El) {
-    il({ apiKeys: { ...S.apiKeys, [C]: El } });
+  function fl(C, El) {
+    cl({ apiKeys: { ...S.apiKeys, [C]: El } });
   }
   async function Dl() {
     x(!0), V(null);
@@ -11452,7 +11452,7 @@ function Ph({
           id: "gcp-provider-select",
           className: "gcp-select",
           value: U,
-          onChange: (C) => il({ provider: C.target.value }),
+          onChange: (C) => cl({ provider: C.target.value }),
           "aria-label": "Select LLM provider",
           children: Object.keys(xr).map((C) => /* @__PURE__ */ D.jsx("option", { value: C, children: xr[C] }, C))
         }
@@ -11497,7 +11497,7 @@ function Ph({
           Ih,
           {
             value: S.apiKeys[C] ?? "",
-            onBlur: (El) => cl(C, El),
+            onBlur: (El) => fl(C, El),
             placeholder: C === "custom" ? "API key (optional)" : "sk-...",
             "aria-label": C === "openai" ? "OpenAI API key" : C === "anthropic" ? "Anthropic API key" : C === "openrouter" ? "OpenRouter API key" : "Custom API key"
           }
@@ -11513,7 +11513,7 @@ function Ph({
           className: "gcp-input",
           type: "url",
           value: S.customBaseUrl,
-          onChange: (C) => il({ customBaseUrl: C.target.value }),
+          onChange: (C) => cl({ customBaseUrl: C.target.value }),
           placeholder: "http://127.0.0.1:11434/v1",
           "aria-label": "Custom API base URL",
           spellCheck: !1
