@@ -110,6 +110,7 @@ export function SettingsView({
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
 
+  const [codexError, setCodexError] = useState<string | null>(null);
   const [codexPending, setCodexPending] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollStartRef = useRef<number>(0);
@@ -219,7 +220,7 @@ export function SettingsView({
         }
       }, CODEX_POLL_INTERVAL_MS);
     } catch (err) {
-      setModelError(String(err));
+      setCodexError(String(err));
     }
   }
 
@@ -233,7 +234,7 @@ export function SettingsView({
         pollTimerRef.current = null;
       }
     } catch (err) {
-      setModelError(String(err));
+      setCodexError(String(err));
     }
   }
 
@@ -395,6 +396,11 @@ export function SettingsView({
                 </button>
               )}
             </div>
+            {codexError && (
+              <span className="gcp-field-hint error" role="alert">
+                {codexError}
+              </span>
+            )}
           </div>
         </div>
       )}

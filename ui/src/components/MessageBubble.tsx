@@ -7,6 +7,7 @@ interface MessageBubbleProps {
   streamingText?: string;
   error?: string | null;
   onRetry?: () => void;
+  retryDisabled?: boolean;
 }
 
 /**
@@ -37,6 +38,7 @@ export function MessageBubble({
   streamingText,
   error = null,
   onRetry,
+  retryDisabled = false,
 }: MessageBubbleProps) {
   // Tool turns are not rendered as visible bubbles
   if (turn.role === 'tool') return null;
@@ -60,7 +62,7 @@ export function MessageBubble({
 
       {/* Error + retry */}
       {error && (
-        <button className="gcp-retry-btn" onClick={onRetry} aria-label="Retry">
+        <button className="gcp-retry-btn" onClick={onRetry} disabled={retryDisabled} aria-label="Retry">
           Retry
         </button>
       )}

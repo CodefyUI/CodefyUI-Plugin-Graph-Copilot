@@ -77,6 +77,9 @@ export function ChatView({
 
   const ready = providerReady(settings, codexLoggedIn);
 
+  // Cancel any in-flight stream when the panel unmounts
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+
   // Auto-scroll to bottom whenever messages change or streaming text changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -204,6 +207,7 @@ export function ChatView({
               turn={turn}
               error={isLastAssistant && lastError ? lastError : null}
               onRetry={handleRetry}
+              retryDisabled={busy}
             />
           );
         })}
