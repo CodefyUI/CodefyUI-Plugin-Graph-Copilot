@@ -54,8 +54,6 @@ export interface ChatBody {
 // Internal SSE parsing helpers
 // ---------------------------------------------------------------------------
 
-const decoder = new TextDecoder();
-
 /**
  * Process a complete SSE segment (the text between two `\n\n` delimiters).
  * Returns true if an `error` event was encountered (signals the caller to stop).
@@ -130,6 +128,8 @@ export async function streamChat(
   }
 
   const reader = res.body!.getReader();
+  // Per-call decoder: no shared stream state across concurrent calls.
+  const decoder = new TextDecoder();
   let buffer = '';
 
   try {
@@ -137,7 +137,8 @@ export async function streamChat(
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      // Normalize CRLF -> LF before buffering so SSE delimiter split is uniform.
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
       // Split on the SSE event delimiter \n\n; keep the last partial segment
       const segments = buffer.split('\n\n');

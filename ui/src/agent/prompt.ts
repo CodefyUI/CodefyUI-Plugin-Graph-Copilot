@@ -27,7 +27,15 @@ export const GRAPH_CHAR_LIMIT = 30_000;
  * Omitted entirely when both sides are null (no constraint).
  */
 function formatParam(p: ParamDefinition): string {
-  const defaultStr = String(p.default);
+  // Render primitives with String(); non-primitives with JSON.stringify to avoid
+  // "[object Object]". Cap the result at 60 chars to keep catalog lines readable.
+  const rawDefault =
+    p.default === null || p.default === undefined
+      ? String(p.default)
+      : typeof p.default === 'object'
+      ? JSON.stringify(p.default)
+      : String(p.default);
+  const defaultStr = rawDefault.length > 60 ? rawDefault.slice(0, 60) + '...' : rawDefault;
   let constraint = '';
 
   if (p.param_type === 'select' && p.options.length > 0) {

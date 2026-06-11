@@ -201,7 +201,12 @@ function executeTool(
       return JSON.stringify({ error: 'operations must be an array of GraphOp objects' });
     }
 
-    const result = api.graph.applyOperations(ops as GraphOp[]);
+    let result: ReturnType<typeof api.graph.applyOperations>;
+    try {
+      result = api.graph.applyOperations(ops as GraphOp[]);
+    } catch (err) {
+      return JSON.stringify({ error: `applyOperations threw: ${String(err)}` });
+    }
     const summary = buildOpsSummary(ops as GraphOp[], result.results);
     roundOpsSummaries.push(summary);
     callbacks.onOpsApplied(summary, result);
@@ -237,113 +242,123 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
   let roundsWithToolUse = 0;
 
   // Loop up to MAX_TOOL_ROUNDS
-  while (true) {
-    let accumulatedText = '';
-    let doneEvent: DoneEvent | null = null;
-    let streamError: string | null = null;
+  try {
+    while (true) {
+      let accumulatedText = '';
+      let doneEvent: DoneEvent | null = null;
+      let streamError: string | null = null;
 
-    await streamChat(
-      api,
-      buildChatBody(settings, wireMessages),
-      {
-        onText(t) {
-          accumulatedText += t;
-          callbacks.onTextDelta(t);
+      await streamChat(
+        api,
+        buildChatBody(settings, wireMessages),
+        {
+          onText(t) {
+            accumulatedText += t;
+            callbacks.onTextDelta(t);
+          },
+          onDone(done) {
+            doneEvent = done;
+          },
+          onError(msg) {
+            streamError = msg;
+          },
         },
-        onDone(done) {
-          doneEvent = done;
-        },
-        onError(msg) {
-          streamError = msg;
-        },
-      },
-      signal,
-    );
+        signal,
+      );
 
-    if (streamError !== null) {
-      // Commit whatever we've accumulated so far
-      callbacks.onTurnsCommitted(allTurns);
-      callbacks.onError(streamError);
-      callbacks.onFinished();
-      return;
-    }
+      if (streamError !== null) {
+        // Commit whatever we've accumulated so far
+        callbacks.onTurnsCommitted(allTurns);
+        callbacks.onError(streamError);
+        callbacks.onFinished();
+        return;
+      }
 
-    if (!doneEvent) {
-      // Stream ended without a done event (abnormal)
-      callbacks.onTurnsCommitted(allTurns);
-      callbacks.onFinished();
-      return;
-    }
+      if (!doneEvent) {
+        // Stream ended without a done event (abnormal)
+        callbacks.onTurnsCommitted(allTurns);
+        callbacks.onFinished();
+        return;
+      }
 
-    const done = doneEvent as DoneEvent;
-    const toolCalls = done.message.tool_calls ?? [];
-    const content = done.message.content ?? accumulatedText;
+      const done = doneEvent as DoneEvent;
+      const toolCalls = done.message.tool_calls ?? [];
+      // Prefer non-empty: streamed text is the source of truth when content is ''.
+      const content = done.message.content || accumulatedText;
 
-    if (done.stop_reason === 'end' || toolCalls.length === 0) {
-      // Final assistant turn
-      const finalTurn: ChatTurn = { role: 'assistant', content };
-      allTurns.push(finalTurn);
-      callbacks.onTurnsCommitted(allTurns);
-      callbacks.onFinished();
-      return;
-    }
+      if (done.stop_reason === 'end' || toolCalls.length === 0) {
+        // Final assistant turn
+        const finalTurn: ChatTurn = { role: 'assistant', content };
+        allTurns.push(finalTurn);
+        callbacks.onTurnsCommitted(allTurns);
+        callbacks.onFinished();
+        return;
+      }
 
-    // stop_reason === 'tool_use'
-    roundsWithToolUse++;
+      // stop_reason === 'tool_use'
+      roundsWithToolUse++;
 
-    // Execute each tool call
-    const roundOpsSummaries: string[] = [];
-    const toolResultTurns: ChatTurn[] = [];
-    const toolResultWireMsgs: WireMessage[] = [];
+      // Execute each tool call
+      const roundOpsSummaries: string[] = [];
+      const toolResultTurns: ChatTurn[] = [];
+      const toolResultWireMsgs: WireMessage[] = [];
 
-    for (const toolCall of toolCalls) {
-      const resultContent = executeTool(toolCall, api, callbacks, roundOpsSummaries);
-      const toolTurn: ChatTurn = {
-        role: 'tool',
-        content: resultContent,
-        tool_call_id: toolCall.id,
-      };
-      toolResultTurns.push(toolTurn);
-      toolResultWireMsgs.push({
-        role: 'tool',
-        content: resultContent,
-        tool_call_id: toolCall.id,
-      });
-    }
+      for (const toolCall of toolCalls) {
+        const resultContent = executeTool(toolCall, api, callbacks, roundOpsSummaries);
+        const toolTurn: ChatTurn = {
+          role: 'tool',
+          content: resultContent,
+          tool_call_id: toolCall.id,
+        };
+        toolResultTurns.push(toolTurn);
+        toolResultWireMsgs.push({
+          role: 'tool',
+          content: resultContent,
+          tool_call_id: toolCall.id,
+        });
+      }
 
-    // Build the assistant ChatTurn for this round (with opsSummary if any)
-    const assistantTurn: ChatTurn = {
-      role: 'assistant',
-      content,
-      tool_calls: toolCalls,
-    };
-    if (roundOpsSummaries.length > 0) {
-      assistantTurn.opsSummary = roundOpsSummaries.join('; ');
-    }
-
-    // Append assistant turn + tool result turns to allTurns
-    allTurns.push(assistantTurn);
-    allTurns.push(...toolResultTurns);
-
-    // Update wire messages for next round
-    const assistantWireMsg: WireMessage = {
-      role: 'assistant',
-      content,
-      tool_calls: toolCalls,
-    };
-    wireMessages.push(assistantWireMsg);
-    wireMessages.push(...toolResultWireMsgs);
-
-    // Check cap: if we've done MAX_TOOL_ROUNDS of tool_use, stop
-    if (roundsWithToolUse >= MAX_TOOL_ROUNDS) {
-      const capTurn: ChatTurn = {
+      // Build the assistant ChatTurn for this round (with opsSummary if any)
+      const assistantTurn: ChatTurn = {
         role: 'assistant',
-        content: `(stopped after ${MAX_TOOL_ROUNDS} tool rounds)`,
+        content,
+        tool_calls: toolCalls,
       };
-      allTurns.push(capTurn);
-      callbacks.onTurnsCommitted(allTurns);
-      callbacks.onFinished();
-      return;
+      if (roundOpsSummaries.length > 0) {
+        assistantTurn.opsSummary = roundOpsSummaries.join('; ');
+      }
+
+      // Append assistant turn + tool result turns to allTurns
+      allTurns.push(assistantTurn);
+      allTurns.push(...toolResultTurns);
+
+      // Update wire messages for next round
+      const assistantWireMsg: WireMessage = {
+        role: 'assistant',
+        content,
+        tool_calls: toolCalls,
+      };
+      wireMessages.push(assistantWireMsg);
+      wireMessages.push(...toolResultWireMsgs);
+
+      // Check cap: if we've done MAX_TOOL_ROUNDS of tool_use, stop
+      if (roundsWithToolUse >= MAX_TOOL_ROUNDS) {
+        const capTurn: ChatTurn = {
+          role: 'assistant',
+          content: `(stopped after ${MAX_TOOL_ROUNDS} tool rounds)`,
+        };
+        allTurns.push(capTurn);
+        callbacks.onTurnsCommitted(allTurns);
+        callbacks.onFinished();
+        return;
+      }
     }
+  } catch (err) {
+    // Unexpected synchronous throw (e.g. from a callback or executeTool path
+    // not caught by the inner try). Commit accumulated turns once, then signal
+    // error and finish so the UI never strands in busy state.
+    callbacks.onTurnsCommitted(allTurns);
+    callbacks.onError(String(err));
+    callbacks.onFinished();
   }
 }

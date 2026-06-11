@@ -184,6 +184,35 @@ describe('compactCatalog', () => {
     // no quotes around relu
     expect(result).not.toContain('"relu"');
   });
+
+  it('formats object default as JSON, not [object Object]', () => {
+    const defs = [makeNode({
+      inputs: [], outputs: [],
+      params: [{
+        name: 'cfg', param_type: 'string', default: { key: 'val' } as unknown as string, description: '',
+        options: [], min_value: null, max_value: null,
+      }],
+    })];
+    const result = compactCatalog(defs);
+    expect(result).not.toContain('[object Object]');
+    expect(result).toContain('{"key":"val"}');
+  });
+
+  it('caps long default at 60 chars with trailing ellipsis', () => {
+    const longDefault = 'a'.repeat(80);
+    const defs = [makeNode({
+      inputs: [], outputs: [],
+      params: [{
+        name: 'pad', param_type: 'string', default: longDefault, description: '',
+        options: [], min_value: null, max_value: null,
+      }],
+    })];
+    const result = compactCatalog(defs);
+    // Should not contain the full 80-char string
+    expect(result).not.toContain(longDefault);
+    // Should end with ...
+    expect(result).toMatch(/=a{60}\.\.\./);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -179,6 +179,38 @@ describe('streamChat', () => {
     expect(handlers.onError).toHaveBeenCalledWith(expect.stringContaining('400'));
     expect(handlers.onDone).not.toHaveBeenCalled();
   });
+
+  it('handles CRLF-delimited SSE events incrementally', async () => {
+    // Build CRLF variants of the events
+    const crlfTextDelta = (text: string) =>
+      `data: ${JSON.stringify({ type: 'text_delta', text })}\r\n\r\n`;
+    const crlfDone = () => {
+      const done: DoneEvent = {
+        message: { role: 'assistant', content: '', tool_calls: [] },
+        stop_reason: 'end',
+        usage: {},
+      };
+      return `data: ${JSON.stringify({ type: 'done', ...done })}\r\n\r\n`;
+    };
+
+    // Three events in two chunks to verify incremental dispatch during reading
+    const chunk1 = encoder.encode(crlfTextDelta('alpha') + crlfTextDelta('beta'));
+    const chunk2 = encoder.encode(crlfTextDelta('gamma') + crlfDone());
+
+    const fetchMock = vi.fn().mockResolvedValue(makeStreamResponse([chunk1, chunk2]));
+    const api = makeApi(fetchMock);
+
+    // Track call counts after each chunk by using real call tracking
+    await streamChat(api as any, BASE_BODY, handlers);
+
+    // All three text deltas must have fired
+    expect(handlers.onText).toHaveBeenCalledTimes(3);
+    expect(handlers.onText).toHaveBeenNthCalledWith(1, 'alpha');
+    expect(handlers.onText).toHaveBeenNthCalledWith(2, 'beta');
+    expect(handlers.onText).toHaveBeenNthCalledWith(3, 'gamma');
+    expect(handlers.onDone).toHaveBeenCalledTimes(1);
+    expect(handlers.onError).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

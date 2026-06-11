@@ -504,4 +504,81 @@ describe('runTurn', () => {
     // At least the first assistant turn is there
     expect(state.committed!.some((t) => t.role === 'assistant')).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // 6. applyOperations throws -> error tool result, loop continues (Fix 2a)
+  // -------------------------------------------------------------------------
+
+  it('applyOperations throw: tool result contains "threw", loop continues, single onTurnsCommitted + onFinished', async () => {
+    const api = makeFakeApi();
+    // Override applyOperations to throw
+    (api.graph.applyOperations as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error('DB write failed');
+    });
+
+    const state = makeCallbacks();
+
+    const ops = [{ op: 'add_node', node_type: 'Conv2d' }];
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('tc_throw', 'apply_graph_operations', { operations: ops }) },
+      { done: makeDoneEnd('recovered') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'throw test', callbacks: state.cbs });
+
+    // The tool result sent back to the model must contain the error
+    expect(streamChat).toHaveBeenCalledTimes(2);
+    const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
+    const toolMsg = body2.messages.find((m) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    const content = JSON.parse(toolMsg!.content);
+    expect(content.error).toMatch(/threw/i);
+
+    // Loop continues and finishes normally (no outer error)
+    expect(state.errors).toHaveLength(0);
+    expect(state.finished).toBe(1);
+    // onTurnsCommitted called exactly once
+    expect(state.committed).not.toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // 7. Callback (onOpsApplied) throwing -> outer catch fires once (Fix 2b)
+  // -------------------------------------------------------------------------
+
+  it('callback throw (onOpsApplied): outer catch commits turns, calls onError + onFinished exactly once', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+
+    // Make onOpsApplied throw
+    const originalOnOpsApplied = state.cbs.onOpsApplied;
+    let onTurnsCommittedCount = 0;
+    let onFinishedCount = 0;
+    state.cbs.onOpsApplied = () => {
+      throw new Error('callback boom');
+    };
+    state.cbs.onTurnsCommitted = (turns) => {
+      onTurnsCommittedCount++;
+      state.committed = turns;
+    };
+    state.cbs.onFinished = () => { onFinishedCount++; };
+
+    const ops = [{ op: 'add_node', node_type: 'Conv2d' }];
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('tc_cb', 'apply_graph_operations', { operations: ops }) },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'callback error', callbacks: state.cbs });
+
+    // onError must have been called with the throw message
+    expect(state.errors).toHaveLength(1);
+    expect(state.errors[0]).toContain('callback boom');
+
+    // onTurnsCommitted and onFinished must each fire exactly once
+    expect(onTurnsCommittedCount).toBe(1);
+    expect(onFinishedCount).toBe(1);
+
+    void originalOnOpsApplied; // silence unused var lint
+  });
 });
