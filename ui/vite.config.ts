@@ -3,9 +3,13 @@ import react from '@vitejs/plugin-react';
 import cssInjectedByJsPlugin from 'vite-plugin-css-injected-by-js';
 import { resolve } from 'path';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react(), cssInjectedByJsPlugin()],
-  define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+  // Only force production mode during build; tests need the dev React build
+  // so that React.act (required by @testing-library/react) is available.
+  define: command === 'build'
+    ? { 'process.env.NODE_ENV': JSON.stringify('production') }
+    : {},
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.tsx'),
@@ -22,4 +26,4 @@ export default defineConfig({
     setupFiles: ['src/test/setup.ts'],
     passWithNoTests: true,
   },
-});
+}));
