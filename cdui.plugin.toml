@@ -4,7 +4,7 @@ name            = "Graph Copilot — AI chat assistant"
 version         = "0.1.0"
 description     = "Chat with an AI to generate, tune, and improve the node graph. Adds a floating assistant button, conversation history, and multi-provider LLM settings (OpenAI / ChatGPT Codex / OpenRouter / Claude / custom OpenAI-compatible)."
 schema_version  = 1
-requires_codefyui = ">=0.2.0"
+requires_codefyui = ">=1.3.0"
 authors         = ["treeleaves30760"]
 license         = "MIT"
 homepage        = "https://github.com/treeleaves30760/CodefyUI-Plugin-Graph-Copilot"
