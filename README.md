@@ -16,7 +16,7 @@ Chat with an AI to **generate, tune, and improve the node graph** on your Codefy
 
 ## Requirements
 
-CodefyUI with **plugin frontend extensions** and the **LLM provider proxy** — both land via [CodefyUI PR #55](https://github.com/treeleaves30760/CodefyUI/pull/55) and [PR #56](https://github.com/treeleaves30760/CodefyUI/pull/56). Once those ship in a tagged CodefyUI release, this section will pin the minimum version.
+**CodefyUI 1.3.0 or later** — that release ships the two features this plugin is built on: plugin frontend extensions (the JS bundle this plugin loads) and the LLM provider proxy (`/api/llm/chat`). If `cdui --version` reports an older version, run `cdui update` first.
 
 ## Install
 
@@ -74,7 +74,7 @@ MIT
 cdui plugin install treeleaves30760/CodefyUI-Plugin-Graph-Copilot
 ```
 
-安裝後重新整理 CodefyUI 分頁。需要包含 [PR #55](https://github.com/treeleaves30760/CodefyUI/pull/55) 與 [PR #56](https://github.com/treeleaves30760/CodefyUI/pull/56) 的 CodefyUI 版本。
+安裝後重新整理 CodefyUI 分頁。需要 **CodefyUI 1.3.0 或更新版本**（該版本內建本外掛所依賴的前端擴充與 LLM 代理）；若版本較舊請先執行 `cdui update`。
 
 ## 供應商設定
 
