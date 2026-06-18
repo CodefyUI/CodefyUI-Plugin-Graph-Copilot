@@ -23,13 +23,21 @@ export const TOOLS = [
   {
     name: 'apply_graph_operations',
     description:
-      'Apply a batch of graph edits to the canvas. Failing operations are skipped and reported; the batch is one undo step.',
+      `Apply a batch of graph edits to the canvas as ONE undo step. Failing operations are skipped and reported per-index (with an error message) so you can self-correct and retry.
+Each entry in "operations" is one GraphOp object; use these EXACT field names:
+- {"op":"add_node","node_type":"<exact catalog name>","ref":"<alias>","params":{...},"position":{"x":<num>,"y":<num>}} — ref/params/position optional. "ref" is a temporary alias you may use as source/target/node_id later in the SAME batch, before the real node id exists.
+- {"op":"connect","source":"<node id or ref>","source_handle":"<output port name>","target":"<node id or ref>","target_handle":"<input port name>"} — handle names are the port names from the catalog out[...] / in[...]. For control-flow trigger edges use source_handle "trigger".
+- {"op":"set_params","node_id":"<node id or ref>","params":{...}}
+- {"op":"remove_node","node_id":"<node id or ref>"}
+- {"op":"remove_edge","source":"<node id or ref>","target":"<node id or ref>","source_handle":"<optional>","target_handle":"<optional>"}
+- {"op":"clear_graph"} — wipes the whole graph; only when the user asks to start over.
+- {"op":"auto_layout"} — auto-positions all nodes; run once after a structural batch.`,
     input_schema: {
       type: 'object',
       properties: {
         operations: {
           type: 'array',
-          items: { type: 'object' }, // GraphOp union documented in description
+          items: { type: 'object' }, // GraphOp union documented in the tool description above
         },
       },
       required: ['operations'],

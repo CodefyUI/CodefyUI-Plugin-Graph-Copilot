@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
@@ -24,11 +24,12 @@ import type { Provider } from '../llm/client';
 vi.mock('../llm/client', () => ({
   fetchModels: vi.fn().mockResolvedValue(['gpt-4', 'gpt-5']),
   codexLogin: vi.fn().mockResolvedValue('https://auth.example.com'),
-  codexStatus: vi.fn().mockResolvedValue({ status: 'not_authenticated' }),
+  codexStatus: vi.fn().mockResolvedValue({ status: 'logged_out' }),
   codexLogout: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { SettingsView } from './SettingsView';
+import { codexStatus } from '../llm/client';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -240,6 +241,22 @@ describe('SettingsView', () => {
       codexLoggedIn: false,
     });
     expect(screen.getByText(/not signed in/i)).toBeTruthy();
+  });
+
+  // Regression: backend GET /api/llm/codex/status returns status "logged_in"
+  // (not "authenticated"). The mount-time status check must honor that exact
+  // contract, otherwise the UI never reflects an existing ChatGPT session.
+  it('reports signed-in on mount when codexStatus resolves status "logged_in"', async () => {
+    vi.mocked(codexStatus).mockResolvedValueOnce({
+      status: 'logged_in',
+      email: 'user@example.com',
+    });
+    const { onCodexStatusChange } = renderSettings({
+      settings: makeSettings({ provider: 'openai-codex' }),
+    });
+    await waitFor(() =>
+      expect(onCodexStatusChange).toHaveBeenCalledWith(true, 'user@example.com'),
+    );
   });
 
   // -------------------------------------------------------------------------
