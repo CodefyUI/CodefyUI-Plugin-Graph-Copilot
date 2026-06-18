@@ -10862,7 +10862,7 @@ function Hh(d) {
       z.push(`params[${M}]`);
     }
     const s = z.length > 0 ? " " + z.join(" ") : "";
-    return `${S.node_name} (${S.category}):${s}`;
+    return `${S.node_name}:${s} [category: ${S.category}]`;
   }).join(`
 `);
 }
@@ -10882,7 +10882,7 @@ function xh(d, S) {
 Nodes have a type from the catalog below, typed input/output ports, and configurable params. Edges connect an output handle to an input handle; the connected types must be compatible.
 
 ## Rules
-- Use exact node-type names from the catalog.
+- Use exact node-type names from the catalog — the bare name only (e.g. Dataset), never the trailing "[category: ...]" tag.
 - Connect every required input of nodes you add.
 - Set params via set_params or add_node.params, respecting the declared types and ranges.
 - Finish structural batches with one auto_layout op.
