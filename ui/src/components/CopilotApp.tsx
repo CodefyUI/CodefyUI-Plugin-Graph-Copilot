@@ -6,6 +6,7 @@ import type { Conversation } from '../state/conversations';
 import { newConversation } from '../state/conversations';
 import { Fab } from './Fab';
 import { ChatWindow } from './ChatWindow';
+import { codexStatus } from '../llm/client';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -32,6 +33,26 @@ export function CopilotApp({ api }: CopilotAppProps) {
   useEffect(() => {
     saveSettings(api, settings);
   }, [api, settings]);
+
+  // Recognize an existing ChatGPT/codex session as soon as the panel mounts
+  // (and whenever the provider switches to codex), so the chat is usable right
+  // away without first opening Settings. The post-sign-in poll lives in
+  // SettingsView; this covers the already-logged-in-on-load case.
+  useEffect(() => {
+    if (settings.provider !== 'openai-codex') return;
+    let cancelled = false;
+    codexStatus(api)
+      .then((s) => {
+        if (!cancelled && s.status === 'logged_in') {
+          setCodexLoggedIn(true);
+          setCodexEmail(s.email ?? null);
+        }
+      })
+      .catch(() => { /* ignore */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, settings.provider]);
 
   const handleSettingsChange = (s: Settings) => {
     setSettings(s);
