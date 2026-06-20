@@ -46,7 +46,7 @@ describe('compactCatalog', () => {
   it('formats a basic node with in/out ports and no params', () => {
     const defs = [makeNode()];
     const result = compactCatalog(defs);
-    expect(result).toBe('Conv2d (Layer): in[x:TENSOR] out[y:TENSOR]');
+    expect(result).toBe('Conv2d: in[x:TENSOR] out[y:TENSOR] [category: Layer]');
   });
 
   it('omits in[] section when inputs is empty', () => {
@@ -72,7 +72,7 @@ describe('compactCatalog', () => {
   it('formats a node with no ports or params', () => {
     const defs = [makeNode({ inputs: [], outputs: [], params: [] })];
     const result = compactCatalog(defs);
-    expect(result).toBe('Conv2d (Layer):');
+    expect(result).toBe('Conv2d: [category: Layer]');
   });
 
   it('formats integer param with both min and max', () => {
@@ -156,7 +156,7 @@ describe('compactCatalog', () => {
       ],
     })];
     const result = compactCatalog(defs);
-    expect(result).toBe('Conv2d (Layer): in[x:TENSOR] out[y:TENSOR] params[out_channels:int=32{1..}, mode:select=a{a|b}]');
+    expect(result).toBe('Conv2d: in[x:TENSOR] out[y:TENSOR] params[out_channels:int=32{1..}, mode:select=a{a|b}] [category: Layer]');
   });
 
   it('outputs one line per node, joined by newlines', () => {
@@ -282,7 +282,7 @@ describe('buildSystemPrompt', () => {
 
   it('contains the compact catalog content', () => {
     const prompt = buildSystemPrompt(defs, graph);
-    expect(prompt).toContain('Conv2d (Layer)');
+    expect(prompt).toContain('Conv2d: in[x:TENSOR] out[y:TENSOR] [category: Layer]');
   });
 
   it('contains the graph snapshot content', () => {

@@ -130,7 +130,7 @@ export function SettingsView({
     if (provider === 'openai-codex') {
       codexStatus(api)
         .then((s) => {
-          if (s.status === 'authenticated') {
+          if (s.status === 'logged_in') {
             onCodexStatusChange(true, s.email ?? null);
           }
         })
@@ -201,7 +201,7 @@ export function SettingsView({
       pollTimerRef.current = setInterval(async () => {
         try {
           const s = await codexStatus(api);
-          if (s.status === 'authenticated') {
+          if (s.status === 'logged_in') {
             onCodexStatusChange(true, s.email ?? null);
             setCodexPending(false);
             if (pollTimerRef.current !== null) {

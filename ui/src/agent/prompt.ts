@@ -57,7 +57,7 @@ function formatParam(p: ParamDefinition): string {
  * Build a compact one-line-per-node catalog string.
  *
  * Format:
- *   NodeName (Category): in[x:TYPE, ...] out[y:TYPE, ...] params[name:type=default{constraint}, ...]
+ *   NodeName: in[x:TYPE, ...] out[y:TYPE, ...] params[name:type=default{constraint}, ...] [category: Category]
  *
  * Sections (in[], out[], params[]) are omitted entirely when empty.
  */
@@ -79,7 +79,10 @@ export function compactCatalog(defs: NodeDefinition[]): string {
     }
 
     const suffix = parts.length > 0 ? ' ' + parts.join(' ') : '';
-    return `${def.node_name} (${def.category}):${suffix}`;
+    // Lead with the bare node-type name + colon so the model never mistakes
+    // the category for part of the type. (Real codex bug: it emitted
+    // node_type "Dataset (Data)" from the old "Name (Category):" format.)
+    return `${def.node_name}:${suffix} [category: ${def.category}]`;
   }).join('\n');
 }
 
@@ -119,7 +122,7 @@ export function buildSystemPrompt(defs: NodeDefinition[], graph: SerializedGraph
 Nodes have a type from the catalog below, typed input/output ports, and configurable params. Edges connect an output handle to an input handle; the connected types must be compatible.
 
 ## Rules
-- Use exact node-type names from the catalog.
+- Use exact node-type names from the catalog — the bare name only (e.g. Dataset), never the trailing "[category: ...]" tag.
 - Connect every required input of nodes you add.
 - Set params via set_params or add_node.params, respecting the declared types and ranges.
 - Finish structural batches with one auto_layout op.
