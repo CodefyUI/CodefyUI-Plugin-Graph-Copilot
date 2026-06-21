@@ -11075,12 +11075,16 @@ function u0(f, m) {
 Each node has a type (the bare name from the index), typed input/output ports, and params. Edges connect an output handle to an input handle; the connected data types must be compatible. Some pipelines need a control-flow trigger from a Start node (connect with source_handle "trigger").
 
 ## Rules
-- Use the exact node-type name from the index - the bare name only (e.g. Dataset), not the "[Category]" tag.
+- Use the exact node-type name from the index — the bare name only (e.g. Dataset), never the trailing "[category: ...]" tag.
 - Always get_node_schemas before connecting, so you use real port names.
 - For a COMPLEX graph, you may first call research with a few independent sub-questions (e.g. data pipeline / model / training loop) to plan the parts in parallel.
-- Connect every REQUIRED input; validate_graph reports the ones you missed.
+- Connect every REQUIRED input of nodes you add; validate_graph reports the ones you missed.
+- Set params via set_params or add_node.params, respecting the declared types and ranges.
+- Finish structural batches with one auto_layout op.
 - Prefer several small batches over one enormous batch.
-- Never use clear_graph unless the user asks to start over.
+- If an op fails, read the error message and correct yourself before retrying.
+- Never use clear_graph unless the user explicitly asked to start over.
+- Reply in the user's language, and after applying changes summarize what changed in one or two sentences.
 
 ## Node catalog index (NodeName [Category] - description). Call get_node_schemas for exact ports/params.
 ${p}
