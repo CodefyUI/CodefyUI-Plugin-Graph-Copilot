@@ -10,6 +10,7 @@
 
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { WireToolCall, Provider } from '../llm/client';
+import type { Attachment } from './attachments';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +23,9 @@ export interface ChatTurn {
   tool_call_id?: string;
   /** Human-readable applied-ops chip shown under an assistant bubble. */
   opsSummary?: string;
+  /** Files attached to a user turn (images/pdf/text). Persisted for display
+   *  and re-sent to the model on later turns within the history window. */
+  attachments?: Attachment[];
 }
 
 export interface Conversation {

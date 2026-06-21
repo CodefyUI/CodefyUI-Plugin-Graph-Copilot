@@ -26,9 +26,11 @@ import type { ChatTurn } from '../state/conversations';
 // vi.mock must be at module scope (hoisted by vitest)
 // ---------------------------------------------------------------------------
 
-vi.mock('../llm/client', () => ({
-  streamChat: vi.fn(),
-}));
+// Keep the real module (composeUserContent etc.) and stub only streamChat.
+vi.mock('../llm/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../llm/client')>();
+  return { ...actual, streamChat: vi.fn() };
+});
 
 import { streamChat } from '../llm/client';
 import { MAX_TOOL_ROUNDS, TOOLS, runTurn } from './loop';
@@ -380,7 +382,7 @@ describe('runTurn', () => {
     expect(toolResultMsg).toBeDefined();
     expect(toolResultMsg!.tool_call_id).toBe('tc1');
     // Content must contain refs JSON
-    const resultContent = JSON.parse(toolResultMsg!.content);
+    const resultContent = JSON.parse(toolResultMsg!.content as string);
     expect(resultContent.refs).toEqual({ mynode: 'n1' });
     expect(resultContent.node_count).toBe(2);
     expect(resultContent.edge_count).toBe(0);
@@ -411,8 +413,8 @@ describe('runTurn', () => {
     const toolResultMsg = body2.messages.find((m) => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();
     // Content should be JSON parseable graph snapshot
-    expect(() => JSON.parse(toolResultMsg!.content)).not.toThrow();
-    const snap = JSON.parse(toolResultMsg!.content);
+    expect(() => JSON.parse(toolResultMsg!.content as string)).not.toThrow();
+    const snap = JSON.parse(toolResultMsg!.content as string);
     expect(snap).toHaveProperty('nodes');
     expect(snap).toHaveProperty('edges');
   });
@@ -458,7 +460,7 @@ describe('runTurn', () => {
     const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
     const toolMsg = body2.messages.find((m) => m.role === 'tool' && m.tool_call_id === 'tcv');
     expect(toolMsg).toBeDefined();
-    const parsed = JSON.parse(toolMsg!.content);
+    const parsed = JSON.parse(toolMsg!.content as string);
     expect(parsed.valid).toBe(false);
     expect(parsed.errors).toEqual(['boom']);
   });
@@ -482,9 +484,11 @@ describe('runTurn', () => {
     // The gate caused a second streamChat round with a fix nudge.
     expect(streamChat).toHaveBeenCalledTimes(2);
     const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
-    const nudge = body2.messages.find((m) => m.role === 'user' && /not runnable yet/i.test(m.content));
+    const nudge = body2.messages.find(
+      (m) => m.role === 'user' && typeof m.content === 'string' && /not runnable yet/i.test(m.content),
+    );
     expect(nudge).toBeDefined();
-    expect(nudge!.content).toMatch(/Missing required input/);
+    expect(nudge!.content as string).toMatch(/Missing required input/);
     // Validated twice (once per finish attempt); finished exactly once.
     expect(api.http.fetch).toHaveBeenCalledTimes(2);
     expect(state.finished).toBe(1);
@@ -545,7 +549,7 @@ describe('runTurn', () => {
     const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
     const toolMsg = body2.messages.find((m) => m.role === 'tool');
     expect(toolMsg).toBeDefined();
-    const content = JSON.parse(toolMsg!.content);
+    const content = JSON.parse(toolMsg!.content as string);
     expect(content.error).toMatch(/array/i);
 
     expect(state.committed).not.toBeNull();
@@ -635,7 +639,7 @@ describe('runTurn', () => {
     const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
     const toolMsg = body2.messages.find((m) => m.role === 'tool');
     expect(toolMsg).toBeDefined();
-    const content = JSON.parse(toolMsg!.content);
+    const content = JSON.parse(toolMsg!.content as string);
     expect(content.error).toMatch(/threw/i);
 
     // Loop continues and finishes normally (no outer error)
@@ -683,5 +687,87 @@ describe('runTurn', () => {
     expect(onFinishedCount).toBe(1);
 
     void originalOnOpsApplied; // silence unused var lint
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Attachments — multimodal user content
+// ---------------------------------------------------------------------------
+
+describe('runTurn — attachments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('image attachment: the user wire message content is a multimodal parts array', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    scriptStreamChat([{ done: makeDoneEnd('ok') }]);
+
+    await runTurn({
+      api,
+      settings: FAKE_SETTINGS,
+      history: [],
+      userText: 'what is this?',
+      attachments: [
+        { id: '1', kind: 'image', name: 'a.png', size: 10, mime: 'image/png', dataUrl: 'data:image/png;base64,AAA' },
+      ],
+      callbacks: cbs,
+    });
+
+    const [, body] = (streamChat as Mock).mock.calls[0] as [unknown, ChatBody, ...unknown[]];
+    const userMsg = body.messages[body.messages.length - 1];
+    expect(userMsg.role).toBe('user');
+    expect(Array.isArray(userMsg.content)).toBe(true);
+    const parts = userMsg.content as Array<Record<string, any>>;
+    expect(parts[0]).toEqual({ type: 'text', text: 'what is this?' });
+    expect(parts.some((p) => p.type === 'image_url' && p.image_url.url.startsWith('data:image/png'))).toBe(true);
+  });
+
+  it('text-file attachment: the user wire message inlines the file as a string', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    scriptStreamChat([{ done: makeDoneEnd('ok') }]);
+
+    await runTurn({
+      api,
+      settings: FAKE_SETTINGS,
+      history: [],
+      userText: 'explain',
+      attachments: [
+        { id: '2', kind: 'text', name: 'main.py', size: 8, mime: 'text/plain', text: 'print(1)' },
+      ],
+      callbacks: cbs,
+    });
+
+    const [, body] = (streamChat as Mock).mock.calls[0] as [unknown, ChatBody, ...unknown[]];
+    const userMsg = body.messages[body.messages.length - 1];
+    expect(typeof userMsg.content).toBe('string');
+    expect(userMsg.content as string).toContain('main.py');
+    expect(userMsg.content as string).toContain('print(1)');
+  });
+
+  it('historical user-turn attachments are composed into the window too', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    scriptStreamChat([{ done: makeDoneEnd('ok') }]);
+
+    const history: ChatTurn[] = [
+      {
+        role: 'user',
+        content: 'earlier',
+        attachments: [
+          { id: '3', kind: 'image', name: 'p.png', size: 10, mime: 'image/png', dataUrl: 'data:image/png;base64,ZZZ' },
+        ],
+      },
+      { role: 'assistant', content: 'sure' },
+    ];
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history, userText: 'now', callbacks: cbs });
+
+    const [, body] = (streamChat as Mock).mock.calls[0] as [unknown, ChatBody, ...unknown[]];
+    const histUser = body.messages[1]; // system is [0]
+    expect(histUser.role).toBe('user');
+    expect(Array.isArray(histUser.content)).toBe(true);
   });
 });

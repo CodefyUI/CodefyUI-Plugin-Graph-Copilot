@@ -7,6 +7,8 @@
  */
 
 import type { CodefyUIPluginAPI } from '../types/codefyui';
+import type { Attachment } from '../state/attachments';
+import { langFromName } from '../state/attachments';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,11 +22,74 @@ export interface WireToolCall {
   arguments: Record<string, unknown>;
 }
 
+/** A multimodal content part (OpenAI chat-completions shape). The unified LLM
+ *  proxy normalizes these per provider. Only used for user messages that carry
+ *  images; text-only messages stay plain strings. */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface WireMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | ContentPart[];
   tool_calls?: WireToolCall[];
   tool_call_id?: string;
+}
+
+// ---------------------------------------------------------------------------
+// composeUserContent — build outgoing user-message content from text + files
+// ---------------------------------------------------------------------------
+
+/** Providers whose models can accept image parts. (custom is included
+ *  best-effort: it's usually an OpenAI-compatible endpoint chosen by the user.) */
+const IMAGE_CAPABLE: ReadonlySet<Provider> = new Set<Provider>([
+  'openai', 'openai-codex', 'openrouter', 'anthropic', 'custom',
+]);
+
+/**
+ * Compose the `content` for a user wire message:
+ *  - text/pdf attachments are inlined as labeled fenced blocks appended to the
+ *    user's text (works on every provider, including text-only local models);
+ *  - image attachments become image_url parts and the result is a ContentPart[]
+ *    for image-capable providers;
+ *  - with no attachments the original string is returned verbatim (backward
+ *    compatible — existing wire-message shape is unchanged).
+ */
+export function composeUserContent(
+  text: string,
+  attachments: Attachment[] | undefined,
+  provider: Provider,
+): string | ContentPart[] {
+  const atts = attachments ?? [];
+
+  // 1. Combined text = user text + inlined text/pdf files.
+  const blocks: string[] = [];
+  if (text.trim()) blocks.push(text);
+  for (const a of atts) {
+    if ((a.kind === 'text' || a.kind === 'pdf') && a.text) {
+      const lang = a.kind === 'pdf' ? '' : langFromName(a.name);
+      blocks.push(`Attached file "${a.name}":\n\`\`\`${lang}\n${a.text}\n\`\`\``);
+    }
+  }
+  const combined = blocks.join('\n\n');
+
+  // 2. Images -> multimodal parts (capable providers only).
+  const images = atts.filter((a) => a.kind === 'image' && a.dataUrl);
+  if (images.length > 0 && IMAGE_CAPABLE.has(provider)) {
+    const parts: ContentPart[] = [
+      { type: 'text', text: combined || '(see attached image)' },
+      ...images.map((a): ContentPart => ({ type: 'image_url', image_url: { url: a.dataUrl! } })),
+    ];
+    return parts;
+  }
+
+  // 3. No sendable images -> plain string. If images exist but the provider
+  //    can't take them, note their names so the model isn't left guessing.
+  if (images.length > 0) {
+    const note = images.map((a) => `[image attached (not sent to this provider): ${a.name}]`).join('\n');
+    return [combined, note].filter(Boolean).join('\n\n');
+  }
+  return combined;
 }
 
 export interface DoneEvent {

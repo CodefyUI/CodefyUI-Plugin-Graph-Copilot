@@ -96,7 +96,10 @@ export function ChatWindow({
     <div className="gcp-window" role="dialog" aria-label="Graph Copilot">
       {/* Header */}
       <div className="gcp-header">
-        <span className="gcp-header-title">Graph Copilot</span>
+        <span className="gcp-header-title">
+          <span className="gcp-header-mark" aria-hidden="true">✦</span>
+          Graph Copilot
+        </span>
 
         <button
           className={`gcp-icon-btn${view === 'history' ? ' active' : ''}`}

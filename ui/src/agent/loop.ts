@@ -6,11 +6,12 @@
  * the model emits stop_reason==='end' or MAX_TOOL_ROUNDS is reached.
  */
 
-import { streamChat } from '../llm/client';
-import type { WireMessage, WireToolCall, DoneEvent } from '../llm/client';
+import { streamChat, composeUserContent } from '../llm/client';
+import type { WireMessage, WireToolCall, DoneEvent, Provider } from '../llm/client';
 import { buildSystemPrompt, graphSnapshot, compactCatalog, compactIndex } from './prompt';
 import type { Settings } from '../state/settings';
 import type { ChatTurn } from '../state/conversations';
+import type { Attachment } from '../state/attachments';
 import type { CodefyUIPluginAPI, GraphOp, ApplyResult, OpResult } from '../types/codefyui';
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,8 @@ export interface RunTurnOpts {
   settings: Settings;
   history: ChatTurn[]; // prior conversation turns (no system)
   userText: string;
+  /** Files attached to this user turn (images/pdf/text). */
+  attachments?: Attachment[];
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
 }
@@ -114,9 +117,15 @@ export interface RunTurnOpts {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Map a ChatTurn to a WireMessage, stripping opsSummary (local-only). */
-function turnToWire(turn: ChatTurn): WireMessage {
-  const msg: WireMessage = { role: turn.role, content: turn.content };
+/** Map a ChatTurn to a WireMessage, stripping opsSummary (local-only). User
+ *  turns with attachments get their content composed (text inlined, images as
+ *  multimodal parts); everything else passes through as a plain string. */
+function turnToWire(turn: ChatTurn, provider: Provider): WireMessage {
+  const content =
+    turn.role === 'user' && turn.attachments && turn.attachments.length > 0
+      ? composeUserContent(turn.content, turn.attachments, provider)
+      : turn.content;
+  const msg: WireMessage = { role: turn.role, content };
   if (turn.tool_calls) msg.tool_calls = turn.tool_calls;
   if (turn.tool_call_id) msg.tool_call_id = turn.tool_call_id;
   return msg;
@@ -165,14 +174,19 @@ function buildInitialMessages(
   api: CodefyUIPluginAPI,
   history: ChatTurn[],
   userText: string,
+  attachments: Attachment[] | undefined,
+  provider: Provider,
 ): WireMessage[] {
   const systemContent = buildSystemPrompt(
     api.graph.getNodeDefinitions(),
     api.graph.getGraph(),
   );
   const systemMsg: WireMessage = { role: 'system', content: systemContent };
-  const windowedHistory = history.slice(-20).map(turnToWire);
-  const userMsg: WireMessage = { role: 'user', content: userText };
+  const windowedHistory = history.slice(-20).map((t) => turnToWire(t, provider));
+  const userMsg: WireMessage = {
+    role: 'user',
+    content: composeUserContent(userText, attachments, provider),
+  };
   return [systemMsg, ...windowedHistory, userMsg];
 }
 
@@ -379,13 +393,15 @@ async function executeTool(
 // ---------------------------------------------------------------------------
 
 export async function runTurn(opts: RunTurnOpts): Promise<void> {
-  const { api, settings, history, userText, callbacks, signal } = opts;
+  const { api, settings, history, userText, attachments, callbacks, signal } = opts;
 
   // Accumulated ChatTurns across all rounds (to commit at the end)
   const allTurns: ChatTurn[] = [];
 
   // Wire messages start with system + windowed history + user
-  const wireMessages: WireMessage[] = buildInitialMessages(api, history, userText);
+  const wireMessages: WireMessage[] = buildInitialMessages(
+    api, history, userText, attachments, settings.provider,
+  );
 
   let roundsWithToolUse = 0;
   let validationNudges = 0;
