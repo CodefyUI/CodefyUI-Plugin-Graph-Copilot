@@ -87,6 +87,25 @@ export function compactCatalog(defs: NodeDefinition[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// compactIndex
+// ---------------------------------------------------------------------------
+
+/**
+ * Token-efficient one-line-per-node INDEX: name, category and a short
+ * description only (no ports/params). The agent calls get_node_schemas to pull
+ * exact ports/params on demand, keeping the per-round system prompt small.
+ *
+ * Format:  NodeName [Category] - short description
+ */
+export function compactIndex(defs: NodeDefinition[]): string {
+  return defs.map((def) => {
+    const desc = (def.description || '').replace(/\s+/g, ' ').trim();
+    const shortDesc = desc.length > 100 ? desc.slice(0, 100) + '...' : desc;
+    return `${def.node_name} [${def.category}]${shortDesc ? ' - ' + shortDesc : ''}`;
+  }).join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // graphSnapshot
 // ---------------------------------------------------------------------------
 
@@ -113,27 +132,35 @@ export function graphSnapshot(graph: SerializedGraph): string {
  * Assemble the full system prompt from the node catalog and current graph.
  */
 export function buildSystemPrompt(defs: NodeDefinition[], graph: SerializedGraph): string {
-  const catalog = compactCatalog(defs);
+  const index = compactIndex(defs);
   const snapshot = graphSnapshot(graph);
 
-  return `You are Graph Copilot inside CodefyUI, a visual node-graph editor for machine-learning pipelines. You build and edit the user's graph by calling tools.
+  return `You are Graph Copilot inside CodefyUI, a visual node-graph editor for machine-learning pipelines. You build and edit the user's graph by calling tools, and you make sure the result actually RUNS.
+
+## Workflow (follow in order)
+1. Plan - state in 1-2 sentences the nodes and connections you intend.
+2. Look up schemas - call get_node_schemas for the node types you plan to use, to get their exact input/output ports and params. Do NOT guess port or param names.
+3. Build - call apply_graph_operations in small batches (add_node with a "ref", connect, set_params), ending a structural batch with one auto_layout.
+4. Validate - call validate_graph. If it returns errors (e.g. a missing required input), fix them with more operations and validate again. Only finish once validate_graph reports "valid": true.
+5. Summarize what you built in 1-2 sentences, in the user's language.
 
 ## Graph model
-Nodes have a type from the catalog below, typed input/output ports, and configurable params. Edges connect an output handle to an input handle; the connected types must be compatible.
+Each node has a type (the bare name from the index), typed input/output ports, and params. Edges connect an output handle to an input handle; the connected data types must be compatible. Some pipelines need a control-flow trigger from a Start node (connect with source_handle "trigger").
 
 ## Rules
-- Use exact node-type names from the catalog — the bare name only (e.g. Dataset), never the trailing "[category: ...]" tag.
-- Connect every required input of nodes you add.
+- Use the exact node-type name from the index — the bare name only (e.g. Dataset), never the trailing "[category: ...]" tag.
+- Always get_node_schemas before connecting, so you use real port names.
+- For a COMPLEX graph, you may first call research with a few independent sub-questions (e.g. data pipeline / model / training loop) to plan the parts in parallel.
+- Connect every REQUIRED input of nodes you add; validate_graph reports the ones you missed.
 - Set params via set_params or add_node.params, respecting the declared types and ranges.
 - Finish structural batches with one auto_layout op.
-- Never use clear_graph unless the user explicitly asked to start over.
+- Prefer several small batches over one enormous batch.
 - If an op fails, read the error message and correct yourself before retrying.
-- Prefer small batches over one enormous batch.
-- Reply in the user's language.
-- After applying changes, summarize what changed in one or two sentences.
+- Never use clear_graph unless the user explicitly asked to start over.
+- Reply in the user's language, and after applying changes summarize what changed in one or two sentences.
 
-## Available node types
-${catalog}
+## Node catalog index (NodeName [Category] - description). Call get_node_schemas for exact ports/params.
+${index}
 
 ## Current graph
 ${snapshot}`;

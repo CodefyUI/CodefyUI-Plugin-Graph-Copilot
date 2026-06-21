@@ -270,9 +270,15 @@ describe('buildSystemPrompt', () => {
   const defs = [makeNode()];
   const graph = makeSmallGraph();
 
-  it('contains the catalog section header', () => {
+  it('contains the node-index section header', () => {
     const prompt = buildSystemPrompt(defs, graph);
-    expect(prompt).toContain('## Available node types');
+    expect(prompt).toContain('## Node catalog index');
+  });
+
+  it('mentions the get_node_schemas and validate_graph workflow', () => {
+    const prompt = buildSystemPrompt(defs, graph);
+    expect(prompt).toContain('get_node_schemas');
+    expect(prompt).toContain('validate_graph');
   });
 
   it('contains the graph section header', () => {
@@ -280,9 +286,12 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('## Current graph');
   });
 
-  it('contains the compact catalog content', () => {
+  it('contains the compact node index (name [category], no ports/params)', () => {
     const prompt = buildSystemPrompt(defs, graph);
-    expect(prompt).toContain('Conv2d: in[x:TENSOR] out[y:TENSOR] [category: Layer]');
+    expect(prompt).toContain('Conv2d [Layer]');
+    // Token reduction: full ports/params are fetched on demand via
+    // get_node_schemas, NOT embedded in the per-round system prompt.
+    expect(prompt).not.toContain('in[x:TENSOR] out[y:TENSOR]');
   });
 
   it('contains the graph snapshot content', () => {

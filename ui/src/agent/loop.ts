@@ -6,18 +6,23 @@
  * the model emits stop_reason==='end' or MAX_TOOL_ROUNDS is reached.
  */
 
-import { streamChat } from '../llm/client';
-import type { WireMessage, WireToolCall, DoneEvent } from '../llm/client';
-import { buildSystemPrompt, graphSnapshot } from './prompt';
+import { streamChat, composeUserContent } from '../llm/client';
+import type { WireMessage, WireToolCall, DoneEvent, Provider } from '../llm/client';
+import { buildSystemPrompt, graphSnapshot, compactCatalog, compactIndex } from './prompt';
 import type { Settings } from '../state/settings';
 import type { ChatTurn } from '../state/conversations';
+import type { Attachment } from '../state/attachments';
 import type { CodefyUIPluginAPI, GraphOp, ApplyResult, OpResult } from '../types/codefyui';
 
 // ---------------------------------------------------------------------------
 // Constants & tool definitions
 // ---------------------------------------------------------------------------
 
-export const MAX_TOOL_ROUNDS = 8;
+export const MAX_TOOL_ROUNDS = 16;
+
+/** Extra rounds the runnability gate may spend nudging the model to fix
+ * validation errors after it tries to finish. */
+export const MAX_VALIDATION_NUDGES = 2;
 
 export const TOOLS = [
   {
@@ -25,7 +30,7 @@ export const TOOLS = [
     description:
       `Apply a batch of graph edits to the canvas as ONE undo step. Failing operations are skipped and reported per-index (with an error message) so you can self-correct and retry.
 Each entry in "operations" is one GraphOp object; use these EXACT field names:
-- {"op":"add_node","node_type":"<exact catalog name>","ref":"<alias>","params":{...},"position":{"x":<num>,"y":<num>}} — ref/params/position optional. "ref" is a temporary alias you may use as source/target/node_id later in the SAME batch, before the real node id exists.
+- {"op":"add_node","node_type":"<exact catalog name>","ref":"<alias>","params":{...},"position":{"x":<num>,"y":<num>}} — ref/params/position optional. "ref" is a temporary alias usable as source/target/node_id ONLY within this SAME batch. In a LATER apply_graph_operations call refs are gone — use the real node id from the previous result (the "refs" map or each op's "node_id"), or call get_current_graph.
 - {"op":"connect","source":"<node id or ref>","source_handle":"<output port name>","target":"<node id or ref>","target_handle":"<input port name>"} — handle names are the port names from the catalog out[...] / in[...]. For control-flow trigger edges use source_handle "trigger".
 - {"op":"set_params","node_id":"<node id or ref>","params":{...}}
 - {"op":"remove_node","node_id":"<node id or ref>"}
@@ -47,6 +52,36 @@ Each entry in "operations" is one GraphOp object; use these EXACT field names:
     name: 'get_current_graph',
     description: 'Read the current serialized graph (the user may have edited it manually).',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_node_schemas',
+    description:
+      'Get the exact input/output ports and params for specific node types. Call this before adding/connecting those nodes so you use correct port and param names (the catalog index lists names only). Returns one detail line per node: "Name: in[port:TYPE, ...] out[...] params[name:type=default{range}, ...] [category: X]".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        node_types: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['node_types'],
+    },
+  },
+  {
+    name: 'validate_graph',
+    description:
+      'Validate the current graph on the server: checks for unknown node types, MISSING REQUIRED INPUT connections, and out-of-range params. Returns {"valid": boolean, "errors": string[]}. Call this after building and fix every error until valid is true — this is what makes the graph actually runnable.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'research',
+    description:
+      'For COMPLEX graphs only: research several independent sub-tasks IN PARALLEL using focused lightweight sub-agents (each sees just the node index, not this whole conversation, so it stays token-cheap). Returns a concise answer per question. Example: ["which nodes build the data pipeline for MNIST?", "which nodes build a CNN classifier?", "which nodes form the training loop?"]. Use the answers to plan, then build with apply_graph_operations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        questions: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['questions'],
+    },
   },
 ];
 
@@ -72,6 +107,8 @@ export interface RunTurnOpts {
   settings: Settings;
   history: ChatTurn[]; // prior conversation turns (no system)
   userText: string;
+  /** Files attached to this user turn (images/pdf/text). */
+  attachments?: Attachment[];
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
 }
@@ -80,9 +117,15 @@ export interface RunTurnOpts {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Map a ChatTurn to a WireMessage, stripping opsSummary (local-only). */
-function turnToWire(turn: ChatTurn): WireMessage {
-  const msg: WireMessage = { role: turn.role, content: turn.content };
+/** Map a ChatTurn to a WireMessage, stripping opsSummary (local-only). User
+ *  turns with attachments get their content composed (text inlined, images as
+ *  multimodal parts); everything else passes through as a plain string. */
+function turnToWire(turn: ChatTurn, provider: Provider): WireMessage {
+  const content =
+    turn.role === 'user' && turn.attachments && turn.attachments.length > 0
+      ? composeUserContent(turn.content, turn.attachments, provider)
+      : turn.content;
+  const msg: WireMessage = { role: turn.role, content };
   if (turn.tool_calls) msg.tool_calls = turn.tool_calls;
   if (turn.tool_call_id) msg.tool_call_id = turn.tool_call_id;
   return msg;
@@ -131,14 +174,19 @@ function buildInitialMessages(
   api: CodefyUIPluginAPI,
   history: ChatTurn[],
   userText: string,
+  attachments: Attachment[] | undefined,
+  provider: Provider,
 ): WireMessage[] {
   const systemContent = buildSystemPrompt(
     api.graph.getNodeDefinitions(),
     api.graph.getGraph(),
   );
   const systemMsg: WireMessage = { role: 'system', content: systemContent };
-  const windowedHistory = history.slice(-20).map(turnToWire);
-  const userMsg: WireMessage = { role: 'user', content: userText };
+  const windowedHistory = history.slice(-20).map((t) => turnToWire(t, provider));
+  const userMsg: WireMessage = {
+    role: 'user',
+    content: composeUserContent(userText, attachments, provider),
+  };
   return [systemMsg, ...windowedHistory, userMsg];
 }
 
@@ -148,6 +196,8 @@ function buildInitialMessages(
 function buildChatBody(
   settings: Settings,
   messages: WireMessage[],
+  tools: typeof TOOLS = TOOLS,
+  maxTokens = 8192,
 ) {
   const provider = settings.provider;
   const model = settings.models[provider] ?? '';
@@ -164,8 +214,8 @@ function buildChatBody(
     provider,
     model,
     messages,
-    tools: TOOLS,
-    max_tokens: 8192,
+    tools,
+    max_tokens: maxTokens,
   };
 
   // api_key: all providers except openai-codex
@@ -191,16 +241,87 @@ function buildChatBody(
 }
 
 // ---------------------------------------------------------------------------
+// Server-side graph validation (runnability check)
+// ---------------------------------------------------------------------------
+
+/** POST the current graph to /api/graph/validate. The backend checks unknown
+ * node types, missing REQUIRED input connections, and out-of-range params —
+ * i.e. the things that stop a graph from running. */
+export async function validateCurrentGraph(
+  api: CodefyUIPluginAPI,
+): Promise<{ valid: boolean; errors: string[] }> {
+  const g = api.graph.getGraph();
+  try {
+    const res = await api.http.fetch('/api/graph/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodes: g.nodes, edges: g.edges }),
+    });
+    if (!res.ok) {
+      return { valid: false, errors: [`validate request failed: HTTP ${res.status}`] };
+    }
+    const data = (await res.json()) as { valid?: boolean; errors?: string[] };
+    return { valid: !!data.valid, errors: Array.isArray(data.errors) ? data.errors : [] };
+  } catch (err) {
+    return { valid: false, errors: [`validate request error: ${String(err)}`] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parallel research sub-agents
+// ---------------------------------------------------------------------------
+
+/** Run ONE focused, text-only research sub-agent. It sees only the compact
+ * node index (not the main conversation), so it stays cheap; several of these
+ * run in parallel to decompose a complex request without bloating the main
+ * agent's context. */
+async function researchSubagent(
+  api: CodefyUIPluginAPI,
+  settings: Settings,
+  question: string,
+  indexText: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const sys =
+    'You are a focused research sub-agent for CodefyUI Graph Copilot. Given a sub-task, ' +
+    'answer CONCISELY which node types (exact names from the index) are needed and how to wire ' +
+    'them (which output connects to which input). List node names + a one-line wiring plan. ' +
+    'No preamble, no code.\n\n## Node index\n' + indexText;
+  const messages: WireMessage[] = [
+    { role: 'system', content: sys },
+    { role: 'user', content: question },
+  ];
+  let text = '';
+  try {
+    await streamChat(
+      api,
+      buildChatBody(settings, messages, [], 1024),
+      {
+        onText: (t) => { text += t; },
+        onDone: (d) => { if (!text && d.message.content) text = d.message.content; },
+        onError: (e) => { text += `\n(research error: ${e})`; },
+      },
+      signal,
+    );
+  } catch (err) {
+    return `(research failed: ${String(err)})`;
+  }
+  return text.trim() || '(no answer)';
+}
+
+// ---------------------------------------------------------------------------
 // execute a single tool call, return the tool-result wire message content
 // and optionally trigger callbacks
 // ---------------------------------------------------------------------------
 
-function executeTool(
+async function executeTool(
   toolCall: WireToolCall,
   api: CodefyUIPluginAPI,
+  settings: Settings,
   callbacks: TurnCallbacks,
   roundOpsSummaries: string[],
-): string {
+  signal?: AbortSignal,
+): Promise<string> {
   const { name, arguments: args } = toolCall;
 
   if (name === 'apply_graph_operations') {
@@ -227,6 +348,39 @@ function executeTool(
     });
   }
 
+  if (name === 'get_node_schemas') {
+    const requested = Array.isArray(args.node_types) ? (args.node_types as unknown[]) : [];
+    const names = requested.map((n) => String(n));
+    const defs = api.graph.getNodeDefinitions();
+    const byName = new Map(defs.map((d) => [d.node_name, d]));
+    const found = names
+      .map((n) => byName.get(n))
+      .filter((d): d is NonNullable<typeof d> => !!d);
+    const missing = names.filter((n) => !byName.has(n));
+    let out = found.length > 0 ? compactCatalog(found) : '(no matching node types)';
+    if (missing.length > 0) {
+      out += `\n(unknown node types, not in catalog: ${missing.join(', ')})`;
+    }
+    return out;
+  }
+
+  if (name === 'validate_graph') {
+    return JSON.stringify(await validateCurrentGraph(api));
+  }
+
+  if (name === 'research') {
+    const raw = Array.isArray(args.questions) ? (args.questions as unknown[]) : [];
+    const questions = raw.map((q) => String(q)).filter((q) => q.trim()).slice(0, 4);
+    if (questions.length === 0) {
+      return JSON.stringify({ error: 'research requires a non-empty "questions" array' });
+    }
+    const indexText = compactIndex(api.graph.getNodeDefinitions());
+    const answers = await Promise.all(
+      questions.map((q) => researchSubagent(api, settings, q, indexText, signal)),
+    );
+    return questions.map((q, i) => `[${i + 1}] Q: ${q}\nA: ${answers[i]}`).join('\n\n');
+  }
+
   if (name === 'get_current_graph') {
     return graphSnapshot(api.graph.getGraph());
   }
@@ -239,15 +393,18 @@ function executeTool(
 // ---------------------------------------------------------------------------
 
 export async function runTurn(opts: RunTurnOpts): Promise<void> {
-  const { api, settings, history, userText, callbacks, signal } = opts;
+  const { api, settings, history, userText, attachments, callbacks, signal } = opts;
 
   // Accumulated ChatTurns across all rounds (to commit at the end)
   const allTurns: ChatTurn[] = [];
 
   // Wire messages start with system + windowed history + user
-  const wireMessages: WireMessage[] = buildInitialMessages(api, history, userText);
+  const wireMessages: WireMessage[] = buildInitialMessages(
+    api, history, userText, attachments, settings.provider,
+  );
 
   let roundsWithToolUse = 0;
+  let validationNudges = 0;
 
   // Loop up to MAX_TOOL_ROUNDS
   try {
@@ -295,6 +452,30 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
       const content = done.message.content || accumulatedText;
 
       if (done.stop_reason === 'end' || toolCalls.length === 0) {
+        // Runnability gate: before accepting "done", make sure the graph
+        // actually validates. If not, feed the errors back (up to
+        // MAX_VALIDATION_NUDGES times) so the model fixes them. The nudge is
+        // context-only (not persisted to history) to keep the transcript clean.
+        const g = api.graph.getGraph();
+        if (
+          validationNudges < MAX_VALIDATION_NUDGES &&
+          Array.isArray(g.nodes) && g.nodes.length > 0
+        ) {
+          const v = await validateCurrentGraph(api);
+          if (!v.valid && v.errors.length > 0) {
+            validationNudges++;
+            wireMessages.push({ role: 'assistant', content });
+            wireMessages.push({
+              role: 'user',
+              content:
+                'The graph is not runnable yet — validate_graph reported these errors. ' +
+                'Fix them with graph operations, then validate again before finishing:\n' +
+                v.errors.map((e) => `- ${e}`).join('\n'),
+            });
+            continue;
+          }
+        }
+
         // Final assistant turn
         const finalTurn: ChatTurn = { role: 'assistant', content };
         allTurns.push(finalTurn);
@@ -312,7 +493,7 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
       const toolResultWireMsgs: WireMessage[] = [];
 
       for (const toolCall of toolCalls) {
-        const resultContent = executeTool(toolCall, api, callbacks, roundOpsSummaries);
+        const resultContent = await executeTool(toolCall, api, settings, callbacks, roundOpsSummaries, signal);
         const toolTurn: ChatTurn = {
           role: 'tool',
           content: resultContent,

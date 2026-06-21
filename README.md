@@ -5,6 +5,7 @@ Chat with an AI to **generate, tune, and improve the node graph** on your Codefy
 ## Features
 
 - **Build graphs by conversation** — the assistant knows your installed node catalog (types, ports, parameter schemas) and the live graph, applies batched operations (`add_node`, `connect`, `set_params`, `remove_node`, `auto_layout`, ...), and self-corrects from per-operation validation errors.
+- **Attach files** — add **images, PDFs, text, or code** to a message (📎 button, drag-and-drop, or paste). Text and PDFs are extracted and inlined into the prompt; images are sent as multimodal content to vision-capable models (OpenAI / Claude / OpenRouter). pdf.js is loaded on-demand from a CDN only when you attach a PDF.
 - **Conversation history** — past chats are listed in the panel; click one to continue where you left off (capped at 50, stored in your browser).
 - **Five providers** — set per-provider models and keys in the panel's Settings view:
   - **OpenAI API** (your API key)
@@ -81,6 +82,10 @@ cdui plugin install treeleaves30760/CodefyUI-Plugin-Graph-Copilot
 聊天面板 → 齒輪圖示：支援 OpenAI API（填 key）、**OpenAI Codex（ChatGPT 帳號登入，吃訂閱額度）**、OpenRouter、Claude API、自訂 OpenAI 相容端點（Ollama / LM Studio / vLLM）。
 
 API key 存在**你瀏覽器的 localStorage**，只會送到你本機的 CodefyUI 後端、再轉發給你選的供應商；伺服器端不落地、不記 log。Codex 登入沿用開源 Codex CLI 的公開 OAuth client id（OpenAI 條款灰色地帶，與其他第三方工具同款做法），請自行斟酌使用。
+
+## 附加檔案
+
+可以把**圖片、PDF、文字檔或程式碼**加進訊息裡（📎 按鈕、拖放、或直接貼上）。文字檔與 PDF 會被擷取成文字併入提示；圖片則以多模態內容送給支援視覺的模型（OpenAI / Claude / OpenRouter）。PDF 解析用的 pdf.js 只有在你真的附加 PDF 時才從 CDN 即時載入，不會增加外掛體積。
 
 ## 對話紀錄
 
