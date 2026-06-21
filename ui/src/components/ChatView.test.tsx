@@ -92,6 +92,7 @@ function renderChatView(overrides: {
   conversation?: Conversation;
   onConversationChange?: (c: Conversation) => void;
   onOpenSettings?: () => void;
+  onOpenHistory?: () => void;
   codexLoggedIn?: boolean;
 }) {
   const api = makeFakeApi();
@@ -103,6 +104,7 @@ function renderChatView(overrides: {
     conversation,
     onConversationChange: overrides.onConversationChange ?? vi.fn(),
     onOpenSettings: overrides.onOpenSettings ?? vi.fn(),
+    onOpenHistory: overrides.onOpenHistory ?? vi.fn(),
   };
   const result = render(<ChatView {...props} />);
   return { ...result, api };

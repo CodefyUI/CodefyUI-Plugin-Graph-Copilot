@@ -3,7 +3,7 @@ import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import { providerReady } from '../state/settings';
 import type { Conversation, ChatTurn } from '../state/conversations';
-import { saveConversation, titleFrom } from '../state/conversations';
+import { saveConversation, titleFrom, listConversations } from '../state/conversations';
 import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
 import { runTurn } from '../agent/loop';
@@ -70,6 +70,15 @@ function RemoveIcon() {
   );
 }
 
+function ClockIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Staged attachment (local, pre-send) state
 // ---------------------------------------------------------------------------
@@ -95,6 +104,7 @@ export interface ChatViewProps {
   conversation: Conversation;
   onConversationChange: (c: Conversation) => void;
   onOpenSettings: () => void;
+  onOpenHistory: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +118,7 @@ export function ChatView({
   conversation,
   onConversationChange,
   onOpenSettings,
+  onOpenHistory,
 }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -315,6 +326,12 @@ export function ChatView({
   const visibleMessages = conversation.messages.filter((t) => t.role !== 'tool');
   const isEmpty = visibleMessages.length === 0 && !busy;
 
+  // On the welcome screen, surface a shortcut to past chats (every panel open
+  // starts a fresh conversation, so this is where users look for earlier ones).
+  const prevCount = isEmpty
+    ? listConversations(api).filter((c) => c.id !== conversation.id).length
+    : 0;
+
   return (
     <div
       className={`gcp-chat${dragging ? ' gcp-dragging' : ''}`}
@@ -333,6 +350,16 @@ export function ChatView({
               Describe the pipeline you want, ask for parameter changes, or attach an image,
               PDF, or code file for context.
             </div>
+            {prevCount > 0 && (
+              <button
+                className="gcp-welcome-history"
+                onClick={onOpenHistory}
+                aria-label="View previous conversations"
+              >
+                <ClockIcon />
+                Previous conversations ({prevCount})
+              </button>
+            )}
           </div>
         )}
 

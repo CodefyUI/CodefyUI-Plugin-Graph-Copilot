@@ -79,6 +79,7 @@ function renderChatView(conversation?: Conversation) {
       conversation={conversation ?? newConversation('openai', 'gpt-5.2')}
       onConversationChange={onConversationChange}
       onOpenSettings={vi.fn()}
+      onOpenHistory={vi.fn()}
     />,
   );
   return { ...result, api, onConversationChange };
