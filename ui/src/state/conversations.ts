@@ -62,8 +62,52 @@ function readAll(api: StrictApi): Conversation[] {
   }
 }
 
+/** Strip large base64 image blobs from a conversation (keep text + metadata),
+ *  used as a last resort when stored data overflows the storage quota. */
+function stripAttachmentBlobs(c: Conversation): Conversation {
+  if (!c.messages.some((m) => m.attachments?.some((a) => a.dataUrl))) return c;
+  return {
+    ...c,
+    messages: c.messages.map((m) =>
+      m.attachments
+        ? {
+            ...m,
+            attachments: m.attachments.map((a) =>
+              a.dataUrl ? { ...a, dataUrl: undefined } : a,
+            ),
+          }
+        : m,
+    ),
+  };
+}
+
+function trySet(api: StrictApi, list: Conversation[]): boolean {
+  try {
+    api.storage.set(STORAGE_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false; // most likely a quota overflow from large image data URLs
+  }
+}
+
+/**
+ * Persist the (newest-first) conversation list, degrading gracefully when it
+ * overflows the storage quota — large pasted/attached images can blow past
+ * localStorage's ~5 MB cap. Strategy: drop the oldest conversations until it
+ * fits; if still too big, strip image blobs (keeping text + history). This
+ * never throws, so a send is never stranded by a failed save.
+ */
 function writeAll(api: StrictApi, list: Conversation[]): void {
-  api.storage.set(STORAGE_KEY, JSON.stringify(list));
+  if (trySet(api, list)) return;
+
+  const trimmed = [...list];
+  while (trimmed.length > 1) {
+    trimmed.pop(); // list is newest-first, so this drops the oldest
+    if (trySet(api, trimmed)) return;
+  }
+
+  if (trySet(api, list.map(stripAttachmentBlobs))) return;
+  trySet(api, list.slice(0, 1).map(stripAttachmentBlobs)); // last resort
 }
 
 // ---------------------------------------------------------------------------

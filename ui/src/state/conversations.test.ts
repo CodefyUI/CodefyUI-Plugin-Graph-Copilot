@@ -174,3 +174,62 @@ describe('titleFrom', () => {
     expect(titleFrom('')).toBe('');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Quota-safe persistence (large image attachments)
+// ---------------------------------------------------------------------------
+
+describe('writeAll quota handling', () => {
+  function quotaStorage(limit: number) {
+    const store: Record<string, string> = {};
+    return {
+      get: (k: string) => store[k] ?? null,
+      set: (k: string, v: string) => {
+        if (v.length > limit) throw new Error('QuotaExceededError');
+        store[k] = v;
+      },
+      remove: (k: string) => { delete store[k]; },
+    };
+  }
+
+  it('strips image blobs (not throws) when the payload overflows quota', () => {
+    const api = makeApi(quotaStorage(2000));
+    const conv = makeConv({
+      messages: [
+        {
+          role: 'user',
+          content: 'look at this',
+          attachments: [
+            { id: '1', kind: 'image', name: 'big.png', size: 1, mime: 'image/png', dataUrl: 'data:image/png;base64,' + 'A'.repeat(5000) },
+          ],
+        },
+      ],
+    });
+
+    expect(() => saveConversation(api as any, conv)).not.toThrow();
+
+    const list = listConversations(api as any);
+    expect(list).toHaveLength(1);
+    const att = list[0].messages[0].attachments![0];
+    expect(att.dataUrl).toBeUndefined(); // blob stripped to fit
+    expect(att.name).toBe('big.png');    // metadata preserved
+  });
+
+  it('keeps the image blob when it comfortably fits under quota', () => {
+    const api = makeApi(quotaStorage(1_000_000));
+    const conv = makeConv({
+      messages: [
+        {
+          role: 'user',
+          content: 'small',
+          attachments: [
+            { id: '1', kind: 'image', name: 'tiny.png', size: 1, mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' },
+          ],
+        },
+      ],
+    });
+    saveConversation(api as any, conv);
+    const att = listConversations(api as any)[0].messages[0].attachments![0];
+    expect(att.dataUrl).toBe('data:image/png;base64,AAAA');
+  });
+});
