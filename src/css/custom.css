@@ -1,0 +1,31 @@
+/**
+ * Graph Copilot docs theme — dark + teal, echoing the plugin's "Crafted dark" UI.
+ * Infima CSS variables: https://docusaurus.io/docs/styling-layout
+ */
+
+:root {
+  /* Teal, darkened for readable contrast on the light background. */
+  --ifm-color-primary: #0a91a8;
+  --ifm-color-primary-dark: #098397;
+  --ifm-color-primary-darker: #087b8e;
+  --ifm-color-primary-darkest: #066675;
+  --ifm-color-primary-light: #0b9fb9;
+  --ifm-color-primary-lighter: #0ca7c2;
+  --ifm-color-primary-lightest: #0fbcd9;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+/* Brighter teal on the dark surfaces the plugin itself uses. */
+[data-theme='dark'] {
+  --ifm-color-primary: #22c8e6;
+  --ifm-color-primary-dark: #14bcdb;
+  --ifm-color-primary-darker: #13b2cf;
+  --ifm-color-primary-darkest: #0f93ab;
+  --ifm-color-primary-light: #3bcfe9;
+  --ifm-color-primary-lighter: #48d3ea;
+  --ifm-color-primary-lightest: #6fdef0;
+  --ifm-background-color: #16191f;
+  --ifm-background-surface-color: #1e2128;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}

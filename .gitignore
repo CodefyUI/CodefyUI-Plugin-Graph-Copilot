@@ -4,3 +4,7 @@ ui/dist/
 .DS_Store
 ui/tsconfig.tsbuildinfo
 ui/src/**/*.js
+
+# Docusaurus docs site (repo root)
+/build/
+/.docusaurus/
