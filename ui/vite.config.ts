@@ -25,5 +25,25 @@ export default defineConfig(({ command }) => ({
     environment: 'jsdom',
     setupFiles: ['src/test/setup.ts'],
     passWithNoTests: true,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'text'],
+      all: true,
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.d.ts',
+        'src/test/**',
+      ],
+      // High-but-not-100% gate. statements/lines sit at ~90%; functions and
+      // branches are a notch lower because some defensive paths and the
+      // runtime-only pdf.js CDN import are deliberately left uncovered.
+      thresholds: {
+        statements: 90,
+        lines: 90,
+        functions: 85,
+        branches: 80,
+      },
+    },
   },
 }));

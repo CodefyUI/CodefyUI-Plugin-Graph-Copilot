@@ -13,7 +13,7 @@ jobs:
         with: { node-version: 22, cache: pnpm, cache-dependency-path: ui/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
         working-directory: ui
-      - run: pnpm test
+      - run: pnpm run test:coverage
         working-directory: ui
       - run: pnpm build
         working-directory: ui
