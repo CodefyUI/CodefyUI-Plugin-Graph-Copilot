@@ -2,6 +2,8 @@
 
 Chat with an AI to **generate, tune, and improve the node graph** on your CodefyUI canvas. Installing this plugin adds a floating assistant button at the bottom-right of the editor; clicking it opens a chat window where you can describe the pipeline you want, ask for parameter changes, or request improvements — the assistant edits the canvas directly through tool calls, and every AI edit is a single undo step (Ctrl+Z reverts it).
 
+📖 **Full documentation:** <https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/>
+
 ## Features
 
 - **Build graphs by conversation** — the assistant knows your installed node catalog (types, ports, parameter schemas) and the live graph, applies batched operations (`add_node`, `connect`, `set_params`, `remove_node`, `auto_layout`, ...), and self-corrects from per-operation validation errors.
@@ -57,7 +59,9 @@ pnpm build         # type-check + bundle to ../frontend/index.js
 
 `frontend/index.js` (the built ESM bundle) is **committed** — end users install via GitHub tarball with no Node toolchain, so CI fails if the dist is stale. After changing `ui/`, run `pnpm build` and commit the refreshed `frontend/`.
 
-Design/plan docs: `docs/plans/`. Built from the [CodefyUI-Plugin-Official](https://github.com/treeleaves30760/CodefyUI-Plugin-Official) template.
+Documentation site: <https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/> — source in `docs/` (Docusaurus, bilingual). Run it locally with `pnpm install && pnpm start` at the repo root.
+
+Built from the [CodefyUI-Plugin-Official](https://github.com/treeleaves30760/CodefyUI-Plugin-Official) template.
 
 ## License
 
@@ -68,6 +72,8 @@ MIT
 # Graph Copilot — CodefyUI 的 AI 聊天助手（繁體中文）
 
 跟 AI 對話來**生成、調整、改進**你畫布上的節點圖。安裝後編輯器右下角會多一顆懸浮按鈕，點開就是聊天視窗：描述你要的 pipeline、要求改參數、或請它改進現有的圖 — 助手會直接透過工具呼叫編輯畫布，每一輪 AI 編輯都是一個復原步驟（Ctrl+Z 一次撤銷）。
+
+📖 **完整文件：** <https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/>
 
 ## 安裝
 

@@ -1,0 +1,18 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docsSidebar.category.Getting Started": {
+    "message": "開始使用",
+    "description": "The label for category 'Getting Started' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Using Graph Copilot": {
+    "message": "使用 Graph Copilot",
+    "description": "The label for category 'Using Graph Copilot' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Reference": {
+    "message": "參考",
+    "description": "The label for category 'Reference' in sidebar 'docsSidebar'"
+  }
+}
