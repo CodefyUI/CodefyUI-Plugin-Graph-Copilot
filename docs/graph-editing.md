@@ -25,7 +25,7 @@ A batch is a list of operations such as `add_node`, `connect`, `set_params`, `re
 
 ## Self-correction
 
-Failing operations are skipped and reported; the assistant reads the per-operation errors and retries within the same turn (up to a fixed number of tool rounds). After applying changes it summarizes what changed in a sentence or two, shown as an **applied-operations chip** under its reply.
+Failing operations are skipped and reported; the assistant reads the per-operation errors and retries within the same turn (up to a fixed number of tool rounds). Every tool call renders live as a **stage row** under the assistant's reply — a spinner while it runs, then ✓ or ⚠ with a humanized summary (e.g. `add_node ×2 — 2 nodes · 1 edge`); click a row to expand the full result payload.
 
 ## Undo
 

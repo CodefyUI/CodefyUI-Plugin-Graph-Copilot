@@ -8,6 +8,7 @@ import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
 import { runTurn } from '../agent/loop';
 import { MessageBubble } from './MessageBubble';
+import { groupTurns } from './turnStages';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -79,6 +80,16 @@ function ClockIcon() {
   );
 }
 
+function ErrorIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 7.5v5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Staged attachment (local, pre-send) state
 // ---------------------------------------------------------------------------
@@ -92,6 +103,16 @@ interface Staged {
   att?: Attachment;
   error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Welcome suggestions — one-click starters that also demo the staged display
+// ---------------------------------------------------------------------------
+
+const SUGGESTIONS = [
+  'Build a small CNN image classifier',
+  'Explain what my current graph does',
+  'Improve my current graph',
+];
 
 // ---------------------------------------------------------------------------
 // ChatView props
@@ -123,13 +144,17 @@ export function ChatView({
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  /** Turns finalized during the in-flight run (staged display). */
+  const [liveTurns, setLiveTurns] = useState<ChatTurn[]>([]);
+  const [elapsed, setElapsed] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastUserText, setLastUserText] = useState('');
   const [lastAttachments, setLastAttachments] = useState<Attachment[]>([]);
   const [staged, setStaged] = useState<Staged[]>([]);
   const [dragging, setDragging] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true); // stick to bottom unless the user scrolls up
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -143,10 +168,31 @@ export function ChatView({
   // Cancel any in-flight stream when the panel unmounts
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  // Auto-scroll to bottom whenever messages / streaming / staged change
+  // Elapsed-seconds ticker while a run is in flight
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation.messages, streamingText, staged.length]);
+    if (!busy) {
+      setElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const id = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [busy]);
+
+  // Auto-scroll: follow the stream only while the user is pinned to the bottom
+  // (instant, not smooth — smooth scrolling queues badly on token streams).
+  const handleListScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+  }, [conversation.messages, liveTurns, streamingText, staged.length, busy]);
 
   // Auto-resize textarea
   const autoResize = useCallback(() => {
@@ -251,6 +297,8 @@ export function ChatView({
       setStaged([]);
       setBusy(true);
       setStreamingText('');
+      setLiveTurns([]);
+      pinnedRef.current = true; // a fresh send re-pins the view to the bottom
 
       const userTurn: ChatTurn = { role: 'user', content: text };
       if (atts.length > 0) userTurn.attachments = atts;
@@ -282,10 +330,20 @@ export function ChatView({
             streamBuf += t;
             setStreamingText(streamBuf);
           },
-          onOpsApplied() { /* ops chip is attached via the turn's opsSummary */ },
+          onTurnAppended(turn) {
+            // An assistant turn absorbs the text streamed so far — reset the
+            // buffer so the next round streams into a fresh bubble.
+            if (turn.role !== 'tool') {
+              streamBuf = '';
+              setStreamingText('');
+            }
+            setLiveTurns((prev) => [...prev, turn]);
+          },
+          onOpsApplied() { /* stage rows render live from the appended turns */ },
           onTurnsCommitted(turns) {
             setStreamingText('');
             streamBuf = '';
+            setLiveTurns([]);
             conv = { ...conv, messages: [...conv.messages, ...turns], updatedAt: Date.now() };
             onConversationChange(conv);
             saveConversation(api, conv);
@@ -322,9 +380,20 @@ export function ChatView({
   // Render
   // ---------------------------------------------------------------------------
 
-  // Visible messages: filter out tool turns but keep assistant turns
-  const visibleMessages = conversation.messages.filter((t) => t.role !== 'tool');
-  const isEmpty = visibleMessages.length === 0 && !busy;
+  // One unified list: committed history + turns finalized during this run.
+  // groupTurns folds tool results into stages under their assistant turn, so
+  // the live view and the final view share the exact same layout.
+  const displayTurns = liveTurns.length > 0
+    ? [...conversation.messages, ...liveTurns]
+    : conversation.messages;
+  const items = groupTurns(displayTurns);
+  const isEmpty = items.length === 0 && !busy;
+
+  // While a tool is executing, its stage row already shows a spinner — the
+  // generic thinking indicator is only for gaps with no visible activity.
+  const lastItem = items[items.length - 1];
+  const toolRunning = !!lastItem && lastItem.stages.some((s) => !s.result);
+  const showThinking = busy && streamingText === '' && !toolRunning;
 
   // On the welcome screen, surface a shortcut to past chats (every panel open
   // starts a fresh conversation, so this is where users look for earlier ones).
@@ -341,7 +410,14 @@ export function ChatView({
       onDrop={onDrop}
     >
       {/* Message list */}
-      <div className="gcp-messages" role="log" aria-live="polite" aria-label="Conversation">
+      <div
+        className="gcp-messages"
+        role="log"
+        aria-live="polite"
+        aria-label="Conversation"
+        ref={listRef}
+        onScroll={handleListScroll}
+      >
         {isEmpty && (
           <div className="gcp-welcome">
             <div className="gcp-welcome-mark" aria-hidden="true">✦</div>
@@ -350,6 +426,15 @@ export function ChatView({
               Describe the pipeline you want, ask for parameter changes, or attach an image,
               PDF, or code file for context.
             </div>
+            {ready && (
+              <div className="gcp-welcome-suggestions" aria-label="Suggested prompts">
+                {SUGGESTIONS.map((s) => (
+                  <button key={s} className="gcp-suggestion" onClick={() => doSend(s, [])}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
             {prevCount > 0 && (
               <button
                 className="gcp-welcome-history"
@@ -363,25 +448,41 @@ export function ChatView({
           </div>
         )}
 
-        {visibleMessages.map((turn, i) => {
-          const isLastAssistant =
-            !busy && i === visibleMessages.length - 1 && turn.role === 'assistant';
-          return (
-            <MessageBubble
-              key={i}
-              turn={turn}
-              error={isLastAssistant && lastError ? lastError : null}
-              onRetry={handleRetry}
-              retryDisabled={busy}
-            />
-          );
-        })}
+        {items.map((item) => (
+          <MessageBubble key={item.key} turn={item.turn} stages={item.stages} />
+        ))}
 
-        {busy && (
-          <MessageBubble turn={{ role: 'assistant', content: '' }} streaming streamingText={streamingText} />
+        {/* Text currently streaming for this round */}
+        {busy && streamingText !== '' && (
+          <MessageBubble
+            turn={{ role: 'assistant', content: '' }}
+            streaming
+            streamingText={streamingText}
+          />
         )}
 
-        <div ref={messagesEndRef} />
+        {/* Waiting on the model (no visible activity yet) */}
+        {showThinking && (
+          <div className="gcp-thinking" role="status" aria-label="Waiting for the assistant">
+            <span className="gcp-thinking-orb" aria-hidden="true">✦</span>
+            <span className="gcp-thinking-text">Thinking</span>
+            {elapsed >= 3 && <span className="gcp-thinking-time">{elapsed}s</span>}
+          </div>
+        )}
+
+        {/* Failed run: standalone error row + retry */}
+        {lastError && !busy && (
+          <div className="gcp-error-row" role="alert">
+            <span className="gcp-error-icon" aria-hidden="true"><ErrorIcon /></span>
+            <div className="gcp-error-body">
+              <div className="gcp-error-title">Request failed</div>
+              <div className="gcp-error-text">{lastError}</div>
+            </div>
+            <button className="gcp-retry-btn" onClick={handleRetry} aria-label="Retry">
+              Retry
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Drop hint overlay */}
@@ -480,6 +581,13 @@ export function ChatView({
               <SendIcon />
             </button>
           )}
+        </div>
+
+        {/* Keyboard hint */}
+        <div className="gcp-input-hint" aria-hidden="true">
+          {busy
+            ? 'Generating — use the stop button to interrupt'
+            : 'Enter to send · Shift+Enter for a new line'}
         </div>
 
         {/* Provider-not-ready overlay */}

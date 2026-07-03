@@ -15,7 +15,7 @@ Chat with an AI to **generate, tune, and improve the node graph** on your Codefy
   - **OpenRouter** (your API key)
   - **Claude API** (your Anthropic API key)
   - **Custom (OpenAI-compatible)** — any base URL: Ollama, LM Studio, vLLM, ...
-- **Streaming replies** with applied-operations chips, stop button, and retry on errors.
+- **Staged streaming replies** — a multi-round agent run renders live as distinct steps (one bubble per round plus a tool stage row per call: spinner while running, ✓/⚠ when done, click to expand details), with markdown rendering, a stop button that keeps partial text, and retry on errors.
 
 ## Requirements
 
