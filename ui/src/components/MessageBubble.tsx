@@ -1,14 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { ChatTurn } from '../state/conversations';
 import type { AttachmentKind } from '../state/attachments';
+import type { ToolStage } from './turnStages';
+import { describeStage } from './turnStages';
+import { Markdown } from './markdown';
 
 interface MessageBubbleProps {
   turn: ChatTurn;
+  /** Tool stages grouped under this assistant turn (see turnStages). */
+  stages?: ToolStage[];
   streaming?: boolean;
   streamingText?: string;
-  error?: string | null;
-  onRetry?: () => void;
-  retryDisabled?: boolean;
 }
 
 /** Small file glyph for attachment chips (pdf vs generic text/code). */
@@ -26,12 +28,44 @@ function FileGlyph({ kind }: { kind: AttachmentKind }) {
   );
 }
 
+function CheckIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 5v9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <circle cx="12" cy="19" r="1.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`gcp-stage-chevron${open ? ' open' : ''}`}
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /**
- * Render turn content, splitting on fenced code blocks (```...```) into
- * prose <span> and <pre> blocks. Newlines in prose are preserved via
- * white-space: pre-wrap on the bubble.
+ * Render user-turn content, splitting on fenced code blocks (```...```) into
+ * prose <span> and <pre> blocks. User text is otherwise shown verbatim —
+ * markdown is only interpreted in assistant replies.
  */
-function renderContent(text: string): React.ReactNode[] {
+function renderPlain(text: string): React.ReactNode[] {
   const parts = text.split(/(```[^\n]*\n[\s\S]*?```|```[\s\S]*?```)/g);
   const nodes: React.ReactNode[] = [];
 
@@ -47,15 +81,55 @@ function renderContent(text: string): React.ReactNode[] {
   return nodes;
 }
 
+// ---------------------------------------------------------------------------
+// Tool stage row — one line per tool call: status, label, summary, expandable
+// detail. This is what makes an agent run read as distinct steps.
+// ---------------------------------------------------------------------------
+
+function ToolStageRow({ stage }: { stage: ToolStage }) {
+  const [open, setOpen] = useState(false);
+  const d = describeStage(stage);
+  const expandable = !!d.detail;
+
+  return (
+    <div className={`gcp-stage ${d.status}`}>
+      <button
+        type="button"
+        className="gcp-stage-head"
+        onClick={() => expandable && setOpen((v) => !v)}
+        aria-expanded={expandable ? open : undefined}
+        aria-label={`${d.label}${d.summary ? `: ${d.summary}` : ''}`}
+        disabled={!expandable}
+      >
+        <span className="gcp-stage-status" aria-hidden="true">
+          {d.status === 'running' ? (
+            <span className="gcp-stage-spinner" />
+          ) : d.status === 'ok' ? (
+            <CheckIcon />
+          ) : (
+            <AlertIcon />
+          )}
+        </span>
+        <span className="gcp-stage-label">{d.label}</span>
+        {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
+        {expandable && <ChevronIcon open={open} />}
+      </button>
+      {open && d.detail && <pre className="gcp-stage-detail">{d.detail}</pre>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MessageBubble
+// ---------------------------------------------------------------------------
+
 export function MessageBubble({
   turn,
+  stages = [],
   streaming = false,
   streamingText,
-  error = null,
-  onRetry,
-  retryDisabled = false,
 }: MessageBubbleProps) {
-  // Tool turns are not rendered as visible bubbles
+  // Tool turns are never rendered standalone (they fold into stages)
   if (turn.role === 'tool') return null;
 
   const isUser = turn.role === 'user';
@@ -81,26 +155,28 @@ export function MessageBubble({
         </div>
       )}
 
-      {/* Text bubble — skipped when a user turn carries only attachments */}
-      {(hasText || streaming) && (
-        <div className={`gcp-bubble${error ? ' error' : ''}`}>
-          {renderContent(displayText)}
+      {/* Text bubble — skipped when a turn carries only attachments/stages */}
+      {(hasText || (streaming && stages.length === 0)) && (
+        <div className="gcp-bubble">
+          {isUser ? renderPlain(displayText) : <Markdown text={displayText} />}
           {streaming && <span className="gcp-caret" aria-hidden="true" />}
         </div>
       )}
 
-      {/* Ops summary chip (assistant turns only) */}
-      {!isUser && turn.opsSummary && (
-        <div className="gcp-ops-chip">
-          <span>Applied: {turn.opsSummary}</span>
+      {/* Tool stages (assistant turns only) */}
+      {stages.length > 0 && (
+        <div className="gcp-stages">
+          {stages.map((s, i) => (
+            <ToolStageRow key={`${s.call.id}-${i}`} stage={s} />
+          ))}
         </div>
       )}
 
-      {/* Error + retry */}
-      {error && (
-        <button className="gcp-retry-btn" onClick={onRetry} disabled={retryDisabled} aria-label="Retry">
-          Retry
-        </button>
+      {/* Legacy ops summary chip — only for turns without renderable stages */}
+      {!isUser && turn.opsSummary && stages.length === 0 && (
+        <div className="gcp-ops-chip">
+          <span>Applied: {turn.opsSummary}</span>
+        </div>
       )}
     </div>
   );

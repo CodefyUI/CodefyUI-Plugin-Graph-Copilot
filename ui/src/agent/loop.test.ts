@@ -691,7 +691,171 @@ describe('runTurn', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Attachments — multimodal user content
+// 8. Incremental turn events (staged streaming display)
+// ---------------------------------------------------------------------------
+
+describe('runTurn — incremental turn events', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  interface StagedState {
+    cbs: TurnCallbacks;
+    events: string[]; // interleaving log: 'appended:<role>' | 'ops'
+    appended: ChatTurn[];
+    committed: ChatTurn[] | null;
+    errors: string[];
+    finished: number;
+  }
+
+  function makeStagedCallbacks(): StagedState {
+    const state: StagedState = {
+      cbs: null as unknown as TurnCallbacks,
+      events: [],
+      appended: [],
+      committed: null,
+      errors: [],
+      finished: 0,
+    };
+    state.cbs = {
+      onTextDelta: () => {},
+      onTurnAppended: (turn) => {
+        state.events.push(`appended:${turn.role}`);
+        state.appended.push(turn);
+      },
+      onOpsApplied: () => state.events.push('ops'),
+      onTurnsCommitted: (turns) => { state.committed = turns; },
+      onError: (msg) => state.errors.push(msg),
+      onFinished: () => { state.finished++; },
+    };
+    return state;
+  }
+
+  const TOOL_OPS = [{ op: 'add_node', node_type: 'Conv2d' }];
+
+  it('emits the tool-round assistant turn BEFORE tool execution, tool result after, final assistant last', async () => {
+    const api = makeFakeApi();
+    const state = makeStagedCallbacks();
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('tc1', 'apply_graph_operations', { operations: TOOL_OPS }, 'Adding...') },
+      { textDeltas: ['Done!'], done: makeDoneEnd('Done!') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'add', callbacks: state.cbs });
+
+    // The assistant turn (with tool_calls) must be visible before ops execute.
+    expect(state.events).toEqual(['appended:assistant', 'ops', 'appended:tool', 'appended:assistant']);
+    expect(state.appended[0].tool_calls).toHaveLength(1);
+    expect(state.appended[0].content).toBe('Adding...');
+    expect(state.appended[1].tool_call_id).toBe('tc1');
+    expect(state.appended[2].content).toBe('Done!');
+  });
+
+  it('appended turns match committed turns one-to-one (commit only enriches opsSummary)', async () => {
+    const api = makeFakeApi();
+    const state = makeStagedCallbacks();
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('tc1', 'apply_graph_operations', { operations: TOOL_OPS }, 'working') },
+      { done: makeDoneEnd('finished') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'go', callbacks: state.cbs });
+
+    expect(state.committed).not.toBeNull();
+    expect(state.committed!).toHaveLength(state.appended.length);
+    state.committed!.forEach((turn, i) => {
+      expect(turn.role).toBe(state.appended[i].role);
+      expect(turn.content).toBe(state.appended[i].content);
+      expect(turn.tool_calls ?? []).toEqual(state.appended[i].tool_calls ?? []);
+    });
+    // The committed tool-round assistant turn carries the ops summary.
+    const toolRound = state.committed!.find((t) => t.role === 'assistant' && t.tool_calls?.length);
+    expect(toolRound!.opsSummary).toMatch(/add_node/);
+  });
+
+  it('runnability gate: the pre-nudge assistant text is appended and committed (streamed text never vanishes)', async () => {
+    const api = makeFakeApi();
+    (api.http.fetch as Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: false, errors: ['Missing input x'] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) });
+    const state = makeStagedCallbacks();
+
+    scriptStreamChat([
+      { done: makeDoneEnd('All done (but invalid).') },
+      { done: makeDoneEnd('Fixed it.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
+
+    expect(state.committed).not.toBeNull();
+    const contents = state.committed!.map((t) => t.content);
+    expect(contents).toEqual(['All done (but invalid).', 'Fixed it.']);
+    expect(state.appended.map((t) => t.content)).toEqual(contents);
+    expect(state.finished).toBe(1);
+  });
+
+  it('stream error mid-round: partial streamed text is committed as an assistant turn', async () => {
+    const api = makeFakeApi();
+    const state = makeStagedCallbacks();
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('tc1', 'apply_graph_operations', { operations: TOOL_OPS }) },
+      { textDeltas: ['partial...'], error: 'proxy timeout' },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'err', callbacks: state.cbs });
+
+    expect(state.errors).toEqual(['proxy timeout']);
+    const last = state.committed![state.committed!.length - 1];
+    expect(last.role).toBe('assistant');
+    expect(last.content).toBe('partial...');
+    // Round-1 turns were appended live before the failure.
+    expect(state.appended.some((t) => t.role === 'tool')).toBe(true);
+  });
+
+  it('aborted stream (no done event): partial text is committed, empty partials are not', async () => {
+    const api = makeFakeApi();
+    const state = makeStagedCallbacks();
+
+    // Stream yields text then ends without done/error (abort path).
+    scriptStreamChat([{ textDeltas: ['cut off'] }]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'stop me', callbacks: state.cbs });
+
+    expect(state.committed).not.toBeNull();
+    expect(state.committed!).toHaveLength(1);
+    expect(state.committed![0]).toMatchObject({ role: 'assistant', content: 'cut off' });
+    expect(state.finished).toBe(1);
+
+    // A silent abort with no text commits nothing.
+    vi.clearAllMocks();
+    const state2 = makeStagedCallbacks();
+    scriptStreamChat([{}]);
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'stop again', callbacks: state2.cbs });
+    expect(state2.committed).toEqual([]);
+  });
+
+  it('back-compat: callbacks without onTurnAppended still work through a tool round', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks(); // no onTurnAppended
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('tc1', 'apply_graph_operations', { operations: TOOL_OPS }) },
+      { done: makeDoneEnd('ok') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'compat', callbacks: state.cbs });
+
+    expect(state.errors).toHaveLength(0);
+    expect(state.finished).toBe(1);
+    expect(state.committed!.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Attachments — multimodal user content
 // ---------------------------------------------------------------------------
 
 describe('runTurn — attachments', () => {

@@ -91,6 +91,13 @@ Each entry in "operations" is one GraphOp object; use these EXACT field names:
 
 export interface TurnCallbacks {
   onTextDelta(t: string): void;
+  /**
+   * A turn was finalized mid-run — fired once per turn, in order, as the run
+   * progresses (assistant round with tool_calls BEFORE its tools execute, each
+   * tool result as it lands, the final assistant reply). Lets the UI render
+   * staged progress instead of one growing blob. Optional for back-compat.
+   */
+  onTurnAppended?(turn: ChatTurn): void;
   onOpsApplied(summary: string, result: ApplyResult): void;
   /** Called once at the end (success, error, or cap) with ALL turns accumulated. */
   onTurnsCommitted(turns: ChatTurn[]): void;
@@ -406,6 +413,17 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
   let roundsWithToolUse = 0;
   let validationNudges = 0;
 
+  /** Append a finalized turn and surface it to the UI immediately. */
+  const appendTurn = (turn: ChatTurn): void => {
+    allTurns.push(turn);
+    callbacks.onTurnAppended?.(turn);
+  };
+
+  /** Keep partially-streamed text visible (stop button / dropped stream). */
+  const commitPartialText = (text: string): void => {
+    if (text.trim()) appendTurn({ role: 'assistant', content: text });
+  };
+
   // Loop up to MAX_TOOL_ROUNDS
   try {
     while (true) {
@@ -433,6 +451,7 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
 
       if (streamError !== null) {
         // Commit whatever we've accumulated so far
+        commitPartialText(accumulatedText);
         callbacks.onTurnsCommitted(allTurns);
         callbacks.onError(streamError);
         callbacks.onFinished();
@@ -440,7 +459,8 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
       }
 
       if (!doneEvent) {
-        // Stream ended without a done event (abnormal)
+        // Stream ended without a done event (user stop or dropped connection)
+        commitPartialText(accumulatedText);
         callbacks.onTurnsCommitted(allTurns);
         callbacks.onFinished();
         return;
@@ -464,6 +484,9 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
           const v = await validateCurrentGraph(api);
           if (!v.valid && v.errors.length > 0) {
             validationNudges++;
+            // The assistant's text stays in history (the user watched it
+            // stream); only the corrective user nudge is context-only.
+            if (content.trim()) appendTurn({ role: 'assistant', content });
             wireMessages.push({ role: 'assistant', content });
             wireMessages.push({
               role: 'user',
@@ -477,8 +500,7 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
         }
 
         // Final assistant turn
-        const finalTurn: ChatTurn = { role: 'assistant', content };
-        allTurns.push(finalTurn);
+        appendTurn({ role: 'assistant', content });
         callbacks.onTurnsCommitted(allTurns);
         callbacks.onFinished();
         return;
@@ -487,19 +509,27 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
       // stop_reason === 'tool_use'
       roundsWithToolUse++;
 
-      // Execute each tool call
+      // Surface this round's assistant turn (text + pending tool calls)
+      // BEFORE executing, so the UI can show the stages as they run.
+      const assistantTurn: ChatTurn = {
+        role: 'assistant',
+        content,
+        tool_calls: toolCalls,
+      };
+      const assistantIdx = allTurns.length;
+      appendTurn(assistantTurn);
+
+      // Execute each tool call, surfacing results as they land
       const roundOpsSummaries: string[] = [];
-      const toolResultTurns: ChatTurn[] = [];
       const toolResultWireMsgs: WireMessage[] = [];
 
       for (const toolCall of toolCalls) {
         const resultContent = await executeTool(toolCall, api, settings, callbacks, roundOpsSummaries, signal);
-        const toolTurn: ChatTurn = {
+        appendTurn({
           role: 'tool',
           content: resultContent,
           tool_call_id: toolCall.id,
-        };
-        toolResultTurns.push(toolTurn);
+        });
         toolResultWireMsgs.push({
           role: 'tool',
           content: resultContent,
@@ -507,19 +537,11 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
         });
       }
 
-      // Build the assistant ChatTurn for this round (with opsSummary if any)
-      const assistantTurn: ChatTurn = {
-        role: 'assistant',
-        content,
-        tool_calls: toolCalls,
-      };
+      // Enrich the committed assistant turn with the ops summary (a copy, so
+      // the object already handed to the UI is never mutated).
       if (roundOpsSummaries.length > 0) {
-        assistantTurn.opsSummary = roundOpsSummaries.join('; ');
+        allTurns[assistantIdx] = { ...assistantTurn, opsSummary: roundOpsSummaries.join('; ') };
       }
-
-      // Append assistant turn + tool result turns to allTurns
-      allTurns.push(assistantTurn);
-      allTurns.push(...toolResultTurns);
 
       // Update wire messages for next round
       const assistantWireMsg: WireMessage = {
@@ -532,11 +554,10 @@ export async function runTurn(opts: RunTurnOpts): Promise<void> {
 
       // Check cap: if we've done MAX_TOOL_ROUNDS of tool_use, stop
       if (roundsWithToolUse >= MAX_TOOL_ROUNDS) {
-        const capTurn: ChatTurn = {
+        appendTurn({
           role: 'assistant',
           content: `(stopped after ${MAX_TOOL_ROUNDS} tool rounds)`,
-        };
-        allTurns.push(capTurn);
+        });
         callbacks.onTurnsCommitted(allTurns);
         callbacks.onFinished();
         return;

@@ -92,6 +92,8 @@ export function ChatWindow({
     setView((prev) => (prev === v ? 'chat' : v));
   };
 
+  const model = settings.models[settings.provider] ?? '';
+
   return (
     <div className="gcp-window" role="dialog" aria-label="Graph Copilot">
       {/* Header */}
@@ -100,6 +102,15 @@ export function ChatWindow({
           <span className="gcp-header-mark" aria-hidden="true">✦</span>
           Graph Copilot
         </span>
+
+        <button
+          className="gcp-model-chip"
+          onClick={() => setView('settings')}
+          aria-label="Active model — open settings"
+          title={`Provider: ${settings.provider}${model ? ` · ${model}` : ''} — click to change`}
+        >
+          {model || 'Set up model'}
+        </button>
 
         <button
           className={`gcp-label-btn${view === 'history' ? ' active' : ''}`}

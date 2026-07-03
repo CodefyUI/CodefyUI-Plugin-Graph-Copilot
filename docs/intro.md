@@ -17,7 +17,7 @@ Installing the plugin adds a floating assistant button at the bottom-right of th
 - **Attach files** — add **images, PDFs, text, or code** to a message. Text and PDFs are extracted and inlined into the prompt; images are sent as multimodal content to vision-capable models. See [Attachments](./attachments.md).
 - **Conversation history** — past chats are listed in the panel; click one to continue where you left off (capped at 50, stored in your browser). See [Conversation history](./conversation-history.md).
 - **Five providers** — OpenAI API, OpenAI Codex (ChatGPT account), OpenRouter, Claude API, and any custom OpenAI-compatible endpoint. See [Provider setup](./provider-setup.md).
-- **Streaming replies** with applied-operations chips, a stop button, and retry on errors.
+- **Staged streaming replies** — a multi-round agent run renders live as distinct steps: one bubble per round plus a tool stage row per call (spinner while running, ✓/⚠ when done, expandable details), with markdown rendering, a stop button that keeps partial text, and retry on errors.
 
 ## Next steps
 
