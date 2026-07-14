@@ -5,22 +5,31 @@ slug: /
 sidebar_label: 介紹
 ---
 
-# Graph Copilot
+# Graph Copilot agent 工作台
 
-**Graph Copilot** 是 [CodefyUI](https://github.com/treeleaves30760/CodefyUI-Plugin-Official) 的 AI 聊天助手外掛。跟 AI 對話來**生成、調整、改進**你畫布上的節點圖。
+**Graph Copilot** 是 [CodefyUI](https://github.com/CodefyUI/CodefyUI) 的 agent 工作台。它可以建構與修改圖、在隔離候選圖上執行有上限的實驗、依數值指標排名、選擇性套用最佳的 parameter-only 設計，並把觀察整理成可驗證的研究問題。
 
-安裝後，編輯器右下角會多一顆懸浮的助手按鈕。點開它就是聊天視窗：描述你要的 pipeline、要求改參數、或請它改進現有的圖 — 助手會直接透過工具呼叫編輯畫布，而且**每一輪 AI 編輯都是一個復原步驟**（Ctrl+Z 一次撤銷）。
+外掛會在編輯器加入懸浮按鈕。工作台包含目前模型與 graph context、聊天與工具進度、實驗 Lab、對話歷史與設定。直接修改圖時，每批 GraphOps 都是一個 undo step。
+
+:::important 目前「agent」的範圍
+規劃與實驗協調運行在瀏覽器。現有 CodefyUI 後端負責驗證與執行圖，但本外掛沒有安裝持久化 agent server 或背景 job queue。實驗執行期間請保持頁面開啟。詳見[架構與 CodefyUI 相容性](./architecture.md)。
+:::
 
 ## 功能
 
-- **用對話建圖** — 助手知道你安裝的節點目錄（型別、連接埠、參數綱要）與即時的圖，套用批次操作（`add_node`、`connect`、`set_params`、`remove_node`、`auto_layout`…），並從每個操作的驗證錯誤中自我修正。
-- **附加檔案** — 把**圖片、PDF、文字或程式碼**加進訊息。文字與 PDF 會被擷取並併入提示；圖片則以多模態內容送給支援視覺的模型。見 [附加檔案](./attachments.md)。
-- **對話紀錄** — 過往對話列在面板裡，點一下就能接續（上限 50 筆，存在你的瀏覽器）。見 [對話紀錄](./conversation-history.md)。
-- **五種供應商** — OpenAI API、OpenAI Codex（ChatGPT 帳號）、OpenRouter、Claude API，以及任何自訂的 OpenAI 相容端點。見 [供應商設定](./provider-setup.md)。
-- **階段式串流回覆** — 多輪代理執行會即時呈現為一個個獨立步驟：每一輪一個訊息泡泡，每個工具呼叫一列階段列（執行中顯示轉圈、完成後顯示 ✓/⚠，可展開詳情），並支援 Markdown 渲染、可保留部分文字的停止按鈕、以及錯誤重試。
+- **對話建圖**：讀取節點目錄與 live graph，以批次 GraphOps 修改並依錯誤自我修正。
+- **隔離實驗**：從 memory clone 產生 variant，經 CodefyUI 驗證與 WebSocket 執行後量測、排名，不會把暫存圖塞進畫布。
+- **有上限的 parameter search**：完整 small grid 與 versioned seeded-random plan 會把 explicit safe parameter domain 轉成 deterministic、可審查的候選，沿用同一核准與 run budget。
+- **安全 promotion**：只有明確要求、winner 僅含 `set_params`，且 live graph 仍與 baseline 一致時才自動套用；structural winner 只會作為待審查 proposal。
+- **研究 evidence**：保留逐次 scalar、descriptive interval、baseline effect size 與 failure，提供 CSV／evidence-labeled Markdown，但不把 pilot 說成證明。
+- **Portable studies**：完成研究會產生 secret-redacted bundle；import 會檢查 canonicalized semantic content 與 raw／derived evidence，採 preview-first、read-only。Candidate graph JSON 可把 captured redacted GraphOps 重新套到 baseline 後產生，不執行、不改畫布，但不是 exact execution replay。
+- **附件、歷史與多 provider**：支援圖片、PDF、文字、程式碼、最多 50 筆瀏覽器端對話，以及 OpenAI、Codex、OpenRouter、Claude 與 OpenAI-compatible endpoint。
+- **階段式進度**：串流顯示多輪 agent 訊息與可展開的 tool stage，支援取消與 retry。
 
 ## 下一步
 
-- [安裝](./installation.md) — 需求與安裝方式。
-- [供應商設定](./provider-setup.md) — 連接模型供應商。
-- [它如何編輯圖](./graph-editing.md) — 助手背後做了什麼。
+- [安裝](./installation.md)
+- [供應商設定](./provider-setup.md)
+- [圖編輯](./graph-editing.md)
+- [實驗與研究](./experiments-and-research.md)
+- [Agent roadmap](./roadmap.md)

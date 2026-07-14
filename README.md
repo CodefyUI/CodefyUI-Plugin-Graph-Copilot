@@ -1,98 +1,102 @@
-# Graph Copilot — AI chat assistant for CodefyUI
+# Graph Copilot — agent workbench for CodefyUI
 
-Chat with an AI to **generate, tune, and improve the node graph** on your CodefyUI canvas. Installing this plugin adds a floating assistant button at the bottom-right of the editor; clicking it opens a chat window where you can describe the pipeline you want, ask for parameter changes, or request improvements — the assistant edits the canvas directly through tool calls, and every AI edit is a single undo step (Ctrl+Z reverts it).
+Graph Copilot is a frontend plugin that adds a professional AI workbench to the CodefyUI editor. It can construct and revise node graphs, run bounded experiments on isolated graph variants, rank measured metrics, safely promote a parameter-only winner, and help turn observations into testable research questions.
 
-📖 **Full documentation:** <https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/>
+[Documentation](https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/) · [Architecture](docs/architecture.md) · [Experiments and research](docs/experiments-and-research.md) · [Backend agent contract](docs/backend-agent-contract.md) · [Roadmap](docs/roadmap.md)
 
-## Features
+## What it can do
 
-- **Build graphs by conversation** — the assistant knows your installed node catalog (types, ports, parameter schemas) and the live graph, applies batched operations (`add_node`, `connect`, `set_params`, `remove_node`, `auto_layout`, ...), and self-corrects from per-operation validation errors.
-- **Attach files** — add **images, PDFs, text, or code** to a message (📎 button, drag-and-drop, or paste). Text and PDFs are extracted and inlined into the prompt; images are sent as multimodal content to vision-capable models (OpenAI / Claude / OpenRouter). pdf.js is loaded on-demand from a CDN only when you attach a PDF.
-- **Conversation history** — past chats are listed in the panel; click one to continue where you left off (capped at 50, stored in your browser).
-- **Five providers** — set per-provider models and keys in the panel's Settings view:
-  - **OpenAI API** (your API key)
-  - **OpenAI Codex (ChatGPT account)** — sign in with your ChatGPT subscription, no API key
-  - **OpenRouter** (your API key)
-  - **Claude API** (your Anthropic API key)
-  - **Custom (OpenAI-compatible)** — any base URL: Ollama, LM Studio, vLLM, ...
-- **Staged streaming replies** — a multi-round agent run renders live as distinct steps (one bubble per round plus a tool stage row per call: spinner while running, ✓/⚠ when done, click to expand details), with markdown rendering, a stop button that keeps partial text, and retry on errors.
+- **Build and tune graphs by conversation.** The agent receives a schema-redacted installed-node catalog and active-graph snapshot, applies typed GraphOps, and self-corrects from per-operation errors. One GraphOp batch is one undo step. Before accepting completion, a runnability gate allows up to two corrective rounds; a graph that is still invalid is reported as blocked, never as a successful edit.
+- **Run isolated candidate studies.** Variants are created from in-memory clones, validated by CodefyUI, executed through `/ws/execution`, measured, and ranked without opening temporary graphs on the canvas.
+- **Search parameters deterministically.** Complete small grids and versioned seeded-random plans compile safe existing-node parameter domains into reviewable `set_params` candidates and reuse the same approval and 16-run budget.
+- **Promote parameter winners safely.** Automatic promotion happens only when requested, only for parameter-only variants, and is refused if the live graph changed after the study began. Structural winners remain proposals for review.
+- **Support research exploration.** Results retain per-run scalar evidence, sample spread, descriptive Student-t intervals, Hedges g versus a baseline, failures, CSV/research-brief exports, and evidence-linked follow-up ideas while warning that a pilot is not proof, significance, or novelty.
+- **Carry studies safely.** Every completed study attempts to create a portable bundle containing a secret-redacted baseline, captured redacted GraphOps, exact recorded scalar evidence, producer/provenance facts, and derived results. Experiment Lab checks the SHA-256 digest of parsed, canonicalized semantic content and cross-checks derived statistics against the run records before showing a preview; import happens only after an explicit click and never executes or applies imported data. This verifies internal integrity, not authorship.
+- **Present agent work clearly.** The workbench exposes graph context, streamed multi-round replies, expandable tool stages, experiment results, chat history, settings, cancellation, and retry.
+- **Use multiple providers.** OpenAI API, OpenAI Codex through a ChatGPT account, OpenRouter, Claude API, and custom OpenAI-compatible endpoints such as Ollama, LM Studio, or vLLM.
+- **Accept attachments.** Images, PDFs, text, and code can be added by picker, drag-and-drop, or paste. Images are sent as multimodal content when the selected model supports vision.
 
-## Requirements
+## Current architecture boundary
 
-**CodefyUI 1.3.0 or later** — that release ships the two features this plugin is built on: plugin frontend extensions (the JS bundle this plugin loads) and the LLM provider proxy (`/api/llm/chat`). If `cdui --version` reports an older version, run `cdui update` first.
+Graph Copilot is an agent, but today its **orchestrator runs in the browser**:
 
-## Install
+```text
+Graph Copilot UI + agent loop (browser)
+        ├─ CodefyUIPluginAPI: canvas GraphOps and namespaced storage
+        ├─ /api/llm/chat: existing CodefyUI provider proxy
+        ├─ /api/graph/validate: existing CodefyUI validation
+        └─ /ws/execution: existing CodefyUI graph execution
+```
+
+This repository declares only `[frontend] entry = "frontend/index.js"`. It does not ship a Graph Copilot backend route, database, durable queue, worker, or scheduler. Closing/reloading the page interrupts active work. CodefyUI executes submitted graphs, but it does not yet persist or resume a whole Graph Copilot experiment job.
+
+CodefyUI **1.3.0** supplies the stable frontend API v1 and backend endpoints used by the plugin. CodefyUI current `main` adds API v2 custom node renderers and linked-plugin frontend hot reload; Graph Copilot keeps those additions optional and remains compatible with the 1.3.0 surface. See the [compatibility table](docs/architecture.md#codefyui-contract-boundary).
+
+## Experiment loop
+
+When the agent calls `run_graph_experiments`, it performs:
+
+1. snapshot the active graph;
+2. clone and apply GraphOps to each variant in memory;
+3. validate each candidate with CodefyUI and mirror the host's parameter checks;
+4. show every candidate node type and schema-redacted parameter value, plus the execution/repetition counts, concurrency, promotion setting, and side-effect warning; then execute only after explicit approval over the CodefyUI WebSocket;
+5. collect scalar numeric output/progress metrics and observed runtime while deliberately leaving full output recording disabled;
+6. rank only candidates whose scheduled repetitions all succeeded and resolved one common objective identity across the study;
+7. report exact ties instead of using runtime as a winner tie-breaker;
+8. optionally promote a parameter-only winner after both graph-revision and fingerprint checks;
+9. retain a browser-local summary plus a content-addressed portable study bundle; schema-declared secrets, credential-shaped fields, and unknown-schema parameter values become explicit secret references, and any capture/storage failure is a warning that never retries a completed run.
+
+Current limits are 8 variants, 1–5 repetitions, 16 total runs, at most 2 concurrent executions, and a 10-minute timeout per run. Candidate graph isolation does not sandbox node side effects such as file or network writes.
+
+The released CodefyUI plugin contract does not expose tab creation or “open this serialized graph in a new tab,” so this version compares clones in Experiment Lab rather than creating candidate tabs. From a verified bundle, the plugin can derive downloadable host-shaped graph JSON by reapplying the captured, redacted GraphOps to the redacted baseline. Unresolved secrets are blank, and schema-default resolution or other preparation performed during the original run may not be reproduced because the exact prepared execution graph is not persisted. Downloading never changes the canvas. A future core API for true labeled, read-only candidate tabs is called out in the roadmap.
+
+For study design, metric selection, portable evidence, reproducibility, and responsible research claims, read [Experiments and research](docs/experiments-and-research.md). Durable jobs, checkpoint/resume, adaptive optimization, complete environment/artifact provenance, and confirmatory analysis require the phased [CodefyUI core roadmap](docs/roadmap.md).
+
+## Requirements and installation
+
+- CodefyUI 1.3.0 or later
+- A supported remote provider, ChatGPT Codex login, or an OpenAI-compatible local endpoint
 
 ```bash
 cdui plugin install treeleaves30760/CodefyUI-Plugin-Graph-Copilot
 ```
 
-Reload the CodefyUI browser tab afterwards. The teal assistant button appears at the bottom-right, above the minimap.
+Reload the CodefyUI browser tab. The Graph Copilot button appears in the editor.
 
-## Provider setup
+## Provider setup and data handling
 
-Open the chat panel → gear icon:
+Open the workbench settings and configure a provider/model:
 
-- **OpenAI / OpenRouter / Claude**: paste an API key, pick a model (the "Load list" button fetches your account's model list).
-- **OpenAI Codex (ChatGPT)**: click "Sign in", approve in the browser tab that opens, return to CodefyUI. Uses your ChatGPT plan quota via the same flow as the open-source Codex CLI. Note: that flow reuses the Codex CLI's public OAuth client id, which is a gray area under OpenAI's terms — the same approach other third-party tools take; use at your own discretion.
-- **Custom**: set a base URL such as `http://127.0.0.1:11434/v1` (Ollama). A key is optional.
+- **OpenAI, OpenRouter, or Claude:** enter an API key and select a model.
+- **OpenAI Codex:** sign in with a ChatGPT account through the provided browser flow.
+- **Custom:** enter an OpenAI-compatible base URL; a key is optional for local servers that do not require one.
 
-### Where your keys live
-
-API keys are stored in **your browser's localStorage** (namespaced per plugin) and sent **only to your local CodefyUI backend**, which forwards them per-request to the provider you selected. They are never persisted or logged server-side, and never sent anywhere else.
-
-## How it edits the graph
-
-The assistant gets a compact catalog of your installed node types plus a snapshot of the current graph on every message. It edits through two tools:
-
-- `apply_graph_operations` — a batch of ops applied through CodefyUI's plugin API with full validation (unknown types, port mismatches, parameter ranges are rejected per-op and reported back to the model so it can fix itself). One batch = one undo step.
-- `get_current_graph` — re-reads the canvas, so manual edits you make mid-conversation are respected.
+Provider settings and API keys are stored in the plugin's browser-local, namespaced storage. Requests go through the local CodefyUI `/api/llm/chat` proxy, which forwards credentials per request; CodefyUI 1.3.0 is designed not to persist or log them server-side. Before graph context is sent to a provider, live snapshots and graph-tool results redact schema-declared secrets, credential-shaped fields, unknown schemas/parameters, and exact echoes of those known redacted values. A provider-generated tool call keeps its original arguments only in the active provider/tool execution path; the display and conversation-history copy is schema-redacted, and known exact echoes in assistant text are scrubbed before persistence or reuse in a later provider round. This cannot retroactively hide text already streamed by the provider in the live reply. Free-form user messages are still sent to the provider and stored as written, so this is not a generic credential detector—do not paste credentials into chat text. Treat the browser profile and every installed frontend plugin as trusted code because plugin JavaScript runs in the editor page and can access the session.
 
 ## Development
+
+Build and test the plugin UI:
 
 ```bash
 cd ui
 pnpm install
-pnpm test          # vitest
-pnpm build         # type-check + bundle to ../frontend/index.js
+pnpm test
+pnpm build
 ```
 
-`frontend/index.js` (the built ESM bundle) is **committed** — end users install via GitHub tarball with no Node toolchain, so CI fails if the dist is stale. After changing `ui/`, run `pnpm build` and commit the refreshed `frontend/`.
+The Vite build writes `frontend/index.js`. That ESM bundle is committed because `cdui plugin install` consumes the repository archive without requiring an end-user Node.js toolchain.
 
-Documentation site: <https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/> — source in `docs/` (Docusaurus, bilingual). Run it locally with `pnpm install && pnpm start` at the repo root.
+Run the Docusaurus documentation site from the repository root:
 
-Built from the [CodefyUI-Plugin-Official](https://github.com/treeleaves30760/CodefyUI-Plugin-Official) template.
+```bash
+pnpm install
+pnpm typecheck
+pnpm build
+pnpm start
+```
+
+Preview Traditional Chinese with `pnpm start -- --locale zh-Hant`.
 
 ## License
 
 MIT
-
----
-
-# Graph Copilot — CodefyUI 的 AI 聊天助手（繁體中文）
-
-跟 AI 對話來**生成、調整、改進**你畫布上的節點圖。安裝後編輯器右下角會多一顆懸浮按鈕，點開就是聊天視窗：描述你要的 pipeline、要求改參數、或請它改進現有的圖 — 助手會直接透過工具呼叫編輯畫布，每一輪 AI 編輯都是一個復原步驟（Ctrl+Z 一次撤銷）。
-
-📖 **完整文件：** <https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/>
-
-## 安裝
-
-```bash
-cdui plugin install treeleaves30760/CodefyUI-Plugin-Graph-Copilot
-```
-
-安裝後重新整理 CodefyUI 分頁。需要 **CodefyUI 1.3.0 或更新版本**（該版本內建本外掛所依賴的前端擴充與 LLM 代理）；若版本較舊請先執行 `cdui update`。
-
-## 供應商設定
-
-聊天面板 → 齒輪圖示：支援 OpenAI API（填 key）、**OpenAI Codex（ChatGPT 帳號登入，吃訂閱額度）**、OpenRouter、Claude API、自訂 OpenAI 相容端點（Ollama / LM Studio / vLLM）。
-
-API key 存在**你瀏覽器的 localStorage**，只會送到你本機的 CodefyUI 後端、再轉發給你選的供應商；伺服器端不落地、不記 log。Codex 登入沿用開源 Codex CLI 的公開 OAuth client id（OpenAI 條款灰色地帶，與其他第三方工具同款做法），請自行斟酌使用。
-
-## 附加檔案
-
-可以把**圖片、PDF、文字檔或程式碼**加進訊息裡（📎 按鈕、拖放、或直接貼上）。文字檔與 PDF 會被擷取成文字併入提示；圖片則以多模態內容送給支援視覺的模型（OpenAI / Claude / OpenRouter）。PDF 解析用的 pdf.js 只有在你真的附加 PDF 時才從 CDN 即時載入，不會增加外掛體積。
-
-## 對話紀錄
-
-面板內建歷史清單（上限 50 筆，存在瀏覽器），點選即可接續先前的對話。

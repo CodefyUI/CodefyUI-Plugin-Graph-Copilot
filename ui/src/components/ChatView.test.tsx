@@ -34,7 +34,7 @@ vi.mock('../state/conversations', async (importOriginal) => {
 });
 
 import { runTurn } from '../agent/loop';
-import type { RunTurnOpts } from '../agent/loop';
+import type { ExperimentApprovalRequest, RunTurnOpts } from '../agent/loop';
 import { saveConversation } from '../state/conversations';
 import { ChatView } from './ChatView';
 
@@ -77,6 +77,20 @@ const READY_SETTINGS: Settings = {
   models: { openai: 'gpt-5.2' },
   apiKeys: { openai: 'sk-test' },
   customBaseUrl: '',
+};
+
+const APPROVAL_REQUEST: ExperimentApprovalRequest = {
+  hypothesis: 'Learning rate changes validation loss',
+  variantCount: 3,
+  repetitions: 2,
+  executionCount: 6,
+  concurrency: 1,
+  applyBest: true,
+  variants: [
+    { label: 'Baseline', operations: [] },
+    { label: 'Fast LR', operations: ['set trainer: learning_rate'] },
+  ],
+  nodeTypes: ['Trainer', 'Accuracy'],
 };
 
 // ---------------------------------------------------------------------------
@@ -249,6 +263,73 @@ describe('ChatView', () => {
 
       const opts = (runTurn as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunTurnOpts;
       expect(opts.userText).toBe('click send test');
+    });
+
+    it('shows explicit run details and waits for approval before graph execution', async () => {
+      let decision: boolean | undefined;
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        decision = await opts.callbacks.onExperimentApproval!(APPROVAL_REQUEST);
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      await userEvent.type(textarea, 'run the comparison');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+      const dialog = await screen.findByRole('dialog', { name: /run 6 graph executions/i });
+      expect(dialog).toHaveTextContent('3 variants');
+      expect(dialog).toHaveTextContent('2 repetitions');
+      expect(dialog).toHaveTextContent('write files');
+      expect(dialog).toHaveTextContent('Fast LR');
+      expect(dialog).toHaveTextContent('set trainer: learning_rate');
+      expect(dialog).toHaveTextContent('Trainer, Accuracy');
+      expect(decision).toBeUndefined();
+
+      await userEvent.click(screen.getByRole('button', { name: /approve and run/i }));
+      await waitFor(() => expect(decision).toBe(true));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('defaults focus to Cancel and records an explicit rejection', async () => {
+      let decision: boolean | undefined;
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        decision = await opts.callbacks.onExperimentApproval!(APPROVAL_REQUEST);
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+      await screen.findByRole('dialog');
+      const cancel = screen.getByRole('button', { name: /^cancel$/i });
+      expect(cancel).toHaveFocus();
+      await userEvent.click(cancel);
+
+      await waitFor(() => expect(decision).toBe(false));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('resolves a pending approval as rejected when Stop aborts the run', async () => {
+      let decision: boolean | undefined;
+      let aborted = false;
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        decision = await opts.callbacks.onExperimentApproval!(APPROVAL_REQUEST);
+        aborted = opts.signal?.aborted ?? false;
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+      await screen.findByRole('dialog');
+      await userEvent.click(screen.getByRole('button', { name: /stop generation/i }));
+
+      await waitFor(() => expect(decision).toBe(false));
+      expect(aborted).toBe(true);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
 });

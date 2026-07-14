@@ -1,21 +1,73 @@
 name: ci
+
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-and-dist:
+    name: UI tests, coverage, and bundle
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 9 }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm, cache-dependency-path: ui/pnpm-lock.yaml }
-      - run: pnpm install --frozen-lockfile
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - name: Install UI dependencies
+        run: pnpm install --frozen-lockfile
         working-directory: ui
-      - run: pnpm run test:coverage
+      - name: Run UI tests with coverage
+        run: pnpm run test:coverage
         working-directory: ui
-      - run: pnpm build
+      - name: Type-check and build UI
+        run: pnpm run build
         working-directory: ui
-      - name: dist freshness
-        run: git diff --exit-code -- frontend/ || (echo "frontend/ dist is stale - run 'pnpm build' in ui/ and commit" && exit 1)
+      - name: Verify committed frontend bundle is current
+        shell: bash
+        run: |
+          if ! git diff --exit-code -- frontend/; then
+            echo "::error::frontend/ bundle is stale; run 'pnpm run build' in ui/ and commit the result"
+            exit 1
+          fi
+
+  docs:
+    name: Documentation type-check and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install documentation dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check documentation
+        run: pnpm run typecheck
+      - name: Build English and Traditional Chinese documentation
+        run: pnpm run build

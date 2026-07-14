@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { waitFor } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
 import type { CodefyUIPluginAPI } from './types/codefyui';
 
 import activate from './index';
@@ -26,7 +26,9 @@ describe('activate (plugin entry)', () => {
     document.body.appendChild(el);
     const api = makeFakeApi(el);
 
-    activate(api);
+    await act(async () => {
+      activate(api);
+    });
 
     expect(api.ui.addFloatingWidget).toHaveBeenCalledWith({ id: 'copilot' });
     await waitFor(() => {

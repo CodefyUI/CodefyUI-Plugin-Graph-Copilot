@@ -22,7 +22,9 @@ export interface PortDefinition {
 
 export interface ParamDefinition {
   name: string;
-  param_type: 'int' | 'float' | 'string' | 'bool' | 'select' | 'model_file' | 'image_file' | 'tensor_grid';
+  param_type:
+    | 'int' | 'float' | 'string' | 'bool'
+    | 'select' | 'model_file' | 'image_file' | 'tensor_grid' | 'secret';
   default: unknown;
   description: string;
   options: string[];
@@ -38,6 +40,8 @@ export interface NodeDefinition {
   inputs: PortDefinition[];
   outputs: PortDefinition[];
   params: ParamDefinition[];
+  /** Added by newer CodefyUI builds; absent on the 1.3.0 v1 host. */
+  provider?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,14 +80,36 @@ export interface ApplyResult {
 
 /**
  * Loose serialized graph shape. The actual type is derived from the store's
- * getSerializedGraph(); we use any[] for nodes/edges here so the plugin never
- * needs to import React Flow types.
+ * getSerializedGraph(); the intentionally loose optional fields tolerate
+ * older hosts and malformed snapshots without importing React Flow types.
  */
+export interface SerializedGraphNode {
+  id: string;
+  type?: string;
+  position?: { x: number; y: number };
+  data?: {
+    params?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export interface SerializedGraphEdge {
+  id: string;
+  source?: string;
+  target?: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  type?: 'data' | 'trigger';
+}
+
 export interface SerializedGraph {
-  nodes: any[];
-  edges: any[];
+  nodes: SerializedGraphNode[];
+  edges: SerializedGraphEdge[];
   presets?: unknown[];
   segmentGroups?: unknown;
+  name?: string;
+  description?: string;
+  [key: string]: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +123,8 @@ export type ToastType = 'info' | 'success' | 'warning' | 'error';
 // ---------------------------------------------------------------------------
 
 export interface CodefyUIPluginAPI {
-  apiVersion: 1;
+  /** v1 is CodefyUI 1.3.0; current main exposes v2 additively. */
+  apiVersion: number;
   pluginId: string;
   ui: {
     addFloatingWidget(opts: { id: string }): HTMLElement;
@@ -108,6 +135,10 @@ export interface CodefyUIPluginAPI {
     getNodeDefinitions(): NodeDefinition[];
     applyOperations(ops: GraphOp[]): ApplyResult;
     onGraphChanged(cb: () => void): () => void;
+  };
+  /** Available when apiVersion >= 2. Kept optional for 1.3.0 compatibility. */
+  nodes?: {
+    registerRenderer(nodeType: string, renderer: unknown): () => void;
   };
   http: {
     fetch(url: string, init?: RequestInit): Promise<Response>;

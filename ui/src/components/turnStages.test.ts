@@ -163,6 +163,77 @@ describe('describeStage', () => {
     expect(done.status).toBe('ok');
   });
 
+  it('run_graph_experiments: shows planned runs, winner, apply state, and failures', () => {
+    const call = {
+      id: 'e1',
+      name: 'run_graph_experiments',
+      arguments: { variants: [{}, {}, {}], repetitions: 2 },
+    };
+    const running = describeStage({ call });
+    expect(running.label).toBe('Experiment study');
+    expect(running.summary).toContain('3 candidates');
+    expect(running.summary).toContain('6 runs');
+
+    const done = describeStage({
+      call,
+      result: {
+        role: 'tool', tool_call_id: 'e1',
+        content: JSON.stringify({ winnerLabel: 'Wide model', appliedVariantId: 'wide' }),
+      },
+    });
+    expect(done.status).toBe('ok');
+    expect(done.summary).toContain('Wide model');
+    expect(done.summary).toContain('applied');
+
+    const noMetric = describeStage({
+      call,
+      result: { role: 'tool', tool_call_id: 'e1', content: JSON.stringify({ variants: [] }) },
+    });
+    expect(noMetric.status).toBe('error');
+    expect(noMetric.summary).toContain('no rankable metric');
+
+    const failed = describeStage({
+      call,
+      result: { role: 'tool', tool_call_id: 'e1', content: JSON.stringify({ error: 'budget exceeded' }) },
+    });
+    expect(failed.status).toBe('error');
+    expect(failed.summary).toContain('budget exceeded');
+  });
+
+  it('optimize_graph_parameters: shows bounded plan, winner, and compiler errors', () => {
+    const call = {
+      id: 'o1',
+      name: 'optimize_graph_parameters',
+      arguments: {
+        strategy: 'seeded_random',
+        candidate_count: 3,
+        repetitions: 2,
+        bindings: [{ node_id: 'model', param: 'quality', values: [1, 2, 3, 4] }],
+      },
+    };
+    const running = describeStage({ call });
+    expect(running.label).toBe('Parameter search');
+    expect(running.summary).toContain('8 runs');
+
+    const done = describeStage({
+      call,
+      result: {
+        role: 'tool',
+        tool_call_id: 'o1',
+        content: JSON.stringify({ winnerLabel: 'Random 2: model.quality=3' }),
+      },
+    });
+    expect(done.status).toBe('ok');
+    expect(done.summary).toContain('Random 2');
+
+    const failed = describeStage({
+      call,
+      result: { role: 'tool', tool_call_id: 'o1', content: JSON.stringify({ error: 'secret params are unsupported' }) },
+    });
+    expect(failed.status).toBe('error');
+    expect(failed.summary).toContain('secret params');
+  });
+
   it('unknown tool: falls back to raw name and tolerates non-JSON content', () => {
     const call = { id: 'u1', name: 'mystery_tool', arguments: {} };
     const d = describeStage({ call, result: { role: 'tool', tool_call_id: 'u1', content: 'plain text' } });
