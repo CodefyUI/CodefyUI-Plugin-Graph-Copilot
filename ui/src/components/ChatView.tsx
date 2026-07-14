@@ -7,6 +7,7 @@ import { saveConversation, titleFrom, listConversations } from '../state/convers
 import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
 import { runTurn } from '../agent/loop';
+import type { ExperimentApprovalRequest } from '../agent/loop';
 import { MessageBubble } from './MessageBubble';
 import { groupTurns } from './turnStages';
 
@@ -152,12 +153,14 @@ export function ChatView({
   const [lastAttachments, setLastAttachments] = useState<Attachment[]>([]);
   const [staged, setStaged] = useState<Staged[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [experimentApproval, setExperimentApproval] = useState<ExperimentApprovalRequest | null>(null);
 
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true); // stick to bottom unless the user scrolls up
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
   const dragDepth = useRef(0);
 
   const ready = providerReady(settings, codexLoggedIn);
@@ -166,7 +169,11 @@ export function ChatView({
   const canSend = ready && !busy && !anyLoading && (input.trim().length > 0 || readyAtts.length > 0);
 
   // Cancel any in-flight stream when the panel unmounts
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  useEffect(() => () => {
+    approvalResolveRef.current?.(false);
+    approvalResolveRef.current = null;
+    abortRef.current?.abort();
+  }, []);
 
   // Elapsed-seconds ticker while a run is in flight
   useEffect(() => {
@@ -340,6 +347,14 @@ export function ChatView({
             setLiveTurns((prev) => [...prev, turn]);
           },
           onOpsApplied() { /* stage rows render live from the appended turns */ },
+          onExperimentApproval(request) {
+            if (abortCtrl.signal.aborted) return Promise.resolve(false);
+            approvalResolveRef.current?.(false);
+            return new Promise<boolean>((resolve) => {
+              approvalResolveRef.current = resolve;
+              setExperimentApproval(request);
+            });
+          },
           onTurnsCommitted(turns) {
             setStreamingText('');
             streamBuf = '';
@@ -354,6 +369,9 @@ export function ChatView({
             streamBuf = '';
           },
           onFinished() {
+            approvalResolveRef.current?.(false);
+            approvalResolveRef.current = null;
+            setExperimentApproval(null);
             setBusy(false);
             abortRef.current = null;
           },
@@ -373,7 +391,18 @@ export function ChatView({
     }
   };
 
-  const handleStop = () => abortRef.current?.abort();
+  const handleStop = () => {
+    approvalResolveRef.current?.(false);
+    approvalResolveRef.current = null;
+    setExperimentApproval(null);
+    abortRef.current?.abort();
+  };
+  const handleExperimentDecision = (approved: boolean) => {
+    const resolve = approvalResolveRef.current;
+    approvalResolveRef.current = null;
+    setExperimentApproval(null);
+    resolve?.(approved);
+  };
   const handleRetry = () => doSend(lastUserText, lastAttachments);
 
   // ---------------------------------------------------------------------------
@@ -393,7 +422,7 @@ export function ChatView({
   // generic thinking indicator is only for gaps with no visible activity.
   const lastItem = items[items.length - 1];
   const toolRunning = !!lastItem && lastItem.stages.some((s) => !s.result);
-  const showThinking = busy && streamingText === '' && !toolRunning;
+  const showThinking = busy && streamingText === '' && !toolRunning && !experimentApproval;
 
   // On the welcome screen, surface a shortcut to past chats (every panel open
   // starts a fresh conversation, so this is where users look for earlier ones).
@@ -491,6 +520,57 @@ export function ChatView({
           <div className="gcp-dropzone-inner">
             <PaperclipIcon />
             <span>Drop files to attach</span>
+          </div>
+        </div>
+      )}
+
+      {experimentApproval && (
+        <div className="gcp-experiment-approval-backdrop">
+          <div
+            className="gcp-experiment-approval"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gcp-experiment-approval-title"
+          >
+            <div className="gcp-experiment-approval-kicker">Execution approval</div>
+            <div id="gcp-experiment-approval-title" className="gcp-experiment-approval-title">
+              Run {experimentApproval.executionCount} graph execution{experimentApproval.executionCount === 1 ? '' : 's'}?
+            </div>
+            <div className="gcp-experiment-approval-hypothesis">
+              {experimentApproval.hypothesis}
+            </div>
+            <div className="gcp-experiment-approval-facts">
+              <span>{experimentApproval.variantCount} variants</span>
+              <span>{experimentApproval.repetitions} repetitions</span>
+              <span>concurrency {experimentApproval.concurrency}</span>
+              {experimentApproval.applyBest && <span>parameter winner may be applied</span>}
+            </div>
+            <div className="gcp-experiment-approval-warning">
+              Review the candidate settings below. Credential values are schema-redacted.
+            </div>
+            <div className="gcp-experiment-approval-candidates" aria-label="Candidate changes">
+              {experimentApproval.variants.map((variant, index) => (
+                <div key={`${index}-${variant.label}`}>
+                  <strong>{variant.label}</strong>
+                  <span>{variant.operations.length > 0 ? variant.operations.join(' · ') : 'baseline — no changes'}</span>
+                </div>
+              ))}
+            </div>
+            <div className="gcp-experiment-approval-nodes">
+              <strong>Nodes that may execute</strong>
+              <span>{experimentApproval.nodeTypes.length > 0 ? experimentApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
+            </div>
+            <div className="gcp-experiment-approval-warning">
+              Candidate edits stay off-canvas, but nodes may write files, call networks, use GPU time, or incur API costs.
+            </div>
+            <div className="gcp-experiment-approval-actions">
+              <button className="gcp-approval-secondary" onClick={() => handleExperimentDecision(false)} autoFocus>
+                Cancel
+              </button>
+              <button className="gcp-approval-primary" onClick={() => handleExperimentDecision(true)}>
+                Approve and run
+              </button>
+            </div>
           </div>
         </div>
       )}

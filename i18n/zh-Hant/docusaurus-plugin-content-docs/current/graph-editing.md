@@ -1,12 +1,14 @@
 ---
 id: graph-editing
-title: 它如何編輯圖
-sidebar_label: 它如何編輯圖
+title: Agent 如何編輯圖
+sidebar_label: 圖編輯
 ---
 
-# 它如何編輯圖
+# Agent 如何編輯圖
 
-每則訊息，助手都會收到你已安裝節點型別的精簡**目錄**，加上目前圖的**快照**。它透過兩個工具編輯畫布。
+每則訊息，助手都會收到你已安裝節點型別的精簡**目錄**，加上依 schema 去敏的目前圖**快照**；宣告的 secret、credential-shaped field 與未知 schema／parameter 下的值不會原樣送出。它透過兩個工具編輯畫布。
+
+實驗 variant 不會用這些工具直接改動畫布；它們會把同一套 GraphOps 套用到 in-memory clone，再提交 serialized graph 驗證與執行。詳見[實驗與研究](./experiments-and-research.md)。
 
 ## 兩個工具
 
@@ -27,6 +29,12 @@ sidebar_label: 它如何編輯圖
 
 失敗的操作會被略過並回報；助手讀取每個操作的錯誤，在同一輪內重試（最多固定的工具回合數）。每個工具呼叫都會即時顯示成回覆下方的**階段列** — 執行中是轉圈，完成後變成 ✓ 或 ⚠ 並附上人性化摘要（例如 `add_node ×2 — 2 nodes · 1 edge`）；點一下即可展開完整結果。
 
+Assistant 嘗試結束 graph-editing turn 時，runnability gate 會驗證 live graph。若無效，最多會進行 **2 個 corrective model rounds** 並附上 validation errors。兩次後仍無效時，Graph Copilot 會以明確的 blocked／invalid report 取代原本的完成訊息；絕不把 invalid graph 接受為成功完成。
+
 ## 復原
 
 因為每一批都以單一復原步驟提交，**Ctrl+Z 一次就能還原整次 AI 編輯**。
+
+若要 promotion parameter-only 實驗 winner，系統會先做參數 preflight，並同時檢查 active-graph revision 與 baseline fingerprint，再透過同一 API 套用 `set_params`。實驗期間若 live graph 已修改或切換，promotion 會被拒絕；structural winner 只顯示不含值的審查摘要，不會自動套用。
+
+Verified portable study 也能把 candidate 的 captured、redacted GraphOps 重新套到 redacted baseline，產生 downloadable graph JSON。這與 promotion 明確分離：未解析 secret 會留空，下載不會呼叫 `applyOperations` 或改動畫布。Portable v1 不保留當初送去執行的 exact prepared graph，因此 schema default 或其他 execution-time preparation 可能不同；此下載並不是 replay artifact。

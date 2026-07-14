@@ -213,6 +213,54 @@ describe('compactCatalog', () => {
     // Should end with ...
     expect(result).toMatch(/=a{60}\.\.\./);
   });
+
+  it('never includes a secret parameter default in the catalog', () => {
+    const secret = 'catalog-secret-must-not-leak';
+    const result = compactCatalog([makeNode({
+      params: [{
+        name: 'api_key', param_type: 'secret', default: secret, description: '',
+        options: [], min_value: null, max_value: null,
+      }],
+    })]);
+    expect(result).toContain('api_key:secret=[REDACTED]');
+    expect(result).not.toContain(secret);
+  });
+
+  it('redacts credential-shaped defaults and options even when the schema type is misdeclared', () => {
+    const defaultSecret = 'misdeclared-default-secret';
+    const optionSecret = 'misdeclared-option-secret';
+    const result = compactCatalog([makeNode({
+      params: [{
+        name: 'serviceApiKey',
+        param_type: 'select',
+        default: defaultSecret,
+        description: '',
+        options: [defaultSecret, optionSecret],
+        min_value: null,
+        max_value: null,
+      }],
+    })]);
+    expect(result).toContain('serviceApiKey:select=[REDACTED]{[REDACTED]}');
+    expect(result).not.toContain(defaultSecret);
+    expect(result).not.toContain(optionSecret);
+  });
+
+  it('recursively redacts credential-shaped fields inside structured defaults', () => {
+    const nestedSecret = 'nested-catalog-secret';
+    const result = compactCatalog([makeNode({
+      params: [{
+        name: 'config',
+        param_type: 'string',
+        default: { endpoint: 'local', credentials: { accessToken: nestedSecret } } as unknown as string,
+        description: '',
+        options: [],
+        min_value: null,
+        max_value: null,
+      }],
+    })]);
+    expect(result).toContain('[REDACTED]');
+    expect(result).not.toContain(nestedSecret);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -240,7 +288,7 @@ describe('graphSnapshot', () => {
     expect(() => JSON.parse(result)).not.toThrow();
   });
 
-  it('truncates long graphs and appends truncation marker', () => {
+  it('truncates long graphs at object boundaries and keeps valid JSON metadata', () => {
     // Build a graph that exceeds GRAPH_CHAR_LIMIT
     const nodes = Array.from({ length: 1000 }, (_, i) => ({
       id: `n${i}`,
@@ -249,16 +297,60 @@ describe('graphSnapshot', () => {
     }));
     const graph: SerializedGraph = { nodes, edges: [] };
     const result = graphSnapshot(graph);
-    expect(result.length).toBeLessThanOrEqual(GRAPH_CHAR_LIMIT + 200); // allow marker overhead
-    expect(result).toContain('[graph truncated');
-    expect(result).toContain('kept');
-    expect(result).toContain('of');
-    expect(result).toContain('chars]');
+    expect(result.length).toBeLessThanOrEqual(GRAPH_CHAR_LIMIT);
+    const parsed = JSON.parse(result);
+    expect(parsed._truncated.originalNodes).toBe(nodes.length);
+    expect(parsed._truncated.includedNodes).toBeLessThan(nodes.length);
+    expect(parsed.nodes).toHaveLength(parsed._truncated.includedNodes);
+    expect(parsed._truncated.originalChars).toBeGreaterThan(GRAPH_CHAR_LIMIT);
   });
 
   it('does not truncate a graph under the limit', () => {
     const result = graphSnapshot(makeSmallGraph());
-    expect(result).not.toContain('[graph truncated');
+    expect(result).not.toContain('"_truncated"');
+  });
+
+  it('schema-redacts secrets and unknown params while preserving declared safe params', () => {
+    const secret = 'graph-secret-must-not-leak';
+    const defs = [makeNode({
+      params: [
+        { name: 'channels', param_type: 'int', default: 16, description: '', options: [], min_value: 1, max_value: 64 },
+        { name: 'api_key', param_type: 'secret', default: '', description: '', options: [], min_value: null, max_value: null },
+      ],
+    })];
+    const graph: SerializedGraph = {
+      nodes: [{
+        id: 'n1',
+        type: 'Conv2d',
+        data: {
+          params: { channels: 32, api_key: secret, future_param: 'unknown-value' },
+          authorization: `Bearer ${secret}`,
+          note: `configured with ${secret}`,
+        },
+      }],
+      edges: [],
+    };
+
+    const encoded = graphSnapshot(graph, defs);
+    const parsed = JSON.parse(encoded);
+    expect(parsed.nodes[0].data.params).toEqual({
+      channels: 32,
+      api_key: '[REDACTED]',
+      future_param: '[REDACTED]',
+    });
+    expect(parsed.nodes[0].data.authorization).toBe('[REDACTED]');
+    expect(parsed.nodes[0].data.note).toBe('configured with [REDACTED]');
+    expect(encoded).not.toContain(secret);
+    expect(encoded).not.toContain('unknown-value');
+  });
+
+  it('fails closed for parameters on an unknown node schema', () => {
+    const encoded = graphSnapshot({
+      nodes: [{ id: 'mystery', type: 'FutureNode', data: { params: { harmlessLooking: 'opaque' } } }],
+      edges: [],
+    }, []);
+    expect(JSON.parse(encoded).nodes[0].data.params.harmlessLooking).toBe('[REDACTED]');
+    expect(encoded).not.toContain('opaque');
   });
 });
 

@@ -32,9 +32,21 @@ vi.mock('../llm/client', async (importOriginal) => {
   return { ...actual, streamChat: vi.fn() };
 });
 
+vi.mock('./experiments', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./experiments')>();
+  return { ...actual, runGraphExperiments: vi.fn() };
+});
+
 import { streamChat } from '../llm/client';
-import { MAX_TOOL_ROUNDS, TOOLS, runTurn } from './loop';
-import type { TurnCallbacks } from './loop';
+import { runGraphExperiments } from './experiments';
+import {
+  MAX_TOOL_ROUNDS,
+  MAX_VALIDATION_NUDGES,
+  TOOLS,
+  runTurn,
+  validateCurrentGraph,
+} from './loop';
+import type { ExperimentApprovalRequest, TurnCallbacks } from './loop';
 
 // ---------------------------------------------------------------------------
 // Scripted streamChat helper
@@ -121,6 +133,47 @@ const FAKE_DEFS: NodeDefinition[] = [
   },
 ];
 
+const SECRET_DEF: NodeDefinition = {
+  node_name: 'SecureClient',
+  category: 'Integration',
+  description: '',
+  inputs: [],
+  outputs: [],
+  params: [
+    {
+      name: 'account',
+      param_type: 'secret',
+      default: '',
+      description: '',
+      options: [],
+      min_value: null,
+      max_value: null,
+    },
+    {
+      name: 'retries',
+      param_type: 'int',
+      default: 1,
+      description: '',
+      options: [],
+      min_value: 0,
+      max_value: 10,
+    },
+  ],
+};
+
+const TUNABLE_CONV_DEF: NodeDefinition = {
+  ...FAKE_DEFS[0],
+  params: [{
+    name: 'channels',
+    param_type: 'int',
+    default: 1,
+    description: '',
+    options: [],
+    min_value: 1,
+    max_value: 8,
+  }],
+};
+
 const FAKE_GRAPH: SerializedGraph = {
   nodes: [{ id: 'n0', type: 'Conv2d' }],
   edges: [],
@@ -191,6 +244,7 @@ function makeCallbacks(): CallbackState {
   state.cbs = {
     onTextDelta: (t) => state.textDeltas.push(t),
     onOpsApplied: (summary, result) => state.opsApplied.push({ summary, result }),
+    onExperimentApproval: async () => true,
     onTurnsCommitted: (turns) => { state.committed = turns; },
     onError: (msg) => state.errors.push(msg),
     onFinished: () => { state.finished++; },
@@ -282,6 +336,76 @@ describe('runTurn', () => {
     expect(body.messages).toHaveLength(22);
     // Last history message kept is msg24 (index 24), first in window is msg5 (25-20=5)
     expect(body.messages[1].content).toBe('msg5');
+  });
+
+  it('redacts legacy raw assistant/tool history again before sending it to a provider', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    const secret = 'legacy-history-secret';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    const history: ChatTurn[] = [
+      {
+        role: 'assistant',
+        content: `I configured ${secret}`,
+        tool_calls: [{
+          id: 'legacy-call',
+          name: 'apply_graph_operations',
+          arguments: {
+            operations: [{ op: 'add_node', node_type: 'SecureClient', params: { account: secret } }],
+          },
+        }],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'legacy-call',
+        content: JSON.stringify({ authorization: `Bearer ${secret}`, error: `echo ${secret}` }),
+      },
+    ];
+    scriptStreamChat([{ done: makeDoneEnd('ok') }]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history, userText: 'continue', callbacks: cbs });
+
+    const body = (streamChat as Mock).mock.calls[0][1] as ChatBody;
+    expect(JSON.stringify(body.messages)).not.toContain(secret);
+    expect(JSON.stringify(body.messages)).toContain('[REDACTED]');
+  });
+
+  it('uses tool calls outside the 20-turn wire window to redact in-window legacy echoes', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    const secret = 'boundary-history-secret';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    const history: ChatTurn[] = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'outside-window-call',
+          name: 'apply_graph_operations',
+          arguments: {
+            operations: [{ op: 'add_node', node_type: 'SecureClient', params: { account: secret } }],
+          },
+        }],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'outside-window-call',
+        content: JSON.stringify({ error: `backend echoed ${secret}` }),
+      },
+      { role: 'assistant', content: `legacy prose echoed ${secret}` },
+      ...Array.from({ length: 18 }, (_, index) => ({
+        role: 'user' as const,
+        content: `filler-${index}`,
+      })),
+    ];
+    scriptStreamChat([{ done: makeDoneEnd('ok') }]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history, userText: 'continue', callbacks: cbs });
+
+    const body = (streamChat as Mock).mock.calls[0][1] as ChatBody;
+    expect(body.messages).toHaveLength(22);
+    expect(JSON.stringify(body.messages)).not.toContain(secret);
+    expect(JSON.stringify(body.messages)).toContain('[REDACTED]');
   });
 
   it('sends correct model, api_key, max_tokens for openai provider', async () => {
@@ -419,6 +543,41 @@ describe('runTurn', () => {
     expect(snap).toHaveProperty('edges');
   });
 
+  it('redacts live graph secrets before system context, tool results, and history', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const secret = 'live-graph-secret-never-send';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    (api.graph.getGraph as Mock).mockReturnValue({
+      nodes: [{
+        id: 'secure-1',
+        type: 'SecureClient',
+        data: {
+          params: { account: secret, retries: 2, future_auth: 'unknown-secret' },
+          note: `configured with ${secret}`,
+          authorization: `Bearer ${secret}`,
+        },
+      }],
+      edges: [],
+    });
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('graph-secret', 'get_current_graph', {}) },
+      { done: makeDoneEnd('Reviewed the redacted graph.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'show graph', callbacks: state.cbs });
+
+    const firstBody = (streamChat as Mock).mock.calls[0][1] as ChatBody;
+    const secondBody = (streamChat as Mock).mock.calls[1][1] as ChatBody;
+    expect(JSON.stringify(firstBody)).not.toContain(secret);
+    expect(JSON.stringify(secondBody)).not.toContain(secret);
+    expect(JSON.stringify(state.committed)).not.toContain(secret);
+    expect(JSON.stringify(secondBody)).not.toContain('unknown-secret');
+    const toolMessage = secondBody.messages.find((message) => message.role === 'tool');
+    expect(toolMessage?.content).toContain('[REDACTED]');
+  });
+
   it('tool round: get_node_schemas returns on-demand ports/params for requested types', async () => {
     const api = makeFakeApi();
     const { cbs } = makeCallbacks();
@@ -465,6 +624,22 @@ describe('runTurn', () => {
     expect(parsed.errors).toEqual(['boom']);
   });
 
+  it('validateCurrentGraph rejects truthy non-booleans and valid responses that still report errors', async () => {
+    const api = makeFakeApi();
+    (api.http.fetch as Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: 'false', errors: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: ['inconsistent'] }) });
+
+    await expect(validateCurrentGraph(api)).resolves.toEqual({
+      valid: false,
+      errors: ['Graph validation failed without diagnostic details.'],
+    });
+    await expect(validateCurrentGraph(api)).resolves.toEqual({
+      valid: false,
+      errors: ['inconsistent'],
+    });
+  });
+
   it('runnability gate: re-prompts to fix when the final graph fails validation', async () => {
     const api = makeFakeApi();
     // Gate's first validate -> invalid (nudge); second -> valid (finish).
@@ -475,6 +650,7 @@ describe('runTurn', () => {
 
     // Model tries to finish twice; the gate forces the extra round.
     scriptStreamChat([
+      { done: makeDoneToolUse('gate-edit', 'apply_graph_operations', { operations: [{ op: 'auto_layout' }] }) },
       { done: makeDoneEnd('All done (but invalid).') },
       { done: makeDoneEnd('Fixed it.') },
     ]);
@@ -482,15 +658,141 @@ describe('runTurn', () => {
     await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
 
     // The gate caused a second streamChat round with a fix nudge.
-    expect(streamChat).toHaveBeenCalledTimes(2);
-    const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
-    const nudge = body2.messages.find(
+    expect(streamChat).toHaveBeenCalledTimes(3);
+    const [, body3] = (streamChat as Mock).mock.calls[2] as [unknown, ChatBody, ...unknown[]];
+    const nudge = body3.messages.find(
       (m) => m.role === 'user' && typeof m.content === 'string' && /not runnable yet/i.test(m.content),
     );
     expect(nudge).toBeDefined();
     expect(nudge!.content as string).toMatch(/Missing required input/);
     // Validated twice (once per finish attempt); finished exactly once.
     expect(api.http.fetch).toHaveBeenCalledTimes(2);
+    expect(state.finished).toBe(1);
+  });
+
+  it('does not inject graph-fix instructions into a read-only turn on an invalid graph', async () => {
+    const api = makeFakeApi();
+    (api.http.fetch as Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ valid: false, errors: ['Existing graph is invalid'] }),
+    });
+    const state = makeCallbacks();
+    scriptStreamChat([{ done: makeDoneEnd('Here is the conceptual explanation.') }]);
+
+    await runTurn({
+      api,
+      settings: FAKE_SETTINGS,
+      history: [],
+      userText: 'Explain what this node does without changing the graph.',
+      callbacks: state.cbs,
+    });
+
+    expect(api.http.fetch).not.toHaveBeenCalled();
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(state.committed?.at(-1)?.content).toBe('Here is the conceptual explanation.');
+  });
+
+  it('runnability gate fails closed when validation is false without diagnostics', async () => {
+    const api = makeFakeApi();
+    (api.http.fetch as Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: false, errors: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) });
+    const state = makeCallbacks();
+    scriptStreamChat([
+      { done: makeDoneToolUse('gate-empty-errors-edit', 'apply_graph_operations', { operations: [{ op: 'auto_layout' }] }) },
+      { done: makeDoneEnd('The graph is ready.') },
+      { done: makeDoneEnd('The graph is now validated.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
+
+    expect(streamChat).toHaveBeenCalledTimes(3);
+    const thirdBody = (streamChat as Mock).mock.calls[2][1] as ChatBody;
+    const nudge = thirdBody.messages.find(
+      (message) => message.role === 'user' && typeof message.content === 'string' && /not runnable yet/i.test(message.content),
+    );
+    expect(nudge?.content).toContain('Graph validation failed without diagnostic details.');
+    expect(state.committed?.at(-1)?.content).toBe('The graph is now validated.');
+  });
+
+  it('runnability gate rejects a validation result from a graph revision that changed in flight', async () => {
+    const api = makeFakeApi();
+    let graphChanged: (() => void) | undefined;
+    (api.graph.onGraphChanged as Mock).mockImplementation((callback: () => void) => {
+      graphChanged = callback;
+      return vi.fn();
+    });
+    (api.http.fetch as Mock)
+      .mockImplementationOnce(async () => {
+        graphChanged?.();
+        return { ok: true, json: async () => ({ valid: true, errors: [] }) };
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) });
+    const state = makeCallbacks();
+    scriptStreamChat([
+      { done: makeDoneToolUse('gate-race-edit', 'apply_graph_operations', { operations: [{ op: 'auto_layout' }] }) },
+      { done: makeDoneEnd('Validated the old revision.') },
+      { done: makeDoneEnd('Validated the current revision.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'layout and validate', callbacks: state.cbs });
+
+    expect(api.http.fetch).toHaveBeenCalledTimes(2);
+    const thirdBody = (streamChat as Mock).mock.calls[2][1] as ChatBody;
+    expect(JSON.stringify(thirdBody.messages)).toContain('changed while validation was in flight');
+    expect(state.committed?.at(-1)?.content).toBe('Validated the current revision.');
+  });
+
+  it('runnability gate redacts graph-secret echoes from validation errors', async () => {
+    const api = makeFakeApi();
+    const secret = 'validation-error-secret';
+    const presetSecret = 'validation-preset-secret';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    (api.graph.getGraph as Mock).mockReturnValue({
+      nodes: [{ id: 'secure', type: 'SecureClient', data: { params: { account: secret } } }],
+      edges: [],
+      presets: [{ opaque: presetSecret }],
+    });
+    (api.http.fetch as Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: false, errors: [`Invalid account ${secret}; preset ${presetSecret}`] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) });
+    const state = makeCallbacks();
+    scriptStreamChat([
+      { done: makeDoneToolUse('gate-secret-edit', 'apply_graph_operations', { operations: [{ op: 'auto_layout' }] }) },
+      { done: makeDoneEnd('Done.') },
+      { done: makeDoneEnd('Fixed.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
+
+    const thirdBody = (streamChat as Mock).mock.calls[2][1] as ChatBody;
+    expect(JSON.stringify(thirdBody)).not.toContain(secret);
+    expect(JSON.stringify(thirdBody)).not.toContain(presetSecret);
+    expect(JSON.stringify(thirdBody)).toContain('[REDACTED]');
+    expect(JSON.stringify(state.committed)).not.toContain(secret);
+  });
+
+  it('runnability gate: reports a blocked result when bounded correction attempts stay invalid', async () => {
+    const api = makeFakeApi();
+    (api.http.fetch as Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ valid: false, errors: ['Missing required input x on node n0'] }),
+    });
+    const state = makeCallbacks();
+
+    scriptStreamChat([
+      { done: makeDoneToolUse('gate-blocked-edit', 'apply_graph_operations', { operations: [{ op: 'auto_layout' }] }) },
+      { done: makeDoneEnd('The graph is complete.') },
+      { done: makeDoneEnd('The graph is fixed and ready.') },
+      { done: makeDoneEnd('Everything now validates.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
+
+    expect(streamChat).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 2);
+    expect(api.http.fetch).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 1);
+    expect(state.committed?.at(-1)?.content).toMatch(/could not complete a runnable graph/i);
+    expect(state.committed?.at(-1)?.content).toContain('Missing required input x');
     expect(state.finished).toBe(1);
   });
 
@@ -522,6 +824,516 @@ describe('runTurn', () => {
     expect(toolMsg!.content).toContain('build data pipeline?');
     expect(toolMsg!.content).toContain('data: use Dataset');
     expect(toolMsg!.content).toContain('model: use SequentialModel');
+  });
+
+  it('executes raw GraphOps but renders and commits only schema-redacted tool arguments', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const secret = 'sk-never-persist-this-value';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    const operations = [
+      {
+        op: 'add_node',
+        node_type: 'SecureClient',
+        ref: 'secure',
+        params: { account: secret, retries: 2 },
+      },
+      {
+        op: 'set_params',
+        node_id: 'secure',
+        params: { account: secret, retries: 3 },
+      },
+    ];
+    const args = {
+      operations,
+      note: `Configure this account with ${secret} and do not expose it.`,
+      request_metadata: {
+        authorization: `Bearer ${secret}`,
+        max_tokens: 128,
+      },
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('secret-op', 'apply_graph_operations', args) },
+      { done: makeDoneEnd(`Applied ${secret} securely.`) },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'configure it', callbacks: state.cbs });
+
+    // Execution and the current provider protocol receive the exact raw call.
+    expect(api.graph.applyOperations).toHaveBeenCalledWith(operations);
+    const [, secondBody] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
+    const rawProviderCall = secondBody.messages.find((message) => message.tool_calls?.[0]?.id === 'secret-op');
+    expect(rawProviderCall?.tool_calls?.[0].arguments).toEqual(args);
+
+    // Browser history and staged UI receive a separate redacted copy.
+    const stored = state.committed!.find((turn) => turn.tool_calls?.[0]?.id === 'secret-op')!;
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    const storedArgs = stored.tool_calls![0].arguments as typeof args;
+    expect(storedArgs.operations[0].params).toEqual({ account: '[REDACTED]', retries: 2 });
+    expect(storedArgs.operations[1].params).toEqual({ account: '[REDACTED]', retries: 3 });
+    expect(storedArgs.request_metadata).toEqual({ authorization: '[REDACTED]', max_tokens: 128 });
+    expect(storedArgs.note).toBe('Configure this account with [REDACTED] and do not expose it.');
+    expect(state.committed?.at(-1)?.content).toBe('Applied [REDACTED] securely.');
+  });
+
+  it('redacts secret echoes from partial assistant text before error-path persistence', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const secret = 'partial-stream-secret-never-persist';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    scriptStreamChat([
+      {
+        done: makeDoneToolUse('partial-secret', 'apply_graph_operations', {
+          operations: [{ op: 'add_node', node_type: 'SecureClient', params: { account: secret } }],
+        }),
+      },
+      { textDeltas: [`The account is ${secret}`], error: 'proxy timeout' },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'configure', callbacks: state.cbs });
+
+    expect(JSON.stringify(state.committed)).not.toContain(secret);
+    expect(state.committed?.at(-1)?.content).toBe('The account is [REDACTED]');
+    expect(state.errors).toEqual(['proxy timeout']);
+  });
+
+  it('scrubs a secret echoed across different tool calls in one assistant batch', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const secret = 'cross-call-secret-never-persist';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    const done: DoneEvent = {
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'introduce-secret',
+            name: 'apply_graph_operations',
+            arguments: {
+              operations: [{ op: 'add_node', node_type: 'SecureClient', params: { account: secret } }],
+            },
+          },
+          {
+            id: 'echo-secret',
+            name: 'get_node_schemas',
+            arguments: { node_types: ['Conv2d'], note: `same value: ${secret}` },
+          },
+        ],
+      },
+      stop_reason: 'tool_use',
+      usage: {},
+    };
+    scriptStreamChat([{ done }, { done: makeDoneEnd('Done.') }]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'configure', callbacks: state.cbs });
+
+    const stored = state.committed!.find((turn) => turn.tool_calls?.length === 2)!;
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(stored.tool_calls?.[1].arguments.note).toBe('same value: [REDACTED]');
+    const secondBody = (streamChat as Mock).mock.calls[1][1] as ChatBody;
+    expect(secondBody.messages.find((message) => message.tool_calls)?.tool_calls?.[1].arguments.note)
+      .toBe(`same value: ${secret}`);
+  });
+
+  it('redacts secret and unknown params inside persisted experiment variants', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const secret = 'credential-value-that-must-not-survive';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([...FAKE_DEFS, SECRET_DEF]);
+    (runGraphExperiments as Mock).mockResolvedValue({ status: 'completed' });
+    const approve = vi.fn(async (_request: ExperimentApprovalRequest) => true);
+    state.cbs.onExperimentApproval = approve;
+    const args = {
+      hypothesis: 'compare secure clients',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      variants: [{
+        id: 'secure',
+        label: 'Secure candidate',
+        operations: [{
+          op: 'add_node',
+          node_type: 'SecureClient',
+          params: { account: secret, retries: 4 },
+        }],
+      }, {
+        id: 'unknown',
+        label: 'Unknown schema candidate',
+        operations: [{
+          op: 'add_node',
+          node_type: 'ThirdPartyNode',
+          params: { innocentLookingName: secret },
+        }],
+      }],
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('secret-study', 'run_graph_experiments', args) },
+      { done: makeDoneEnd('Study complete.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'run it', callbacks: state.cbs });
+
+    expect(runGraphExperiments).toHaveBeenCalledWith(api, args, undefined);
+    const stored = state.committed!.find((turn) => turn.tool_calls?.[0]?.id === 'secret-study')!;
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    const variants = stored.tool_calls![0].arguments.variants as Array<{ operations: Array<{ params: Record<string, unknown> }> }>;
+    expect(variants[0].operations[0].params).toEqual({ account: '[REDACTED]', retries: 4 });
+    expect(variants[1].operations[0].params).toEqual({ innocentLookingName: '[REDACTED]' });
+    const approval = approve.mock.calls[0][0];
+    expect(JSON.stringify(approval)).not.toContain(secret);
+    expect(approval.variants[0].operations[0]).toContain('account="[REDACTED]"');
+    expect(approval.variants[0].operations[0]).toContain('retries=4');
+  });
+
+  it('tool round: experiment result is fed back and promoted ops surface through callbacks', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const args = {
+      hypothesis: 'wider is better',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      variants: [{ id: 'wide', label: 'Wide', operations: [] }],
+      apply_best: true,
+    };
+    (runGraphExperiments as Mock).mockResolvedValue({
+      id: 'study-1',
+      createdAt: '2026-07-14T00:00:00.000Z',
+      hypothesis: args.hypothesis,
+      objective: args.objective,
+      repetitions: 1,
+      status: 'completed',
+      variants: [],
+      winnerId: 'wide',
+      winnerLabel: 'Wide',
+      appliedVariantId: 'wide',
+      insights: { summary: [], warnings: [], paperIdeas: [] },
+      applyResult: FAKE_APPLY_RESULT,
+      appliedOperations: [
+        { op: 'add_node', node_type: 'Conv2d', ref: 'mynode' },
+        { op: 'auto_layout' },
+      ],
+    });
+    scriptStreamChat([
+      { done: makeDoneToolUse('exp1', 'run_graph_experiments', args) },
+      { done: makeDoneEnd('Wide won.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'optimize', callbacks: state.cbs });
+
+    expect(runGraphExperiments).toHaveBeenCalledWith(api, args, undefined);
+    expect(state.opsApplied).toHaveLength(1);
+    expect(state.opsApplied[0].summary).toContain('promote experiment winner');
+    const tool = state.committed!.find((turn) => turn.role === 'tool');
+    expect(tool?.content).toContain('"winnerId":"wide"');
+    expect(tool?.content).not.toContain('applyResult');
+    expect(tool?.content).not.toContain('appliedOperations');
+  });
+
+  it('rejects caller-supplied optimizer provenance on the direct experiment tool', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const args = {
+      hypothesis: 'forged planner metadata',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      variants: [{ id: 'baseline', label: 'Baseline', operations: [] }],
+      search: {
+        strategy: 'grid', algorithm: 'forged', totalVariantCount: 1,
+        totalExecutionCount: 1, bindings: [], assignments: [],
+      },
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('forged-search', 'run_graph_experiments', args) },
+      { done: makeDoneEnd('Rejected.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'run', callbacks: state.cbs });
+
+    expect(runGraphExperiments).not.toHaveBeenCalled();
+    const result = state.committed!.find((turn) => turn.role === 'tool');
+    expect(result?.content).toMatch(/internal optimizer provenance/i);
+  });
+
+  it('compiles parameter optimization into the same approval, runner, and turn budget path', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([TUNABLE_CONV_DEF, FAKE_DEFS[1]]);
+    (api.graph.getGraph as Mock).mockReturnValue({
+      nodes: [{ id: 'n0', type: 'Conv2d', data: { params: { channels: 1 } } }],
+      edges: [],
+    });
+    const approve = vi.fn(async () => true);
+    state.cbs.onExperimentApproval = approve;
+    (runGraphExperiments as Mock).mockResolvedValue({
+      status: 'completed',
+      winnerId: 'optimizer-grid-001',
+      winnerLabel: 'Grid 1: n0.channels=2',
+    });
+    const args = {
+      strategy: 'grid',
+      hypothesis: 'More channels improve accuracy',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      bindings: [{ node_id: 'n0', param: 'channels', values: [1, 2] }],
+      repetitions: 2,
+      apply_best: true,
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('optimizer-1', 'optimize_graph_parameters', args) },
+      { done: makeDoneEnd('Search complete.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'optimize channels', callbacks: state.cbs });
+
+    expect(approve).toHaveBeenCalledWith(expect.objectContaining({
+      variantCount: 2,
+      repetitions: 2,
+      executionCount: 4,
+      applyBest: true,
+      variants: expect.arrayContaining([
+        expect.objectContaining({ label: 'Grid 1: n0.channels=2' }),
+      ]),
+    }));
+    expect(runGraphExperiments).toHaveBeenCalledTimes(1);
+    const compiled = (runGraphExperiments as Mock).mock.calls[0][1];
+    expect(compiled.variants).toEqual([
+      { id: 'baseline', label: 'Baseline', operations: [] },
+      {
+        id: 'optimizer-grid-001',
+        label: 'Grid 1: n0.channels=2',
+        operations: [{ op: 'set_params', node_id: 'n0', params: { channels: 2 } }],
+      },
+    ]);
+    const toolResult = state.committed!.find((turn) => turn.tool_call_id === 'optimizer-1')!;
+    expect(JSON.parse(toolResult.content).optimizer).toMatchObject({
+      strategy: 'grid',
+      totalExecutionCount: 4,
+      generatedCandidateCount: 1,
+    });
+  });
+
+  it('rejects unsafe optimizer bindings before approval and redacts their persisted domain', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const secret = 'optimizer-secret-value';
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([SECRET_DEF]);
+    (api.graph.getGraph as Mock).mockReturnValue({
+      nodes: [{ id: 'n0', type: 'SecureClient', data: { params: { account: secret } } }],
+      edges: [],
+    });
+    const approve = vi.fn(async () => true);
+    state.cbs.onExperimentApproval = approve;
+    scriptStreamChat([
+      { done: makeDoneToolUse('unsafe-optimizer', 'optimize_graph_parameters', {
+        strategy: 'grid',
+        hypothesis: 'Never optimize credentials',
+        objective: { metric: 'accuracy', direction: 'maximize' },
+        bindings: [{ node_id: 'n0', param: 'account', values: [secret] }],
+      }) },
+      { done: makeDoneEnd('Rejected.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'try it', callbacks: state.cbs });
+
+    expect(approve).not.toHaveBeenCalled();
+    expect(runGraphExperiments).not.toHaveBeenCalled();
+    const assistant = state.committed!.find((turn) => turn.tool_calls?.[0]?.id === 'unsafe-optimizer')!;
+    expect(JSON.stringify(assistant)).not.toContain(secret);
+    expect((assistant.tool_calls![0].arguments.bindings as any[])[0].values).toEqual(['[REDACTED]']);
+    const toolResult = state.committed!.find((turn) => turn.tool_call_id === 'unsafe-optimizer')!;
+    expect(toolResult.content).toContain('unsupported type');
+  });
+
+  it('requires an explicit interactive approval before executing graph experiments', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const args = {
+      hypothesis: 'compare candidates',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      variants: [{ id: 'baseline', label: 'Baseline', operations: [] }],
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('exp-denied', 'run_graph_experiments', args) },
+      { done: makeDoneEnd('I need your authorization first.') },
+    ]);
+    state.cbs.onExperimentApproval = async () => false;
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'Explain the current graph.', callbacks: state.cbs });
+
+    expect(runGraphExperiments).not.toHaveBeenCalled();
+    const tool = state.committed!.find((turn) => turn.role === 'tool');
+    expect(tool?.content).toContain('not approved by the user');
+  });
+
+  it('lists every node type that may execute in the approval instead of hiding a capped tail', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const nodeTypes = Array.from({ length: 15 }, (_, index) => `NodeType${index + 1}`);
+    (api.graph.getGraph as Mock).mockReturnValue({
+      nodes: nodeTypes.map((type, index) => ({ id: `node-${index}`, type })),
+      edges: [],
+    });
+    const approve = vi.fn(async (_request: ExperimentApprovalRequest) => false);
+    state.cbs.onExperimentApproval = approve;
+    scriptStreamChat([
+      { done: makeDoneToolUse('all-node-types', 'run_graph_experiments', {
+        hypothesis: 'inventory execution scope',
+        objective: { metric: 'accuracy', direction: 'maximize' },
+        variants: [{ id: 'baseline', label: 'Baseline', operations: [] }],
+      }) },
+      { done: makeDoneEnd('Cancelled.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'review', callbacks: state.cbs });
+
+    expect(approve.mock.calls[0][0].nodeTypes).toEqual(nodeTypes);
+    expect(runGraphExperiments).not.toHaveBeenCalled();
+  });
+
+  it('requires replanning if the active graph changes while approval is open', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    let graphChanged = () => {};
+    (api.graph.onGraphChanged as ReturnType<typeof vi.fn>).mockImplementation((callback: () => void) => {
+      graphChanged = callback;
+      return () => { graphChanged = () => {}; };
+    });
+    state.cbs.onExperimentApproval = async () => {
+      graphChanged();
+      return true;
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('exp-stale-approval', 'run_graph_experiments', {
+        hypothesis: 'stale plan',
+        objective: { metric: 'accuracy', direction: 'maximize' },
+        variants: [{ id: 'baseline', label: 'Baseline', operations: [] }],
+      }) },
+      { done: makeDoneEnd('I will re-read the graph.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'Run an experiment.', callbacks: state.cbs });
+
+    expect(runGraphExperiments).not.toHaveBeenCalled();
+    const tool = state.committed!.find((turn) => turn.role === 'tool');
+    expect(tool?.content).toContain('"replan":true');
+    expect(tool?.content).toContain('changed while execution approval was open');
+  });
+
+  it('rejects coercible experiment arguments before approval or budget accounting', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const approve = vi.fn(async () => true);
+    state.cbs.onExperimentApproval = approve;
+    const base = {
+      hypothesis: 'strict inputs',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      variants: Array.from({ length: 4 }, (_, index) => ({ id: `v${index}`, label: `V${index}`, operations: [] })),
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('exp-string-reps', 'run_graph_experiments', { ...base, repetitions: '5' }) },
+      { done: makeDoneToolUse('exp-string-apply', 'run_graph_experiments', { ...base, apply_best: 'false' }) },
+      { done: makeDoneEnd('Rejected invalid arguments.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'Run an experiment.', callbacks: state.cbs });
+
+    expect(runGraphExperiments).not.toHaveBeenCalled();
+    expect(approve).not.toHaveBeenCalled();
+    const tools = state.committed!.filter((turn) => turn.role === 'tool');
+    expect(tools[0].content).toContain('repetitions must be an integer');
+    expect(tools[1].content).toContain('apply_best must be a boolean');
+  });
+
+  it('shares one 16-execution budget across every experiment call in the turn', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const variants = Array.from({ length: 8 }, (_, index) => ({
+      id: `v${index}`,
+      label: `Variant ${index}`,
+      operations: [],
+    }));
+    const args = {
+      hypothesis: 'bounded study',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      variants,
+    };
+    (runGraphExperiments as Mock).mockResolvedValue({ status: 'completed' });
+    scriptStreamChat([
+      { done: makeDoneToolUse('exp-budget-1', 'run_graph_experiments', args) },
+      { done: makeDoneToolUse('exp-budget-2', 'run_graph_experiments', args) },
+      { done: makeDoneToolUse('exp-budget-3', 'run_graph_experiments', { ...args, variants: variants.slice(0, 1) }) },
+      { done: makeDoneEnd('Budget exhausted.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'Run an experiment.', callbacks: state.cbs });
+
+    expect(runGraphExperiments).toHaveBeenCalledTimes(2);
+    const tools = state.committed!.filter((turn) => turn.role === 'tool');
+    expect(tools[2].content).toContain('turn budget exceeded');
+    expect(tools[2].content).toContain('0 of 16');
+  });
+
+  it('charges optimizer-generated candidates to the same 16-execution turn ledger', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    (api.graph.getNodeDefinitions as Mock).mockReturnValue([TUNABLE_CONV_DEF]);
+    (api.graph.getGraph as Mock).mockReturnValue({
+      nodes: [{ id: 'n0', type: 'Conv2d', data: { params: { channels: 1 } } }],
+      edges: [],
+    });
+    (runGraphExperiments as Mock).mockResolvedValue({ status: 'completed' });
+    const optimizerArgs = {
+      strategy: 'grid',
+      hypothesis: 'bounded search',
+      objective: { metric: 'accuracy', direction: 'maximize' },
+      bindings: [{ node_id: 'n0', param: 'channels', values: [2, 3, 4] }],
+      repetitions: 2,
+    };
+    scriptStreamChat([
+      { done: makeDoneToolUse('optimizer-budget-1', 'optimize_graph_parameters', optimizerArgs) },
+      { done: makeDoneToolUse('optimizer-budget-2', 'optimize_graph_parameters', optimizerArgs) },
+      { done: makeDoneToolUse('optimizer-budget-3', 'run_graph_experiments', {
+        hypothesis: 'one more',
+        objective: { metric: 'accuracy', direction: 'maximize' },
+        variants: [{ id: 'baseline', label: 'Baseline', operations: [] }],
+      }) },
+      { done: makeDoneEnd('Budget enforced.') },
+    ]);
+
+    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'search twice', callbacks: state.cbs });
+
+    expect(runGraphExperiments).toHaveBeenCalledTimes(2);
+    const tools = state.committed!.filter((turn) => turn.role === 'tool');
+    expect(tools[2].content).toContain('turn budget exceeded');
+    expect(tools[2].content).toContain('0 of 16');
+  });
+
+  it('closes the tool call cleanly when an experiment is cancelled', async () => {
+    const api = makeFakeApi();
+    const state = makeCallbacks();
+    const controller = new AbortController();
+    (runGraphExperiments as Mock).mockImplementation(async () => {
+      controller.abort();
+      throw new DOMException('Experiment cancelled', 'AbortError');
+    });
+    scriptStreamChat([
+      { done: makeDoneToolUse('exp-cancel', 'run_graph_experiments', {
+        hypothesis: 'cancel me',
+        objective: { metric: 'accuracy', direction: 'maximize' },
+        variants: [{ id: 'baseline', label: 'Baseline', operations: [] }],
+      }) },
+    ]);
+
+    await runTurn({
+      api,
+      settings: FAKE_SETTINGS,
+      history: [],
+      userText: 'Run an experiment.',
+      callbacks: state.cbs,
+      signal: controller.signal,
+    });
+
+    expect(state.errors).toEqual([]);
+    expect(state.finished).toBe(1);
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(state.committed?.map((turn) => turn.role)).toEqual(['assistant', 'tool']);
+    expect(state.committed?.[1].content).toContain('"cancelled":true');
   });
 
   // -------------------------------------------------------------------------
@@ -783,6 +1595,7 @@ describe('runTurn — incremental turn events', () => {
     const state = makeStagedCallbacks();
 
     scriptStreamChat([
+      { done: makeDoneToolUse('staged-gate-edit', 'apply_graph_operations', { operations: [{ op: 'auto_layout' }] }) },
       { done: makeDoneEnd('All done (but invalid).') },
       { done: makeDoneEnd('Fixed it.') },
     ]);
@@ -790,9 +1603,13 @@ describe('runTurn — incremental turn events', () => {
     await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
 
     expect(state.committed).not.toBeNull();
-    const contents = state.committed!.map((t) => t.content);
+    const contents = state.committed!
+      .filter((turn) => turn.role === 'assistant' && !turn.tool_calls?.length)
+      .map((turn) => turn.content);
     expect(contents).toEqual(['All done (but invalid).', 'Fixed it.']);
-    expect(state.appended.map((t) => t.content)).toEqual(contents);
+    expect(state.appended
+      .filter((turn) => turn.role === 'assistant' && !turn.tool_calls?.length)
+      .map((turn) => turn.content)).toEqual(contents);
     expect(state.finished).toBe(1);
   });
 

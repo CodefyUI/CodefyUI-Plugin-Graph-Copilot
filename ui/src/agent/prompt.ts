@@ -6,12 +6,18 @@
  */
 
 import type { NodeDefinition, ParamDefinition, SerializedGraph } from '../types/codefyui';
+import {
+  REDACTED_VALUE,
+  isSensitiveKey,
+  redactGraphForContext,
+  redactSensitiveFields,
+} from './historyRedaction';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maximum characters kept in the graph JSON snapshot before truncation. */
+/** Maximum characters kept in the graph JSON snapshot. */
 export const GRAPH_CHAR_LIMIT = 30_000;
 
 // ---------------------------------------------------------------------------
@@ -27,19 +33,21 @@ export const GRAPH_CHAR_LIMIT = 30_000;
  * Omitted entirely when both sides are null (no constraint).
  */
 function formatParam(p: ParamDefinition): string {
+  const sensitive = p.param_type === 'secret' || isSensitiveKey(p.name);
+  const safeDefault = sensitive ? REDACTED_VALUE : redactSensitiveFields(p.default);
   // Render primitives with String(); non-primitives with JSON.stringify to avoid
   // "[object Object]". Cap the result at 60 chars to keep catalog lines readable.
   const rawDefault =
-    p.default === null || p.default === undefined
-      ? String(p.default)
-      : typeof p.default === 'object'
-      ? JSON.stringify(p.default)
-      : String(p.default);
+    safeDefault === null || safeDefault === undefined
+      ? String(safeDefault)
+      : typeof safeDefault === 'object'
+      ? JSON.stringify(safeDefault)
+      : String(safeDefault);
   const defaultStr = rawDefault.length > 60 ? rawDefault.slice(0, 60) + '...' : rawDefault;
   let constraint = '';
 
   if (p.param_type === 'select' && p.options.length > 0) {
-    constraint = `{${p.options.join('|')}}`;
+    constraint = sensitive ? `{${REDACTED_VALUE}}` : `{${p.options.join('|')}}`;
   } else if (p.param_type === 'int' || p.param_type === 'float') {
     const hasMin = p.min_value !== null;
     const hasMax = p.max_value !== null;
@@ -110,18 +118,56 @@ export function compactIndex(defs: NodeDefinition[]): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Serialize the graph to a compact JSON string (nodes + edges only).
- * If the result exceeds GRAPH_CHAR_LIMIT, truncate and append a marker.
+ * Serialize the graph to compact, always-valid JSON. Large graphs are reduced
+ * at whole-node/whole-edge boundaries and carry explicit truncation metadata;
+ * a raw character slice would leave the model with malformed JSON.
  */
-export function graphSnapshot(graph: SerializedGraph): string {
-  const payload = JSON.stringify({ nodes: graph.nodes, edges: graph.edges });
+export function graphSnapshot(
+  graph: SerializedGraph,
+  definitions: NodeDefinition[] = [],
+): string {
+  const safeGraph = redactGraphForContext(graph, definitions);
+  const payload = JSON.stringify({ nodes: safeGraph.nodes, edges: safeGraph.edges });
   if (payload.length <= GRAPH_CHAR_LIMIT) {
     return payload;
   }
 
-  const kept = GRAPH_CHAR_LIMIT;
-  const total = payload.length;
-  return payload.slice(0, kept) + `\n[graph truncated - kept ${kept} of ${total} chars]`;
+  const nodes: Array<Record<string, unknown>> = [];
+  const edges: Array<Record<string, unknown>> = [];
+  const marker = {
+    originalNodes: safeGraph.nodes.length,
+    includedNodes: 0,
+    originalEdges: safeGraph.edges.length,
+    includedEdges: 0,
+    originalChars: payload.length,
+    limit: GRAPH_CHAR_LIMIT,
+  };
+  const serialize = () => JSON.stringify({ nodes, edges, _truncated: marker });
+
+  for (const node of safeGraph.nodes) {
+    nodes.push(node as unknown as Record<string, unknown>);
+    marker.includedNodes = nodes.length;
+    if (serialize().length > GRAPH_CHAR_LIMIT) {
+      nodes.pop();
+      marker.includedNodes = nodes.length;
+      break;
+    }
+  }
+
+  // Preserve only edges whose endpoints are present in the reduced snapshot.
+  const ids = new Set(nodes.map((node) => String(node.id ?? '')));
+  for (const edge of safeGraph.edges) {
+    if (!ids.has(String(edge.source ?? '')) || !ids.has(String(edge.target ?? ''))) continue;
+    edges.push(edge as unknown as Record<string, unknown>);
+    marker.includedEdges = edges.length;
+    if (serialize().length > GRAPH_CHAR_LIMIT) {
+      edges.pop();
+      marker.includedEdges = edges.length;
+      break;
+    }
+  }
+
+  return serialize();
 }
 
 // ---------------------------------------------------------------------------
@@ -133,9 +179,9 @@ export function graphSnapshot(graph: SerializedGraph): string {
  */
 export function buildSystemPrompt(defs: NodeDefinition[], graph: SerializedGraph): string {
   const index = compactIndex(defs);
-  const snapshot = graphSnapshot(graph);
+  const snapshot = graphSnapshot(graph, defs);
 
-  return `You are Graph Copilot inside CodefyUI, a visual node-graph editor for machine-learning pipelines. You build and edit the user's graph by calling tools, and you make sure the result actually RUNS.
+  return `You are Graph Copilot, an agent inside CodefyUI, a visual node-graph editor for machine-learning pipelines. You can build graphs, run canvas-isolated candidate experiments when explicitly authorized, optimize against measured metrics, and turn observations into testable research hypotheses.
 
 ## Workflow (follow in order)
 1. Plan - state in 1-2 sentences the nodes and connections you intend.
@@ -143,6 +189,15 @@ export function buildSystemPrompt(defs: NodeDefinition[], graph: SerializedGraph
 3. Build - call apply_graph_operations in small batches (add_node with a "ref", connect, set_params), ending a structural batch with one auto_layout.
 4. Validate - call validate_graph. If it returns errors (e.g. a missing required input), fix them with more operations and validate again. Only finish once validate_graph reports "valid": true.
 5. Summarize what you built in 1-2 sentences, in the user's language.
+
+## Experiment and research workflow
+When the user asks to test, compare, optimize, ablate, or find research ideas:
+1. State a falsifiable hypothesis, a NUMERIC metric, and whether to maximize or minimize it. Never invent a measured result.
+2. For an explicit comparison or structural ablation, call run_graph_experiments with focused variants. For optimization over existing int/float/bool/select params, prefer optimize_graph_parameters: use a complete small grid or a uint32-seeded random plan, and remember its planner seed does NOT seed graph execution. Never optimize secret/file/tensor/unknown params.
+3. State the planned run count and remember that graph nodes execute normally and may write files, call networks, or incur API costs. Both experiment tools use the same UI confirmation and shared 16-execution turn budget; a chat instruction alone is not consent. Candidate GraphOps are canvas-isolated, not side-effect-free.
+4. Include an explicit baseline plus focused variants. Use at least 3 repetitions when the user wants reliable evidence; otherwise label the result a pilot.
+5. Set apply_best=true only when the user explicitly asked to optimize or apply the winner. Automatic promotion supports parameter-only winners; structural winners stay proposals for review. For comparison or research-only requests, leave it false.
+6. Report the unique winner or an explicit tie, effect size visible in the results, failures, variance limitations, and the next experiment needed before making a paper claim. Repetitions reuse the same candidate graph unless its nodes randomize internally; never call them independent seeds without an explicit seed schedule in the graph.
 
 ## Graph model
 Each node has a type (the bare name from the index), typed input/output ports, and params. Edges connect an output handle to an input handle; the connected data types must be compatible. Some pipelines need a control-flow trigger from a Start node (connect with source_handle "trigger").
@@ -157,6 +212,8 @@ Each node has a type (the bare name from the index), typed input/output ports, a
 - Prefer several small batches over one enormous batch.
 - If an op fails, read the error message and correct yourself before retrying.
 - Never use clear_graph unless the user explicitly asked to start over.
+- Prefer a small controlled ablation over changing many factors at once. Include seed controls and held-out evaluation when the graph exposes them.
+- Treat experiment outputs as evidence, not proof. Do not claim novelty or statistical significance without enough independent runs and an appropriate test.
 - Reply in the user's language, and after applying changes summarize what changed in one or two sentences.
 
 ## Node catalog index (NodeName [Category] - description). Call get_node_schemas for exact ports/params.

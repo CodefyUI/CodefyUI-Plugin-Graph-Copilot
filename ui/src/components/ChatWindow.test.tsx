@@ -27,6 +27,9 @@ vi.mock('./HistoryView', () => ({
 vi.mock('./SettingsView', () => ({
   SettingsView: () => <div data-testid="settingsview" />,
 }));
+vi.mock('./ExperimentsView', () => ({
+  ExperimentsView: () => <div data-testid="experimentsview" />,
+}));
 
 import { ChatWindow } from './ChatWindow';
 
@@ -37,8 +40,10 @@ function makeConv(): Conversation {
   };
 }
 
-function renderWindow(over: Partial<React.ComponentProps<typeof ChatWindow>> = {}) {
-  const props: React.ComponentProps<typeof ChatWindow> = {
+function renderWindowProps(
+  over: Partial<React.ComponentProps<typeof ChatWindow>> = {},
+): React.ComponentProps<typeof ChatWindow> {
+  return {
     api: {} as CodefyUIPluginAPI,
     settings: DEFAULT_SETTINGS as Settings,
     codexLoggedIn: false,
@@ -52,6 +57,10 @@ function renderWindow(over: Partial<React.ComponentProps<typeof ChatWindow>> = {
     onClose: vi.fn(),
     ...over,
   };
+}
+
+function renderWindow(over: Partial<React.ComponentProps<typeof ChatWindow>> = {}) {
+  const props = renderWindowProps(over);
   render(<ChatWindow {...props} />);
   return props;
 }
@@ -82,6 +91,50 @@ describe('ChatWindow', () => {
     expect(screen.getByTestId('settingsview')).toBeTruthy();
     fireEvent.click(settingsBtn);
     expect(screen.getByTestId('chatview')).toBeTruthy();
+  });
+
+  it('opens the experiment lab from the primary navigation', () => {
+    renderWindow();
+    fireEvent.click(screen.getByRole('button', { name: /experiments lab/i }));
+    expect(screen.getByTestId('experimentsview')).toBeTruthy();
+    expect(screen.queryByTestId('chatview')).toBeNull();
+  });
+
+  it('switches between compact and expanded panel modes', () => {
+    renderWindow();
+    const dialog = screen.getByRole('dialog', { name: /agent workbench/i });
+    expect(dialog.getAttribute('data-panel-mode')).toBe('compact');
+
+    fireEvent.click(screen.getByRole('button', { name: /expand panel/i }));
+    expect(dialog.getAttribute('data-panel-mode')).toBe('expanded');
+
+    fireEvent.click(screen.getByRole('button', { name: /use compact panel/i }));
+    expect(dialog.getAttribute('data-panel-mode')).toBe('compact');
+  });
+
+  it('shows the current graph and CodefyUI API context', () => {
+    const unsubscribe = vi.fn();
+    const onGraphChanged = vi.fn().mockReturnValue(unsubscribe);
+    const api = {
+      apiVersion: 2,
+      graph: {
+        getGraph: vi.fn().mockReturnValue({
+          nodes: [{ id: '1' }, { id: '2' }, { id: '3' }],
+          edges: [{ id: 'e1' }, { id: 'e2' }],
+        }),
+        onGraphChanged,
+      },
+    } as unknown as CodefyUIPluginAPI;
+
+    const { unmount } = render(<ChatWindow {...renderWindowProps({ api })} />);
+    const context = screen.getByLabelText(/current graph context/i);
+    expect(context).toHaveTextContent('3 nodes');
+    expect(context).toHaveTextContent('2 edges');
+    expect(context).toHaveTextContent('API v2');
+    expect(onGraphChanged).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it('opens settings and history from ChatView callbacks', () => {

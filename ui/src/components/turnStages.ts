@@ -80,6 +80,8 @@ const LABELS: Record<string, string> = {
   get_node_schemas: 'Node schemas',
   validate_graph: 'Validate graph',
   research: 'Research',
+  run_graph_experiments: 'Experiment study',
+  optimize_graph_parameters: 'Parameter search',
 };
 
 function parseJson(text: string): Record<string, unknown> | null {
@@ -205,6 +207,62 @@ function describeResearch(args: Record<string, unknown>, result?: ChatTurn): Sta
   return { label, summary, status: 'ok', detail: truncate(result.content, 4000) };
 }
 
+function describeExperiment(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.run_graph_experiments;
+  const variants = Array.isArray(args.variants) ? args.variants.length : 0;
+  const repetitions = typeof args.repetitions === 'number' ? args.repetitions : 1;
+  const planned = variants > 0 ? `${variants} candidates · ${variants * repetitions} runs` : 'preparing study';
+  if (!result) return { label, summary: planned, status: 'running' };
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.error === 'string') {
+    return {
+      label,
+      summary: typeof parsed?.error === 'string' ? truncate(parsed.error, 120) : 'study failed',
+      status: 'error',
+      detail: prettyDetail(result.content),
+    };
+  }
+  const winner = typeof parsed.winnerLabel === 'string' ? parsed.winnerLabel : null;
+  const applied = typeof parsed.appliedVariantId === 'string';
+  return {
+    label,
+    summary: winner ? `${winner} ranked first${applied ? ' · applied' : ''}` : 'no rankable metric',
+    status: winner ? 'ok' : 'error',
+    detail: prettyDetail(result.content),
+  };
+}
+
+function describeOptimizer(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.optimize_graph_parameters;
+  const bindings = Array.isArray(args.bindings) ? args.bindings.length : 0;
+  const strategy = args.strategy === 'seeded_random' ? 'seeded random' : 'grid';
+  const repetitions = typeof args.repetitions === 'number' ? args.repetitions : 1;
+  const candidateCount = args.strategy === 'seeded_random' && typeof args.candidate_count === 'number'
+    ? args.candidate_count + (args.include_baseline === false ? 0 : 1)
+    : undefined;
+  const planned = candidateCount
+    ? `${strategy} · ${bindings} params · ${candidateCount * repetitions} runs`
+    : `${strategy} · ${bindings} ${bindings === 1 ? 'parameter' : 'parameters'}`;
+  if (!result) return { label, summary: planned, status: 'running' };
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.error === 'string') {
+    return {
+      label,
+      summary: typeof parsed?.error === 'string' ? truncate(parsed.error, 120) : 'search failed',
+      status: 'error',
+      detail: prettyDetail(result.content),
+    };
+  }
+  const winner = typeof parsed.winnerLabel === 'string' ? parsed.winnerLabel : null;
+  const applied = typeof parsed.appliedVariantId === 'string';
+  return {
+    label,
+    summary: winner ? `${winner} ranked first${applied ? ' · applied' : ''}` : 'no rankable metric',
+    status: winner ? 'ok' : 'error',
+    detail: prettyDetail(result.content),
+  };
+}
+
 function describeGeneric(call: WireToolCall, result?: ChatTurn): StageDescription {
   const label = LABELS[call.name] ?? call.name;
   if (!result) return { label, summary: 'running…', status: 'running' };
@@ -231,6 +289,10 @@ export function describeStage(stage: ToolStage): StageDescription {
       return describeSchemas(args, result);
     case 'research':
       return describeResearch(args, result);
+    case 'run_graph_experiments':
+      return describeExperiment(args, result);
+    case 'optimize_graph_parameters':
+      return describeOptimizer(args, result);
     default:
       return describeGeneric(call, result);
   }
