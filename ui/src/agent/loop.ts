@@ -16,6 +16,7 @@ import {
 } from './experiments';
 import type { GraphExperimentRequest } from './experiments';
 import type { Settings } from '../state/settings';
+import { activeReasoningEffort } from '../state/settings';
 import type { ChatTurn } from '../state/conversations';
 import type { Attachment } from '../state/attachments';
 import type { CodefyUIPluginAPI, GraphOp, ApplyResult, OpResult } from '../types/codefyui';
@@ -384,6 +385,7 @@ function buildChatBody(
     max_tokens: number;
     api_key?: string;
     base_url?: string;
+    reasoning_effort?: ReturnType<typeof activeReasoningEffort>;
   } = {
     provider,
     model,
@@ -409,6 +411,11 @@ function buildChatBody(
   // base_url: only for custom provider
   if (provider === 'custom' && settings.customBaseUrl) {
     body.base_url = settings.customBaseUrl;
+  }
+
+  const reasoningEffort = activeReasoningEffort(settings);
+  if (reasoningEffort) {
+    body.reasoning_effort = reasoningEffort;
   }
 
   return body;

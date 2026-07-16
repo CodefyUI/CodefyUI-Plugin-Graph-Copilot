@@ -18,7 +18,37 @@ Graph Copilot talks to a model provider through your **local CodefyUI backend**,
 | **Claude API** | Your Anthropic API key |
 | **Custom (OpenAI-compatible)** | A base URL (Ollama, LM Studio, vLLM, …); key optional |
 
-For the key-based providers, paste an API key and pick a model. The **"Load list"** button fetches your account's model list.
+For the key-based providers, paste an API key and pick a model. Codex becomes ready after sign-in.
+
+## Model catalog and refresh behavior
+
+At plugin startup and while Settings is open, Graph Copilot automatically synchronizes the active built-in provider as soon as its credentials are ready: OpenAI, OpenRouter, and Claude require a key, while Codex requires a signed-in account. Startup negotiation also restores a saved reasoning-effort preference without requiring Settings to be opened first. A successful result is cached in memory for **five minutes** per provider and credential or endpoint identity, so opening Settings or returning to a provider can reuse a fresh catalog.
+
+Codex dynamic discovery is compatibility-bounded best effort. The CodefyUI host uses the protocol version it implements and auto-lists only models compatible with that contract. This avoids presenting a model the host cannot call, but it does not promise zero future updates: a model that requires a newer host or protocol still requires a CodefyUI update.
+
+The OpenAI API and OpenAI Codex catalogs always include these built-in GPT-5.6 fallbacks:
+
+| Model | Model id |
+| --- | --- |
+| **GPT-5.6 Sol** | `gpt-5.6-sol` (OpenAI may also expose the `gpt-5.6` alias) |
+| **GPT-5.6 Terra** | `gpt-5.6-terra` |
+| **GPT-5.6 Luna** | `gpt-5.6-luna` |
+
+OpenAI's `/v1/models` response contains model IDs, not reasoning-effort metadata. Graph Copilot therefore supplies the GPT-5.6 effort options and defaults from these curated fallbacks while still merging the discovered IDs.
+
+Graph Copilot keeps the currently selected model in the list even if discovery omits it. A failed sync also retains the fallback, cached, and current entries instead of silently replacing the selection. Click **Refresh** to bypass the five-minute cache and query again immediately.
+
+Custom OpenAI-compatible endpoints are never queried automatically because an arbitrary local endpoint may be unavailable or expensive to wake. Enter a model id manually, or click **Refresh** when you explicitly want Graph Copilot to query that endpoint.
+
+## Reasoning effort
+
+When the host catalog advertises reasoning metadata, Settings shows a reasoning-effort selector and sends the chosen value as `reasoning_effort`. First-party OpenAI requests can use `none`, `low`, `medium`, `high`, `xhigh`, or `max` when the selected model supports them. The Codex fallback offers `low`, `medium`, `high`, `xhigh`, and `max`; Sol defaults to `low`, while Terra and Luna default to `medium`.
+
+Codex **does not expose `ultra`**. Ultra is a product-level multi-agent/delegation mode, not a portable public value for a single request's `reasoning_effort`. Graph Copilot sends one request through CodefyUI and does not implement that orchestration contract, so showing or forwarding `ultra` would misrepresent what happens and may be rejected upstream.
+
+:::info Host capability required
+Automatic rich catalogs and reasoning effort require an updated CodefyUI host that returns rich model metadata and accepts and forwards `reasoning_effort`. Use a host build that explicitly documents both capabilities. This documentation intentionally does not invent a version number for a host release that has not been published.
+:::
 
 ## OpenAI Codex (ChatGPT) sign-in
 

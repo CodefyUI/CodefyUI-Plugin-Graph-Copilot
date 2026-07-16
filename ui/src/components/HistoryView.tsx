@@ -98,6 +98,7 @@ export function HistoryView({ api, activeId, onResume, onNew }: HistoryViewProps
                 </div>
                 <div className="gcp-history-meta">
                   {relativeTime(conv.updatedAt)} · {conv.provider}/{conv.model || '—'}
+                  {conv.reasoningEffort ? ` · ${conv.reasoningEffort} effort` : ''}
                 </div>
               </div>
 

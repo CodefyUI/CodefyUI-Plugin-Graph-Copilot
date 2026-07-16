@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import { providerReady } from '../state/settings';
+import { activeReasoningEffort, providerReady } from '../state/settings';
 import type { Conversation, ChatTurn } from '../state/conversations';
 import { saveConversation, titleFrom, listConversations } from '../state/conversations';
 import type { Attachment, AttachmentKind } from '../state/attachments';
@@ -316,6 +316,12 @@ export function ChatView({
       if (!conv.title) conv.title = titleFrom(text || atts[0]?.name || 'Attachment');
       conv.provider = settings.provider;
       conv.model = settings.models[settings.provider] ?? '';
+      const reasoningEffort = activeReasoningEffort(settings);
+      if (reasoningEffort) {
+        conv.reasoningEffort = reasoningEffort;
+      } else {
+        delete conv.reasoningEffort;
+      }
       conv.messages = [...conv.messages, userTurn];
       conv.updatedAt = Date.now();
       onConversationChange(conv);

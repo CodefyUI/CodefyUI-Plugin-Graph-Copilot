@@ -9,6 +9,8 @@
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Attachment } from '../state/attachments';
 import { langFromName } from '../state/attachments';
+import type { ModelCatalogResult, ReasoningEffort } from './models';
+import { normalizeModelCatalog } from './models';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,6 +115,7 @@ export interface ChatBody {
   base_url?: string;
   max_tokens?: number;
   temperature?: number;
+  reasoning_effort?: ReasoningEffort;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,12 +239,12 @@ export async function streamChat(
 // fetchModels
 // ---------------------------------------------------------------------------
 
-export async function fetchModels(
+export async function fetchModelCatalog(
   api: Pick<CodefyUIPluginAPI, 'http'>,
   provider: Provider,
   apiKey?: string,
   baseUrl?: string,
-): Promise<string[]> {
+): Promise<ModelCatalogResult> {
   const res = await api.http.fetch('/api/llm/models', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -257,8 +260,37 @@ export async function fetchModels(
     throw new Error(`HTTP ${res.status}: ${snippet}`);
   }
 
-  const data = await res.json() as { models: { id: string }[] };
-  return data.models.map((m) => m.id);
+  const rawData = await res.json() as unknown;
+  const data = rawData && typeof rawData === 'object' ? rawData as {
+    models?: unknown;
+    source?: unknown;
+    capabilities?: {
+      reasoning_effort?: unknown;
+      rich_model_catalog?: unknown;
+    };
+  } : {};
+  const source = ['live', 'cache', 'stale', 'fallback'].includes(String(data.source))
+    ? data.source as ModelCatalogResult['source']
+    : undefined;
+  return {
+    models: normalizeModelCatalog(data.models),
+    capabilities: {
+      reasoningEffort: data.capabilities?.reasoning_effort === true,
+      richModelCatalog: data.capabilities?.rich_model_catalog === true,
+    },
+    ...(source ? { source } : {}),
+  };
+}
+
+/** Legacy id-only helper retained for internal and host compatibility. */
+export async function fetchModels(
+  api: Pick<CodefyUIPluginAPI, 'http'>,
+  provider: Provider,
+  apiKey?: string,
+  baseUrl?: string,
+): Promise<string[]> {
+  const catalog = await fetchModelCatalog(api, provider, apiKey, baseUrl);
+  return catalog.models.map((model) => model.id);
 }
 
 // ---------------------------------------------------------------------------

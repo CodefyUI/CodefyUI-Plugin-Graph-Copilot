@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   streamChat,
+  fetchModelCatalog,
   fetchModels,
   codexLogin,
   codexStatus,
@@ -244,6 +245,61 @@ describe('fetchModels', () => {
     const api = makeApi(fetchMock);
 
     await expect(fetchModels(api as any, 'openai', 'bad-key')).rejects.toThrow('401');
+  });
+
+  it('preserves rich model metadata returned by a newer host', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [{
+          id: 'gpt-rich',
+          label: 'GPT Rich',
+          reasoning_efforts: ['low', 'max', 'ultra'],
+        }],
+      }),
+    } as unknown as Response);
+
+    await expect(fetchModelCatalog(makeApi(fetchMock) as any, 'openai', 'sk-test')).resolves.toEqual({
+      models: [{
+        id: 'gpt-rich',
+        label: 'GPT Rich',
+        reasoningEfforts: [{ effort: 'low' }, { effort: 'max' }],
+      }],
+      capabilities: { reasoningEffort: false, richModelCatalog: false },
+    });
+  });
+
+  it('negotiates reasoning effort only when the host explicitly advertises it', async () => {
+    const response = (capabilities?: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ id: 'gpt-rich' }], capabilities }),
+    } as unknown as Response);
+
+    await expect(fetchModelCatalog(makeApi(vi.fn().mockResolvedValue(response())) as any, 'openai'))
+      .resolves.toMatchObject({
+        capabilities: { reasoningEffort: false, richModelCatalog: false },
+      });
+    await expect(fetchModelCatalog(makeApi(vi.fn().mockResolvedValue(response({
+      reasoning_effort: true,
+      rich_model_catalog: true,
+    }))) as any, 'openai')).resolves.toMatchObject({
+      capabilities: { reasoningEffort: true, richModelCatalog: true },
+    });
+  });
+
+  it('treats a malformed top-level model response as an empty legacy catalog', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    } as unknown as Response);
+
+    await expect(fetchModelCatalog(makeApi(fetchMock) as any, 'openai')).resolves.toEqual({
+      models: [],
+      capabilities: { reasoningEffort: false, richModelCatalog: false },
+    });
   });
 });
 
