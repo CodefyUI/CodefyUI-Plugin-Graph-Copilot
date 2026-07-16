@@ -228,6 +228,29 @@ describe('ChatView', () => {
       expect(userTurns[0].content).toBe('test message');
     });
 
+    it('stamps the capability-gated reasoning effort on the conversation', async () => {
+      const conversationUpdates: Conversation[] = [];
+      const settings: Settings = {
+        ...READY_SETTINGS,
+        models: { openai: 'gpt-5.6-sol' },
+        reasoningEfforts: { openai: 'high' },
+        providerCapabilities: {
+          openai: { reasoningEffort: true, reasoningModel: 'gpt-5.6-sol' },
+        },
+      };
+      renderChatView({
+        settings,
+        onConversationChange: (conversation) => conversationUpdates.push(conversation),
+      });
+
+      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'reason');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+      await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
+      expect(conversationUpdates[0].reasoningEffort).toBe('high');
+      expect(conversationUpdates[0].model).toBe('gpt-5.6-sol');
+    });
+
     it('saveConversation called after user turn is appended', async () => {
       renderChatView({ settings: READY_SETTINGS });
 

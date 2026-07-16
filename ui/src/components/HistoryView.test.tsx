@@ -90,6 +90,22 @@ describe('HistoryView', () => {
     expect(screen.getByText('Second chat')).toBeTruthy();
   });
 
+  it('shows the explicit reasoning effort in conversation metadata', () => {
+    const api = makeFakeApiWithConvs([
+      makeConv({ model: 'gpt-5.6-sol', reasoningEffort: 'max' }),
+    ]);
+    render(
+      <HistoryView
+        api={api}
+        activeId=""
+        onResume={vi.fn()}
+        onNew={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/openai\/gpt-5\.6-sol.*max effort/i)).toBeTruthy();
+  });
+
   it('shows "(untitled)" for conversations without a title', () => {
     const convs = [makeConv({ title: '' })];
     const api = makeFakeApiWithConvs(convs);

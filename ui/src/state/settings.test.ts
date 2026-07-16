@@ -8,6 +8,7 @@ import {
   loadSettings,
   saveSettings,
   providerReady,
+  activeReasoningEffort,
 } from './settings';
 import type { Settings } from './settings';
 
@@ -37,6 +38,9 @@ describe('loadSettings', () => {
     const api = makeApi();
     const s = loadSettings(api as any);
     expect(s).toEqual(DEFAULT_SETTINGS);
+    expect(s.models.openai).toBe('gpt-5.6-sol');
+    expect(s.reasoningEfforts).toEqual({});
+    expect(s.providerCapabilities).toEqual({});
   });
 
   it('roundtrips a saved settings object', () => {
@@ -61,6 +65,43 @@ describe('loadSettings', () => {
     expect(s.provider).toBe('openrouter');
     // Default model still present
     expect(s.models.openai).toBe(DEFAULT_SETTINGS.models.openai);
+    expect(s.reasoningEfforts).toEqual({});
+  });
+
+  it('keeps legacy model choices while adding reasoning defaults', () => {
+    const api = makeApi();
+    api.storage.set('settings', JSON.stringify({
+      provider: 'openai',
+      models: { openai: 'gpt-5.2' },
+      apiKeys: { openai: 'sk-legacy' },
+    }));
+
+    const s = loadSettings(api as any);
+    expect(s.models.openai).toBe('gpt-5.2');
+    expect(s.reasoningEfforts).toEqual({});
+  });
+
+  it('ignores invalid persisted reasoning effort values', () => {
+    const api = makeApi();
+    api.storage.set('settings', JSON.stringify({
+      reasoningEfforts: { openai: 'ultra', 'openai-codex': 'max' },
+    }));
+
+    const s = loadSettings(api as any);
+    expect(s.reasoningEfforts?.openai).toBeUndefined();
+    expect(s.reasoningEfforts?.['openai-codex']).toBe('max');
+  });
+
+  it('does not persist negotiated host capabilities', () => {
+    const api = makeApi();
+    saveSettings(api as any, {
+      ...DEFAULT_SETTINGS,
+      providerCapabilities: {
+        openai: { reasoningEffort: true, reasoningModel: 'gpt-5.6-sol' },
+      },
+    });
+
+    expect(loadSettings(api as any).providerCapabilities).toEqual({});
   });
 
   it('falls back to defaults on corrupt JSON', () => {
@@ -108,5 +149,46 @@ describe('providerReady', () => {
     expect(providerReady(s, false)).toBe(false);
     const s2: Settings = { ...s, customBaseUrl: 'http://127.0.0.1:11434/v1' };
     expect(providerReady(s2, false)).toBe(true);
+  });
+});
+
+describe('activeReasoningEffort', () => {
+  it('returns the active provider effort when the host advertises support', () => {
+    const s: Settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'openai',
+      reasoningEfforts: { openai: 'max', 'openai-codex': 'low' },
+      providerCapabilities: {
+        openai: { reasoningEffort: true, reasoningModel: 'gpt-5.6-sol' },
+      },
+    };
+
+    expect(activeReasoningEffort(s)).toBe('max');
+  });
+
+  it('omits effort for legacy or explicitly unsupported hosts', () => {
+    const legacy: Settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'openai',
+      reasoningEfforts: { openai: 'high' },
+    };
+    const unsupported: Settings = {
+      ...legacy,
+      providerCapabilities: { openai: { reasoningEffort: false } },
+    };
+
+    expect(activeReasoningEffort(legacy)).toBeUndefined();
+    expect(activeReasoningEffort(unsupported)).toBeUndefined();
+  });
+
+  it('leaves model-default selections undefined', () => {
+    const s: Settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'openai-codex',
+      reasoningEfforts: {},
+      providerCapabilities: { 'openai-codex': { reasoningEffort: true } },
+    };
+
+    expect(activeReasoningEffort(s)).toBeUndefined();
   });
 });

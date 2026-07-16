@@ -54,7 +54,8 @@ For study design, metric selection, portable evidence, reproducibility, and resp
 
 ## Requirements and installation
 
-- CodefyUI 1.3.0 or later
+- CodefyUI 1.3.0 or later for the baseline plugin contract
+- For automatic rich model catalogs and reasoning-effort controls, an updated CodefyUI host that exposes rich catalog metadata and accepts and forwards `reasoning_effort`. Use a host build that explicitly documents those capabilities; this repository does not assign them an unreleased version number.
 - A supported remote provider, ChatGPT Codex login, or an OpenAI-compatible local endpoint
 
 ```bash
@@ -70,6 +71,12 @@ Open the workbench settings and configure a provider/model:
 - **OpenAI, OpenRouter, or Claude:** enter an API key and select a model.
 - **OpenAI Codex:** sign in with a ChatGPT account through the provided browser flow.
 - **Custom:** enter an OpenAI-compatible base URL; a key is optional for local servers that do not require one.
+
+With a compatible updated CodefyUI host, the catalog includes **GPT-5.6 Sol** (`gpt-5.6-sol`; OpenAI may also expose the `gpt-5.6` alias), **GPT-5.6 Terra** (`gpt-5.6-terra`), and **GPT-5.6 Luna** (`gpt-5.6-luna`). Plugin startup and Settings automatically synchronize the active ready built-in provider and cache the result for five minutes. Startup negotiation also restores a saved reasoning effort without requiring Settings to be opened first. The current model remains selected even when discovery omits it or fails; **Refresh** bypasses the cache. Custom endpoints are never queried automatically and are contacted for model discovery only after an explicit Refresh.
+
+Codex discovery is compatibility-bounded best effort: the host uses the protocol version it implements and auto-lists only models compatible with that contract. A future model that requires a newer host or protocol will still require a CodefyUI update. OpenAI's `/v1/models` response supplies model IDs but not reasoning-effort metadata, so curated GPT-5.6 fallbacks provide that metadata.
+
+Reasoning-capable catalogs expose a reasoning-effort selector. First-party OpenAI requests can use `none`, `low`, `medium`, `high`, `xhigh`, or `max` when supported; the Codex fallback offers `low` through `max`. Codex `ultra` is intentionally absent because it is a product-level multi-agent/delegation mode, not a portable single-request `reasoning_effort` value that Graph Copilot can forward.
 
 Provider settings and API keys are stored in the plugin's browser-local, namespaced storage. Requests go through the local CodefyUI `/api/llm/chat` proxy, which forwards credentials per request; CodefyUI 1.3.0 is designed not to persist or log them server-side. Before graph context is sent to a provider, live snapshots and graph-tool results redact schema-declared secrets, credential-shaped fields, unknown schemas/parameters, and exact echoes of those known redacted values. A provider-generated tool call keeps its original arguments only in the active provider/tool execution path; the display and conversation-history copy is schema-redacted, and known exact echoes in assistant text are scrubbed before persistence or reuse in a later provider round. This cannot retroactively hide text already streamed by the provider in the live reply. Free-form user messages are still sent to the provider and stored as written, so this is not a generic credential detector—do not paste credentials into chat text. Treat the browser profile and every installed frontend plugin as trusted code because plugin JavaScript runs in the editor page and can access the session.
 

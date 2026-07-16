@@ -10,6 +10,7 @@
 
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { WireToolCall, Provider } from '../llm/client';
+import type { ReasoningEffort } from '../llm/models';
 import type { Attachment } from './attachments';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,8 @@ export interface Conversation {
   updatedAt: number;
   provider: Provider;
   model: string;
+  /** Explicit reasoning effort used for the most recent send, when supported. */
+  reasoningEffort?: ReasoningEffort;
   messages: ChatTurn[];
 }
 
@@ -152,7 +155,11 @@ export function deleteConversation(api: StrictApi, id: string): void {
  * Create a new blank conversation. The caller is responsible for saving it
  * via saveConversation once the first message is added.
  */
-export function newConversation(provider: Provider, model: string): Conversation {
+export function newConversation(
+  provider: Provider,
+  model: string,
+  reasoningEffort?: ReasoningEffort,
+): Conversation {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
@@ -161,6 +168,7 @@ export function newConversation(provider: Provider, model: string): Conversation
     updatedAt: now,
     provider,
     model,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     messages: [],
   };
 }

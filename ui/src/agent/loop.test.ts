@@ -421,6 +421,41 @@ describe('runTurn', () => {
     expect(body.max_tokens).toBe(8192);
     expect(body.tools).toEqual(TOOLS);
     expect(body).not.toHaveProperty('base_url');
+    expect(body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('includes reasoning_effort only when the host advertises support', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    scriptStreamChat([{ done: makeDoneEnd() }]);
+
+    const settings: Settings = {
+      ...FAKE_SETTINGS,
+      models: { openai: 'gpt-5.6-sol' },
+      reasoningEfforts: { openai: 'max' },
+      providerCapabilities: {
+        openai: { reasoningEffort: true, reasoningModel: 'gpt-5.6-sol' },
+      },
+    };
+    await runTurn({ api, settings, history: [], userText: 'hi', callbacks: cbs });
+
+    const [, body] = (streamChat as Mock).mock.calls[0] as [unknown, ChatBody, ...unknown[]];
+    expect(body.reasoning_effort).toBe('max');
+  });
+
+  it('omits reasoning_effort when a legacy host has not advertised support', async () => {
+    const api = makeFakeApi();
+    const { cbs } = makeCallbacks();
+    scriptStreamChat([{ done: makeDoneEnd() }]);
+
+    const settings: Settings = {
+      ...FAKE_SETTINGS,
+      reasoningEfforts: { openai: 'high' },
+    };
+    await runTurn({ api, settings, history: [], userText: 'hi', callbacks: cbs });
+
+    const [, body] = (streamChat as Mock).mock.calls[0] as [unknown, ChatBody, ...unknown[]];
+    expect(body).not.toHaveProperty('reasoning_effort');
   });
 
   it('omits api_key for openai-codex provider', async () => {
