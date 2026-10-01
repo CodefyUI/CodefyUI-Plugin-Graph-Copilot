@@ -16,7 +16,7 @@ import type { Settings } from '../state/settings';
 import type { Conversation } from '../state/conversations';
 import { newConversation } from '../state/conversations';
 import { resetRunHistoryProbeForTests } from '../agent/runHistory';
-import { writeActiveRun } from '../agent/runPointer';
+import { readActiveRun, writeActiveRun } from '../agent/runPointer';
 
 vi.mock('../agent/loop', () => ({
   runTurn: vi.fn(),
@@ -115,6 +115,26 @@ beforeEach(() => {
 });
 
 describe('ChatView reattach banner integration', () => {
+  it('reattaches a live pointer after ChatView unmounts and mounts again', async () => {
+    const api = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url === '/api/runs/run-1') {
+        return json(runPayload({ status: 'running', active: true }));
+      }
+      if (url.includes('/api/runs/run-1/events')) return new Promise<Response>(() => {});
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+
+    const first = renderChatView(api);
+    expect(await screen.findByText('Run in progress (reattached)')).toBeInTheDocument();
+    first.unmount();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+
+    renderChatView(api);
+    expect(await screen.findByText('Run in progress (reattached)')).toBeInTheDocument();
+  });
+
   it('renders the finished-run banner text when a pointer resolves to a succeeded row', async () => {
     const api = makeFinishedRunApi();
     writeActiveRun(api, POINTER);
