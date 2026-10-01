@@ -869,11 +869,17 @@ async function executeTool(
       });
     }
 
+    const serverOwnedRuns = await probeRunHistory(api, signal);
+    if (signal?.aborted) {
+      return JSON.stringify({ cancelled: true, error: 'Run cancelled before execution.' });
+    }
+
     liveRunInFlight = true;
     try {
       const outcome = await runLiveGraph(api, {
         signal,
         timeoutMs: timeoutMinutes * 60_000,
+        serverOwnedRuns,
         ...(device ? { device } : {}),
         onProgress: callbacks.onRunProgress,
         onRunId: (id) => writeActiveRun(api, {
@@ -884,6 +890,14 @@ async function executeTool(
           ...(device ? { device } : {}),
         }),
       });
+
+      if (outcome.status === 'detached') {
+        return JSON.stringify({
+          status: 'detached',
+          run_id: outcome.runId,
+          run_continues: true,
+        });
+      }
 
       // Pointer cleanup + finish signal. On a socket-level 'error' the server-
       // owned run may still be alive — keep the pointer so the reattach card can

@@ -10,6 +10,7 @@ import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
 import { runTurn } from '../agent/loop';
 import type { ExperimentApprovalRequest, RunApprovalRequest } from '../agent/loop';
+import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { formatRunStatusLine } from '../agent/runGraph';
 import { RunSparkline, appendLossPoint } from './RunSparkline';
 import { MessageBubble } from './MessageBubble';
@@ -197,11 +198,12 @@ export function ChatView({
   const readyAtts = staged.filter((s) => s.status === 'ready' && s.att).map((s) => s.att!);
   const canSend = ready && !busy && !anyLoading && (input.trim().length > 0 || readyAtts.length > 0);
 
-  // Cancel any in-flight stream when the panel unmounts
+  // Detach a current host's server-owned run when the panel unmounts. Explicit
+  // Stop uses an ordinary abort below and therefore keeps cancellation semantics.
   useEffect(() => () => {
     approvalResolveRef.current?.(false);
     approvalResolveRef.current = null;
-    abortRef.current?.abort();
+    abortRef.current?.abort(PASSIVE_DETACH_REASON);
   }, []);
 
   // Elapsed-seconds ticker while a run is in flight

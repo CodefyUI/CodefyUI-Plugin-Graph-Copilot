@@ -23,6 +23,7 @@ import {
   scrubExecutionCredential,
 } from './experiments';
 import { finiteNumber, normalizeNodeStatus, type MediaOutput } from './wireOutputs';
+import { isPassiveDetach } from './abortReasons';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,7 +61,7 @@ export interface RunProgressUpdate {
 }
 
 export interface RunGraphOutcome {
-  status: 'complete' | 'error' | 'cancelled' | 'timeout';
+  status: 'complete' | 'error' | 'cancelled' | 'timeout' | 'detached';
   durationMs: number;
   runId?: string;
   error?: string;
@@ -92,6 +93,8 @@ export interface RunMediaItem extends MediaOutput {
 export interface RunLiveGraphOptions {
   signal?: AbortSignal;
   timeoutMs: number;
+  /** Current hosts own runs after submission; legacy 1.3.0 sockets own them. */
+  serverOwnedRuns: boolean;
   /** Run-level compute device (what nodes with device='auto' follow). When
    * omitted the host default from /api/system/devices is used; without that
    * endpoint the field is left off the wire and the host's own fallback
@@ -201,12 +204,35 @@ export async function runLiveGraph(
   opts: RunLiveGraphOptions,
 ): Promise<RunGraphOutcome> {
   const { signal, timeoutMs, onProgress } = opts;
-  const device = opts.device ?? await fetchDefaultDevice(api, signal);
-  const token = await executionToken(api, signal);
   const graph = executableGraph(api.graph.getGraph());
   const keyFor = nodeKeyResolver(graph);
   const totalNodes = graph.nodes.length;
   const startedAt = Date.now();
+  const emptyCancelledOutcome = (): RunGraphOutcome => ({
+    status: 'cancelled',
+    durationMs: Date.now() - startedAt,
+    nodeErrors: {},
+    completedNodes: 0,
+    totalNodes,
+    outputs: {},
+    finalProgress: {},
+    metrics: {},
+    textTail: '',
+    media: [],
+  });
+
+  if (signal?.aborted) return emptyCancelledOutcome();
+
+  let device: string | undefined;
+  let token: string;
+  try {
+    device = opts.device ?? await fetchDefaultDevice(api, signal);
+    token = await executionToken(api, signal);
+  } catch (error) {
+    if (signal?.aborted) return emptyCancelledOutcome();
+    throw error;
+  }
+  if (signal?.aborted) return emptyCancelledOutcome();
 
   return new Promise<RunGraphOutcome>((resolve) => {
     const socket = new WebSocket(executionUrl(token));
@@ -221,6 +247,7 @@ export async function runLiveGraph(
     let runId: string | undefined;
     let settled = false;
     let cancelRequested = false;
+    let passiveDetachRequested = false;
     let cancelTimer: number | undefined;
     let executeSent = false;
 
@@ -295,7 +322,19 @@ export async function runLiveGraph(
     };
 
     let pendingCancelStatus: 'cancelled' | 'timeout' = 'cancelled';
-    const onAbort = () => requestCancel('cancelled');
+    const requestPassiveDetach = (): void => {
+      if (settled) return;
+      if (!opts.serverOwnedRuns || !executeSent) {
+        requestCancel('cancelled');
+        return;
+      }
+      passiveDetachRequested = true;
+      if (runId !== undefined) finish('detached');
+    };
+    const onAbort = () => {
+      if (isPassiveDetach(signal)) requestPassiveDetach();
+      else requestCancel('cancelled');
+    };
     const timer = window.setTimeout(() => requestCancel('timeout'), timeoutMs);
 
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -326,6 +365,7 @@ export async function runLiveGraph(
     };
 
     socket.onmessage = (event) => {
+      if (settled) return;
       let message: Record<string, unknown>;
       try {
         message = JSON.parse(String(event.data)) as Record<string, unknown>;
@@ -336,6 +376,10 @@ export async function runLiveGraph(
       if (typeof message.run_id === 'string' && message.run_id) {
         if (runId === undefined) opts.onRunId?.(message.run_id);
         runId = message.run_id;
+        if (passiveDetachRequested) {
+          finish('detached');
+          return;
+        }
       }
 
       if (message.rejected === true) {

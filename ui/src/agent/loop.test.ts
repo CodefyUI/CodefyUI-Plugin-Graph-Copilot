@@ -56,6 +56,7 @@ import {
 import type { ExperimentApprovalRequest, TurnCallbacks } from './loop';
 import { resetRunHistoryProbeForTests } from './runHistory';
 import { readActiveRun, writeActiveRun } from './runPointer';
+import { PASSIVE_DETACH_REASON } from './abortReasons';
 
 // ---------------------------------------------------------------------------
 // Scripted streamChat helper
@@ -2148,6 +2149,68 @@ describe('run_graph tool', () => {
       expect(runLiveGraph).toHaveBeenCalledTimes(1);
       const parsed = toolResult(state);
       expect(parsed.status).toBe('complete');
+    });
+
+    it('passes server-owned-run capability to the transport', async () => {
+      scriptOneRun();
+      const api = makeFakeApi();
+      (api.http.fetch as Mock).mockImplementation(async (url: string) => {
+        if (url === '/api/runs?limit=1') {
+          return { ok: true, json: async () => ({ runs: [], total: 0 }) };
+        }
+        if (url === '/api/system/devices') {
+          return { ok: false, status: 404, json: async () => ({}) };
+        }
+        return { ok: true, json: async () => ({ valid: true, errors: [] }) };
+      });
+      const state = makeCallbacks();
+      state.cbs.onRunApproval = async () => true;
+
+      await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'x', callbacks: state.cbs });
+
+      const opts = (runLiveGraph as Mock).mock.calls[0][1] as RunLiveGraphOptions;
+      expect(opts.serverOwnedRuns).toBe(true);
+    });
+
+    it('keeps the pointer and suppresses terminal notification for a passive detach', async () => {
+      scriptOneRun();
+      const api = makeFakeApi();
+      (api.http.fetch as Mock).mockImplementation(async (url: string) => {
+        if (url === '/api/runs?limit=1') {
+          return { ok: true, json: async () => ({ runs: [], total: 0 }) };
+        }
+        if (url === '/api/system/devices') {
+          return { ok: false, status: 404, json: async () => ({}) };
+        }
+        return { ok: true, json: async () => ({ valid: true, errors: [] }) };
+      });
+      const controller = new AbortController();
+      (runLiveGraph as Mock).mockImplementation(async (_api: unknown, opts: RunLiveGraphOptions) => {
+        opts.onRunId?.('run-detached');
+        controller.abort(PASSIVE_DETACH_REASON);
+        return { ...RUN_OUTCOME, status: 'detached', runId: 'run-detached' };
+      });
+      const state = makeCallbacks();
+      state.cbs.onRunApproval = async () => true;
+      const finished = vi.fn();
+      state.cbs.onRunFinished = finished;
+
+      await runTurn({
+        api,
+        settings: FAKE_SETTINGS,
+        history: [],
+        userText: 'x',
+        callbacks: state.cbs,
+        signal: controller.signal,
+      });
+
+      expect(readActiveRun(api)?.runId).toBe('run-detached');
+      expect(finished).not.toHaveBeenCalled();
+      expect(toolResult(state)).toEqual({
+        status: 'detached',
+        run_id: 'run-detached',
+        run_continues: true,
+      });
     });
 
     it('writes the pointer via onRunId, then clears it and fires onRunFinished after a successful run', async () => {
