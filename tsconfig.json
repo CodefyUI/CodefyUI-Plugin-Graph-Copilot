@@ -8,5 +8,6 @@
     "ignoreDeprecations": "6.0",
     "strict": true
   },
-  "exclude": [".docusaurus", "build"]
+  // The plugin is type-checked separately with ui/tsconfig.json.
+  "exclude": [".docusaurus", "build", "ui"]
 }

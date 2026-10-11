@@ -1,12 +1,13 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import { providerReady } from '../state/settings';
-import type { Conversation, ChatTurn } from '../state/conversations';
-import { saveConversation, titleFrom, listConversations } from '../state/conversations';
+import { providerReady, readinessReason } from '../state/settings';
+import type { Conversation } from '../state/conversations';
+import { listConversations } from '../state/conversations';
 import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
-import { runTurn } from '../agent/loop';
+import type { AgentMode } from '../agent/types';
+import { useAgentRun } from './useAgentRun';
 import { MessageBubble } from './MessageBubble';
 import { groupTurns } from './turnStages';
 
@@ -126,6 +127,9 @@ export interface ChatViewProps {
   onConversationChange: (c: Conversation) => void;
   onOpenSettings: () => void;
   onOpenHistory: () => void;
+  active?: boolean;
+  onBusyChange?: (busy: boolean) => void;
+  onStopReady?: (stop: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,33 +144,49 @@ export function ChatView({
   onConversationChange,
   onOpenSettings,
   onOpenHistory,
+  active = true,
+  onBusyChange,
+  onStopReady,
 }: ChatViewProps) {
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [streamingText, setStreamingText] = useState('');
-  /** Turns finalized during the in-flight run (staged display). */
-  const [liveTurns, setLiveTurns] = useState<ChatTurn[]>([]);
+  const [mode, setMode] = useState<AgentMode>(conversation.mode ?? 'edit');
   const [elapsed, setElapsed] = useState(0);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [lastUserText, setLastUserText] = useState('');
-  const [lastAttachments, setLastAttachments] = useState<Attachment[]>([]);
   const [staged, setStaged] = useState<Staged[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [showLatest, setShowLatest] = useState(false);
+  const run = useAgentRun({ api, settings, conversation, onConversationChange, active, onBusyChange });
+  const { busy, streamingText, liveTurns, error: lastError } = run;
+  useEffect(() => { onStopReady?.(run.stop); }, [onStopReady, run.stop]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true); // stick to bottom unless the user scrolls up
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const setupRef = useRef<HTMLButtonElement>(null);
+  const composingRef = useRef(false);
   const dragDepth = useRef(0);
 
   const ready = providerReady(settings, codexLoggedIn);
   const anyLoading = staged.some((s) => s.status === 'loading');
+  const anyFailed = staged.some((s) => s.status === 'error');
   const readyAtts = staged.filter((s) => s.status === 'ready' && s.att).map((s) => s.att!);
-  const canSend = ready && !busy && !anyLoading && (input.trim().length > 0 || readyAtts.length > 0);
+  const canSend = ready && active && !busy && !anyLoading && !anyFailed &&
+    (input.trim().length > 0 || readyAtts.length > 0);
 
-  // Cancel any in-flight stream when the panel unmounts
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  useEffect(() => {
+    setInput('');
+    setStaged([]);
+    setMode(conversation.mode ?? 'edit');
+    pinnedRef.current = true;
+    setShowLatest(false);
+  }, [conversation.id]);
+
+  useEffect(() => {
+    if (active && !busy) {
+      if (ready) textareaRef.current?.focus();
+      else setupRef.current?.focus();
+    }
+  }, [active, conversation.id, ready, busy]);
 
   // Elapsed-seconds ticker while a run is in flight
   useEffect(() => {
@@ -187,6 +207,7 @@ export function ChatView({
     const el = listRef.current;
     if (!el) return;
     pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setShowLatest(!pinnedRef.current);
   }, []);
 
   useEffect(() => {
@@ -285,96 +306,40 @@ export function ChatView({
   // Send logic
   // ---------------------------------------------------------------------------
 
-  const doSend = useCallback(
-    async (userText: string, atts: Attachment[]) => {
-      const text = userText.trim();
-      if ((!text && atts.length === 0) || busy || !ready) return;
+  const repin = () => {
+    pinnedRef.current = true;
+    setShowLatest(false);
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
 
-      setLastError(null);
-      setLastUserText(text);
-      setLastAttachments(atts);
-      setInput('');
-      setStaged([]);
-      setBusy(true);
-      setStreamingText('');
-      setLiveTurns([]);
-      pinnedRef.current = true; // a fresh send re-pins the view to the bottom
-
-      const userTurn: ChatTurn = { role: 'user', content: text };
-      if (atts.length > 0) userTurn.attachments = atts;
-
-      // Provider/model are stamped per send so history rows reflect what the
-      // conversation actually ran on.
-      let conv = { ...conversation };
-      if (!conv.title) conv.title = titleFrom(text || atts[0]?.name || 'Attachment');
-      conv.provider = settings.provider;
-      conv.model = settings.models[settings.provider] ?? '';
-      conv.messages = [...conv.messages, userTurn];
-      conv.updatedAt = Date.now();
-      onConversationChange(conv);
-      saveConversation(api, conv);
-
-      const abortCtrl = new AbortController();
-      abortRef.current = abortCtrl;
-
-      let streamBuf = '';
-
-      await runTurn({
-        api,
-        settings,
-        history: conv.messages.slice(0, -1), // exclude the user turn we just added
-        userText: text,
-        attachments: atts.length > 0 ? atts : undefined,
-        callbacks: {
-          onTextDelta(t) {
-            streamBuf += t;
-            setStreamingText(streamBuf);
-          },
-          onTurnAppended(turn) {
-            // An assistant turn absorbs the text streamed so far — reset the
-            // buffer so the next round streams into a fresh bubble.
-            if (turn.role !== 'tool') {
-              streamBuf = '';
-              setStreamingText('');
-            }
-            setLiveTurns((prev) => [...prev, turn]);
-          },
-          onOpsApplied() { /* stage rows render live from the appended turns */ },
-          onTurnsCommitted(turns) {
-            setStreamingText('');
-            streamBuf = '';
-            setLiveTurns([]);
-            conv = { ...conv, messages: [...conv.messages, ...turns], updatedAt: Date.now() };
-            onConversationChange(conv);
-            saveConversation(api, conv);
-          },
-          onError(msg) {
-            setLastError(msg);
-            setStreamingText('');
-            streamBuf = '';
-          },
-          onFinished() {
-            setBusy(false);
-            abortRef.current = null;
-          },
-        },
-        signal: abortCtrl.signal,
-      });
-    },
-    [api, busy, conversation, onConversationChange, ready, settings],
-  );
-
-  const handleSend = () => doSend(input, readyAtts);
+  const handleSend = () => {
+    if (!canSend) return;
+    void run.start(input, readyAtts, mode);
+    setInput('');
+    setStaged([]);
+    repin();
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !composingRef.current &&
+        !e.nativeEvent.isComposing && e.keyCode !== 229) {
       e.preventDefault();
-      doSend(input, readyAtts);
+      handleSend();
     }
   };
 
-  const handleStop = () => abortRef.current?.abort();
-  const handleRetry = () => doSend(lastUserText, lastAttachments);
+  const handleRetry = () => {
+    if (!ready || !active) return;
+    repin();
+    void run.retry();
+  };
+
+  const handleContinue = () => {
+    if (!ready || !active || busy) return;
+    repin();
+    void run.start('Continue the previous request from the current graph. Read it again first; do not replay operations already applied.', [], mode);
+  };
 
   // ---------------------------------------------------------------------------
   // Render
@@ -392,8 +357,8 @@ export function ChatView({
   // While a tool is executing, its stage row already shows a spinner — the
   // generic thinking indicator is only for gaps with no visible activity.
   const lastItem = items[items.length - 1];
-  const toolRunning = !!lastItem && lastItem.stages.some((s) => !s.result);
-  const showThinking = busy && streamingText === '' && !toolRunning;
+  const toolRunning = !!lastItem && liveTurns.includes(lastItem.turn) && lastItem.stages.some((s) => !s.result);
+  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation;
 
   // On the welcome screen, surface a shortcut to past chats (every panel open
   // starts a fresh conversation, so this is where users look for earlier ones).
@@ -409,11 +374,34 @@ export function ChatView({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {/* Message list */}
+      <div className="gcp-mode-bar">
+        <div className="gcp-mode-switch" role="radiogroup" aria-label="Agent mode">
+          {(['ask', 'edit'] as const).map((value) => (
+            <button key={value} role="radio" aria-checked={mode === value} tabIndex={mode === value ? 0 : -1}
+              disabled={busy} onClick={() => setMode(value)} onKeyDown={(event) => {
+                if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+                  event.preventDefault();
+                  const next = mode === 'ask' ? 'edit' : 'ask';
+                  setMode(next);
+                  const sibling = next === 'ask' ? event.currentTarget.previousElementSibling : event.currentTarget.nextElementSibling;
+                  (sibling as HTMLButtonElement | null)?.focus();
+                }
+              }}>
+              {value === 'ask' ? 'Ask' : 'Edit'}
+            </button>
+          ))}
+        </div>
+        <span>{mode === 'ask' ? 'Read-only guidance' : 'Can change the current graph'}</span>
+      </div>
+      <span className="gcp-sr-only" role="status" aria-live="polite">
+        {busy ? run.phase === 'awaiting_confirmation' ? 'Waiting for your confirmation' : 'Assistant working' :
+          run.summary ? `Run ${run.summary.status}` : ''}
+      </span>
+      {/* Live tokens are readable, but only run transitions are announced. */}
       <div
         className="gcp-messages"
         role="log"
-        aria-live="polite"
+        aria-live="off"
         aria-label="Conversation"
         ref={listRef}
         onScroll={handleListScroll}
@@ -429,7 +417,10 @@ export function ChatView({
             {ready && (
               <div className="gcp-welcome-suggestions" aria-label="Suggested prompts">
                 {SUGGESTIONS.map((s) => (
-                  <button key={s} className="gcp-suggestion" onClick={() => doSend(s, [])}>
+                  <button key={s} className="gcp-suggestion" onClick={() => {
+                    setInput(s);
+                    textareaRef.current?.focus();
+                  }}>
                     {s}
                   </button>
                 ))}
@@ -449,7 +440,8 @@ export function ChatView({
         )}
 
         {items.map((item) => (
-          <MessageBubble key={item.key} turn={item.turn} stages={item.stages} />
+          <MessageBubble key={item.key} turn={item.turn} stages={item.stages}
+            active={busy && liveTurns.includes(item.turn)} />
         ))}
 
         {/* Text currently streaming for this round */}
@@ -463,10 +455,10 @@ export function ChatView({
 
         {/* Waiting on the model (no visible activity yet) */}
         {showThinking && (
-          <div className="gcp-thinking" role="status" aria-label="Waiting for the assistant">
+          <div className="gcp-thinking" aria-label="Waiting for the assistant">
             <span className="gcp-thinking-orb" aria-hidden="true">✦</span>
-            <span className="gcp-thinking-text">Thinking</span>
-            {elapsed >= 3 && <span className="gcp-thinking-time">{elapsed}s</span>}
+            <span className="gcp-thinking-text">{run.phase === 'validating' ? 'Checking structure' : 'Thinking'}</span>
+            {elapsed >= 3 && <span className="gcp-thinking-time" aria-hidden="true">{elapsed}s</span>}
           </div>
         )}
 
@@ -478,12 +470,36 @@ export function ChatView({
               <div className="gcp-error-title">Request failed</div>
               <div className="gcp-error-text">{lastError}</div>
             </div>
-            <button className="gcp-retry-btn" onClick={handleRetry} aria-label="Retry">
-              Retry
-            </button>
+          </div>
+        )}
+        {!busy && (lastError || (run.summary && run.summary.status !== 'completed')) && (
+          <div className="gcp-recovery">
+            {run.canRetry ? (
+              <button className="gcp-retry-btn" onClick={handleRetry} disabled={!ready} aria-label="Retry">Retry</button>
+            ) : run.summary?.mutationAttempted ? (
+              <>
+                <span>Changes already made are kept. Stop does not undo them.</span>
+                <button className="gcp-retry-btn" onClick={handleContinue} disabled={!ready}>
+                  Continue from current graph
+                </button>
+              </>
+            ) : null}
           </div>
         )}
       </div>
+
+      {showLatest && <button className="gcp-jump-latest" onClick={repin}>Jump to latest</button>}
+
+      {run.confirmation && (
+        <div className="gcp-confirmation" role="group" aria-label="Confirm clearing the graph">
+          <strong>Clear the current graph?</strong>
+          <p>This removes {run.confirmation.nodeCount} nodes and {run.confirmation.edgeCount} edges. Changes are not automatically undone.</p>
+          <div className="gcp-confirmation-actions">
+            <button className="gcp-secondary-btn" onClick={() => run.decide(false)} autoFocus>Keep graph</button>
+            <button className="gcp-danger-btn" onClick={() => run.decide(true)}>Clear graph</button>
+          </div>
+        </div>
+      )}
 
       {/* Drop hint overlay */}
       {dragging && (
@@ -514,7 +530,7 @@ export function ChatView({
                 <span className="gcp-chip-body">
                   <span className="gcp-chip-name">{s.name}</span>
                   <span className="gcp-chip-size">
-                    {s.status === 'loading' ? 'reading…' : s.status === 'error' ? 'failed' : formatBytes(s.size)}
+                    {s.status === 'loading' ? 'reading…' : s.status === 'error' ? s.error || 'Could not read this file. Remove it to send.' : formatBytes(s.size)}
                   </span>
                 </span>
                 {s.status === 'loading' && <span className="gcp-chip-spinner" aria-hidden="true" />}
@@ -560,6 +576,8 @@ export function ChatView({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={() => { composingRef.current = false; }}
             onPaste={handlePaste}
             disabled={busy || !ready}
             aria-label="Message input"
@@ -567,7 +585,7 @@ export function ChatView({
           />
 
           {busy ? (
-            <button className="gcp-stop-btn" onClick={handleStop} aria-label="Stop generation" title="Stop">
+            <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
               <StopIcon />
             </button>
           ) : (
@@ -586,15 +604,18 @@ export function ChatView({
         {/* Keyboard hint */}
         <div className="gcp-input-hint" aria-hidden="true">
           {busy
-            ? 'Generating — use the stop button to interrupt'
+            ? 'Stopping keeps changes already applied'
+            : anyLoading ? 'Wait for attachments to finish reading'
+            : anyFailed ? 'Remove unreadable attachments before sending'
             : 'Enter to send · Shift+Enter for a new line'}
         </div>
 
         {/* Provider-not-ready overlay */}
         {!ready && !busy && (
           <div className="gcp-not-ready-overlay">
-            <span className="gcp-not-ready-label">Configure a provider in Settings</span>
+            <span className="gcp-not-ready-label">{readinessReason(settings, codexLoggedIn)}</span>
             <button
+              ref={setupRef}
               className="gcp-cta-btn"
               onClick={onOpenSettings}
               aria-label="Open settings to configure a provider"

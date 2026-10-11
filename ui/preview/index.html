@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws://127.0.0.1:*; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <title>Graph Copilot · Mock host</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <header class="mock-header">
+      <strong class="mock-indicator">Mock host</strong>
+      <span id="entry-label">Loading plugin…</span>
+      <span class="mock-boundary">In-memory only. No provider network.</span>
+    </header>
+    <main class="mock-workspace">
+      <h1>Sample graph</h1>
+      <p class="mock-description">A small source list for inspecting the real plugin’s edits. This fixture does not execute the graph.</p>
+      <p id="graph-counts" class="mock-counts" aria-label="Graph counts" aria-live="polite">Loading graph…</p>
+      <ul id="source-list" class="mock-sources" aria-label="Graph sources"></ul>
+      <details class="mock-controls">
+        <summary>Preview controls</summary>
+        <form id="scenario-form">
+          <label for="scenario-select">Scenario</label>
+          <select id="scenario-select" name="scenario"></select>
+          <label class="mock-check"><input id="manual-control" type="checkbox" name="manual" /> Step network responses</label>
+          <button type="submit">Reload scenario</button>
+        </form>
+        <p id="suggested-prompt"></p>
+        <p class="mock-description">Settings start with an editable fake key and mock model; all provider choices stay mocked. Use the plugin’s composer to send the scenario prompt.</p>
+        <button id="release-response" type="button" disabled>Release next response</button>
+        <p id="network-state" role="status" aria-label="Mock network">No mock requests yet.</p>
+        <details><summary>Applied operation receipts</summary><pre id="operation-receipts">[]</pre></details>
+      </details>
+      <p id="fixture-state" role="status" aria-label="Fixture status">Loading plugin…</p>
+    </main>
+    <aside class="mock-widget-stack" aria-label="Mock host widgets">
+      <button class="mock-host-widget" type="button" aria-label="Mock canvas options" title="Mock canvas options" disabled>Canvas</button>
+      <div id="plugin-widgets"></div>
+    </aside>
+    <div id="mock-toast" role="status" aria-label="Mock host notification" hidden></div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

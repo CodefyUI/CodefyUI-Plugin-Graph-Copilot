@@ -8,3 +8,8 @@ ui/src/**/*.js
 # Docusaurus docs site (repo root)
 /build/
 /.docusaurus/
+
+# Development-only browser harness artifacts
+/ui/playwright-report/
+/ui/test-results/
+/ui/coverage/

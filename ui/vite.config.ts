@@ -22,6 +22,7 @@ export default defineConfig(({ command }) => ({
     cssCodeSplit: false,
   },
   test: {
+    include: ['src/**/*.test.{ts,tsx}'],
     environment: 'jsdom',
     setupFiles: ['src/test/setup.ts'],
     passWithNoTests: true,

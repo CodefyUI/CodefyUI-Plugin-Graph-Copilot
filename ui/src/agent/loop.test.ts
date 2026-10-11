@@ -144,7 +144,10 @@ function makeFakeApi(): CodefyUIPluginAPI {
     graph: {
       getGraph: vi.fn().mockReturnValue(FAKE_GRAPH),
       getNodeDefinitions: vi.fn().mockReturnValue(FAKE_DEFS),
-      applyOperations: vi.fn().mockReturnValue(FAKE_APPLY_RESULT),
+      applyOperations: vi.fn((ops: import('../types/codefyui').GraphOp[]) => ({
+        ...FAKE_APPLY_RESULT,
+        results: ops.map((_, index) => ({ ...FAKE_APPLY_RESULT.results[index], index, ok: true })),
+      })),
       onGraphChanged: vi.fn().mockReturnValue(() => {}),
     },
     http: { fetch: vi.fn().mockResolvedValue({ ok: true, json: async () => ({ valid: true, errors: [] }) }) },
@@ -435,7 +438,7 @@ describe('runTurn', () => {
     expect(toolMsg).toBeDefined();
     // Detail (ports) for the known node is returned on demand...
     expect(toolMsg!.content).toContain('Conv2d:');
-    expect(toolMsg!.content).toContain('in[x:TENSOR]');
+    expect(toolMsg!.content).toContain('in[x:TENSOR (required)]');
     // ...and unknown types are reported back.
     expect(toolMsg!.content).toMatch(/unknown node types.*Nonexistent/i);
   });
@@ -465,7 +468,7 @@ describe('runTurn', () => {
     expect(parsed.errors).toEqual(['boom']);
   });
 
-  it('runnability gate: re-prompts to fix when the final graph fails validation', async () => {
+  it('plain Q&A does not validate or nudge repairs to a pre-existing graph', async () => {
     const api = makeFakeApi();
     // Gate's first validate -> invalid (nudge); second -> valid (finish).
     (api.http.fetch as Mock)
@@ -481,16 +484,9 @@ describe('runTurn', () => {
 
     await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
 
-    // The gate caused a second streamChat round with a fix nudge.
-    expect(streamChat).toHaveBeenCalledTimes(2);
-    const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
-    const nudge = body2.messages.find(
-      (m) => m.role === 'user' && typeof m.content === 'string' && /not runnable yet/i.test(m.content),
-    );
-    expect(nudge).toBeDefined();
-    expect(nudge!.content as string).toMatch(/Missing required input/);
-    // Validated twice (once per finish attempt); finished exactly once.
-    expect(api.http.fetch).toHaveBeenCalledTimes(2);
+    // No mutation in this run means pre-existing errors cannot authorize repair.
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(api.http.fetch).not.toHaveBeenCalled();
     expect(state.finished).toBe(1);
   });
 
@@ -616,7 +612,7 @@ describe('runTurn', () => {
   // 6. applyOperations throws -> error tool result, loop continues (Fix 2a)
   // -------------------------------------------------------------------------
 
-  it('applyOperations throw: tool result contains "threw", loop continues, single onTurnsCommitted + onFinished', async () => {
+  it('applyOperations throw: preserves an unknown terminal receipt without re-prompting or retrying', async () => {
     const api = makeFakeApi();
     // Override applyOperations to throw
     (api.graph.applyOperations as ReturnType<typeof vi.fn>).mockImplementation(() => {
@@ -632,20 +628,16 @@ describe('runTurn', () => {
       { done: makeDoneEnd('recovered') },
     ]);
 
-    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'throw test', callbacks: state.cbs });
+    const result = await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'throw test', callbacks: state.cbs });
 
-    // The tool result sent back to the model must contain the error
-    expect(streamChat).toHaveBeenCalledTimes(2);
-    const [, body2] = (streamChat as Mock).mock.calls[1] as [unknown, ChatBody, ...unknown[]];
-    const toolMsg = body2.messages.find((m) => m.role === 'tool');
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    const toolMsg = result.turns.find((turn) => turn.role === 'tool');
     expect(toolMsg).toBeDefined();
-    const content = JSON.parse(toolMsg!.content as string);
-    expect(content.error).toMatch(/threw/i);
-
-    // Loop continues and finishes normally (no outer error)
-    expect(state.errors).toHaveLength(0);
+    expect(JSON.parse(toolMsg!.content).error).toMatch(/threw/i);
+    expect(toolMsg!.toolOutcome).toBe('unknown');
+    expect(result).toMatchObject({ status: 'failed', mutation: 'unknown', mutationAttempted: true });
+    expect(state.errors).toHaveLength(1);
     expect(state.finished).toBe(1);
-    // onTurnsCommitted called exactly once
     expect(state.committed).not.toBeNull();
   });
 
@@ -653,7 +645,7 @@ describe('runTurn', () => {
   // 7. Callback (onOpsApplied) throwing -> outer catch fires once (Fix 2b)
   // -------------------------------------------------------------------------
 
-  it('callback throw (onOpsApplied): outer catch commits turns, calls onError + onFinished exactly once', async () => {
+  it('callback throw (onOpsApplied): observer is isolated, receipts and completion remain authoritative', async () => {
     const api = makeFakeApi();
     const state = makeCallbacks();
 
@@ -674,15 +666,14 @@ describe('runTurn', () => {
 
     scriptStreamChat([
       { done: makeDoneToolUse('tc_cb', 'apply_graph_operations', { operations: ops }) },
+      { done: makeDoneEnd('done despite observer failure') },
     ]);
 
-    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'callback error', callbacks: state.cbs });
+    const result = await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'callback error', callbacks: state.cbs });
 
-    // onError must have been called with the throw message
-    expect(state.errors).toHaveLength(1);
-    expect(state.errors[0]).toContain('callback boom');
-
-    // onTurnsCommitted and onFinished must each fire exactly once
+    expect(state.errors).toHaveLength(0);
+    expect(result).toMatchObject({ status: 'completed', mutation: 'applied', appliedOps: 1 });
+    expect(result.turns.find((turn) => turn.role === 'tool')?.toolOutcome).toBe('completed');
     expect(onTurnsCommittedCount).toBe(1);
     expect(onFinishedCount).toBe(1);
 
@@ -775,7 +766,7 @@ describe('runTurn — incremental turn events', () => {
     expect(toolRound!.opsSummary).toMatch(/add_node/);
   });
 
-  it('runnability gate: the pre-nudge assistant text is appended and committed (streamed text never vanishes)', async () => {
+  it('validation gate: current-run changes trigger a nudge without discarding streamed assistant text', async () => {
     const api = makeFakeApi();
     (api.http.fetch as Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: false, errors: ['Missing input x'] }) })
@@ -783,6 +774,7 @@ describe('runTurn — incremental turn events', () => {
     const state = makeStagedCallbacks();
 
     scriptStreamChat([
+      { done: makeDoneToolUse('initial-edit', 'apply_graph_operations', { operations: TOOL_OPS }) },
       { done: makeDoneEnd('All done (but invalid).') },
       { done: makeDoneEnd('Fixed it.') },
     ]);
@@ -790,9 +782,9 @@ describe('runTurn — incremental turn events', () => {
     await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
 
     expect(state.committed).not.toBeNull();
-    const contents = state.committed!.map((t) => t.content);
+    const contents = state.committed!.filter((turn) => turn.role === 'assistant' && turn.content).map((t) => t.content);
     expect(contents).toEqual(['All done (but invalid).', 'Fixed it.']);
-    expect(state.appended.map((t) => t.content)).toEqual(contents);
+    expect(state.appended.filter((turn) => turn.role === 'assistant' && turn.content).map((t) => t.content)).toEqual(contents);
     expect(state.finished).toBe(1);
   });
 
@@ -815,7 +807,7 @@ describe('runTurn — incremental turn events', () => {
     expect(state.appended.some((t) => t.role === 'tool')).toBe(true);
   });
 
-  it('aborted stream (no done event): partial text is committed, empty partials are not', async () => {
+  it('missing done: partial text is retained and a silent stream still gets a failed summary turn', async () => {
     const api = makeFakeApi();
     const state = makeStagedCallbacks();
 
@@ -829,12 +821,14 @@ describe('runTurn — incremental turn events', () => {
     expect(state.committed![0]).toMatchObject({ role: 'assistant', content: 'cut off' });
     expect(state.finished).toBe(1);
 
-    // A silent abort with no text commits nothing.
+    // A silent missing-done failure persists a summary-only assistant turn.
     vi.clearAllMocks();
     const state2 = makeStagedCallbacks();
     scriptStreamChat([{}]);
-    await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'stop again', callbacks: state2.cbs });
-    expect(state2.committed).toEqual([]);
+    const result = await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'stop again', callbacks: state2.cbs });
+    expect(state2.committed).toHaveLength(1);
+    expect(result.status).toBe('failed');
+    expect(state2.committed![0]).toMatchObject({ role: 'assistant', content: '', runSummary: { status: 'failed' } });
   });
 
   it('back-compat: callbacks without onTurnAppended still work through a tool round', async () => {

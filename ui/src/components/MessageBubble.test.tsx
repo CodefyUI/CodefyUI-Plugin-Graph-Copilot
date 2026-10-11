@@ -72,9 +72,71 @@ function applyStage(overrides: Partial<ToolStage> = {}): ToolStage {
 }
 
 describe('MessageBubble tool stages', () => {
+  it('does not animate an old pending stage or mark it busy', () => {
+    const stage = applyStage();
+    const { container } = render(<MessageBubble turn={{ role: 'assistant', content: '' }} stages={[stage]} />);
+    expect(container.querySelector('.gcp-stage-spinner')).toBeNull();
+    expect(container.querySelector('.gcp-stage')).toHaveClass('interrupted');
+    expect(screen.getByText(/interrupted/i)).toBeInTheDocument();
+    expect(container.querySelector('.gcp-stage')).not.toHaveAttribute('aria-busy', 'true');
+  });
+
+  it('removes the live spinner when the same stage is no longer active', () => {
+    const stage = applyStage();
+    const turn: ChatTurn = { role: 'assistant', content: '', runId: 'run' };
+    const { container, rerender } = render(<MessageBubble turn={turn} stages={[stage]} active />);
+    expect(container.querySelector('.gcp-stage')).toHaveAttribute('aria-busy', 'true');
+    rerender(<MessageBubble turn={turn} stages={[stage]} active={false} />);
+    expect(container.querySelector('.gcp-stage-spinner')).toBeNull();
+    expect(screen.getByText(/interrupted/i)).toBeInTheDocument();
+  });
+
+  it.each(['cancelled', 'not_executed', 'unknown'] as const)('does not animate a %s tool in an active run', (toolOutcome) => {
+    const stage = applyStage({ result: { role: 'tool', content: '{}', toolOutcome } });
+    const { container } = render(<MessageBubble turn={{ role: 'assistant', content: '' }} stages={[stage]} active />);
+    expect(container.querySelector('.gcp-stage-spinner')).toBeNull();
+    expect(container.querySelector('.gcp-stage')).toHaveClass(toolOutcome);
+  });
+
+  it('renders run summary without a text bubble or retry action', () => {
+    const { container } = render(<MessageBubble turn={{
+      role: 'assistant', content: '', runSummary: {
+        id: 'run', mode: 'edit', status: 'cancelled', mutation: 'applied', mutationAttempted: true,
+        appliedOps: 2, failedOps: 1, validation: { status: 'not_run', errors: [] },
+      },
+    }} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Stopped');
+    expect(screen.getByText(/2 operations applied/i)).toBeInTheDocument();
+    expect(screen.getByText(/not undone/i)).toBeInTheDocument();
+    expect(container.querySelector('.gcp-bubble')).toBeNull();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
+
+  it('does not animate pending stages after a terminal summary is stored', () => {
+    const stage = applyStage();
+    const { container } = render(<MessageBubble active stages={[stage]} turn={{
+      role: 'assistant', content: '', runSummary: {
+        id: 'run', mode: 'edit', status: 'cancelled', mutation: 'none', mutationAttempted: false,
+        appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] },
+      },
+    }} />);
+    expect(container.querySelector('.gcp-stage-spinner')).toBeNull();
+  });
+
+  it('does not show a legacy applied chip that contradicts a run result', () => {
+    render(<MessageBubble turn={{
+      role: 'assistant', content: '', opsSummary: 'old inferred summary', runSummary: {
+        id: 'run', mode: 'edit', status: 'failed', mutation: 'unknown', mutationAttempted: true,
+        appliedOps: 0, failedOps: 0, validation: { status: 'unavailable', errors: [] },
+      },
+    }} />);
+    expect(screen.queryByText(/Applied: old inferred summary/i)).toBeNull();
+    expect(screen.getByText(/changes may have been applied/i)).toBeInTheDocument();
+  });
+
   it('renders a running stage with a spinner while the result is pending', () => {
     const turn: ChatTurn = { role: 'assistant', content: 'Building…', tool_calls: [applyStage().call] };
-    const { container } = render(<MessageBubble turn={turn} stages={[applyStage()]} />);
+    const { container } = render(<MessageBubble turn={turn} stages={[applyStage()]} active />);
     const stage = container.querySelector('.gcp-stage');
     expect(stage).toBeTruthy();
     expect(stage!.className).toContain('running');

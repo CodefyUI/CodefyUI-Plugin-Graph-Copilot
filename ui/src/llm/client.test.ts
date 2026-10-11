@@ -245,6 +245,24 @@ describe('fetchModels', () => {
 
     await expect(fetchModels(api as any, 'openai', 'bad-key')).rejects.toThrow('401');
   });
+
+  it('forwards the optional fifth AbortSignal without changing the model request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ models: [{ id: 'fixture-model' }] }),
+    } as Response);
+    const api = makeApi(fetchMock);
+    const controller = new AbortController();
+
+    await expect(fetchModels(api, 'custom', 'fixture-key', 'https://fixture.invalid', controller.signal))
+      .resolves.toEqual(['fixture-model']);
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/llm/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'custom', api_key: 'fixture-key', base_url: 'https://fixture.invalid' }),
+      signal: controller.signal,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import type { Conversation } from '../state/conversations';
@@ -57,6 +57,9 @@ export interface ChatWindowProps {
   onNewConversation: () => void;
   onResumeConversation: (c: Conversation) => void;
   onClose: () => void;
+  open?: boolean;
+  panelId?: string;
+  onStopReady?: (stop: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,27 +78,57 @@ export function ChatWindow({
   onNewConversation,
   onResumeConversation,
   onClose,
+  open = true,
+  panelId = 'graph-copilot-panel',
+  onStopReady,
 }: ChatWindowProps) {
   const [view, setView] = useState<View>('chat');
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const stopRef = useRef<(() => void) | null>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const registerStop = useCallback((stop: () => void) => {
+    stopRef.current = stop;
+    onStopReady?.(stop);
+  }, [onStopReady]);
+  const handleBusy = useCallback((value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  }, []);
+
+  useEffect(() => {
+    if (open && view !== 'chat') viewRef.current?.focus();
+  }, [open, view]);
 
   const handleResume = (conv: Conversation) => {
+    if (busyRef.current) return;
     onResumeConversation(conv);
     setView('chat');
   };
 
   const handleNew = () => {
+    if (busyRef.current) return;
     onNewConversation();
     setView('chat');
   };
 
-  const switchTo = (v: View) => {
-    setView((prev) => (prev === v ? 'chat' : v));
+  const navigate = (next: View) => {
+    if (next !== 'chat') stopRef.current?.();
+    setView(next);
   };
+  const switchTo = (next: View) => navigate(view === next ? 'chat' : next);
+  const close = () => { stopRef.current?.(); onClose(); };
 
   const model = settings.models[settings.provider] ?? '';
 
   return (
-    <div className="gcp-window" role="dialog" aria-label="Graph Copilot">
+    <div id={panelId} className="gcp-window" role="dialog" aria-label="Graph Copilot" hidden={!open}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+          event.stopPropagation();
+          close();
+        }
+      }}>
       {/* Header */}
       <div className="gcp-header">
         <span className="gcp-header-title">
@@ -105,7 +138,7 @@ export function ChatWindow({
 
         <button
           className="gcp-model-chip"
-          onClick={() => setView('settings')}
+          onClick={() => navigate('settings')}
           aria-label="Active model — open settings"
           title={`Provider: ${settings.provider}${model ? ` · ${model}` : ''} — click to change`}
         >
@@ -133,7 +166,7 @@ export function ChatWindow({
 
         <button
           className="gcp-icon-btn"
-          onClick={onClose}
+          onClick={close}
           aria-label="Close panel"
           title="Close"
         >
@@ -142,29 +175,33 @@ export function ChatWindow({
       </div>
 
       {/* View content */}
-      <div className="gcp-view">
-        {view === 'chat' && (
+      <div className="gcp-view" ref={viewRef} tabIndex={-1}>
+        <div className="gcp-chat-view" hidden={view !== 'chat'}>
           <ChatView
             api={api}
             settings={settings}
             codexLoggedIn={codexLoggedIn}
             conversation={conversation}
             onConversationChange={onConversationChange}
-            onOpenSettings={() => setView('settings')}
-            onOpenHistory={() => setView('history')}
+            onOpenSettings={() => navigate('settings')}
+            onOpenHistory={() => navigate('history')}
+            active={open && view === 'chat'}
+            onBusyChange={handleBusy}
+            onStopReady={registerStop}
           />
-        )}
+        </div>
 
-        {view === 'history' && (
+        {open && view === 'history' && (
           <HistoryView
             api={api}
             activeId={conversation.id}
             onResume={handleResume}
             onNew={handleNew}
+            disabled={busy}
           />
         )}
 
-        {view === 'settings' && (
+        {open && view === 'settings' && (
           <SettingsView
             api={api}
             settings={settings}

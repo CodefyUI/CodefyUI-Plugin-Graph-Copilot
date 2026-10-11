@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import { loadSettings, saveSettings } from '../state/settings';
@@ -22,6 +22,21 @@ export interface CopilotAppProps {
 
 export function CopilotApp({ api }: CopilotAppProps) {
   const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const panelId = useId();
+  const fabRef = useRef<HTMLButtonElement>(null);
+  const stopRef = useRef<(() => void) | null>(null);
+  const authRevision = useRef(0);
+  const registerStop = useCallback((stop: () => void) => { stopRef.current = stop; }, []);
+  const close = () => {
+    stopRef.current?.();
+    setOpen(false);
+    fabRef.current?.focus();
+  };
+  const toggle = () => {
+    if (open) close();
+    else { setOpened(true); setOpen(true); }
+  };
   const [settings, setSettings] = useState<Settings>(() => loadSettings(api));
   const [codexLoggedIn, setCodexLoggedIn] = useState(false);
   const [codexEmail, setCodexEmail] = useState<string | null>(null);
@@ -41,11 +56,12 @@ export function CopilotApp({ api }: CopilotAppProps) {
   useEffect(() => {
     if (settings.provider !== 'openai-codex') return;
     let cancelled = false;
+    const revision = ++authRevision.current;
     codexStatus(api)
       .then((s) => {
-        if (!cancelled && s.status === 'logged_in') {
-          setCodexLoggedIn(true);
-          setCodexEmail(s.email ?? null);
+        if (!cancelled && authRevision.current === revision) {
+          setCodexLoggedIn(s.status === 'logged_in');
+          setCodexEmail(s.status === 'logged_in' ? s.email ?? null : null);
         }
       })
       .catch(() => { /* ignore */ });
@@ -59,6 +75,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
   };
 
   const handleCodexStatusChange = (loggedIn: boolean, email: string | null) => {
+    authRevision.current += 1;
     setCodexLoggedIn(loggedIn);
     setCodexEmail(email);
   };
@@ -78,10 +95,13 @@ export function CopilotApp({ api }: CopilotAppProps) {
 
   return (
     <div className="gcp-root">
-      <Fab onClick={() => setOpen((o) => !o)} />
+      <Fab onClick={toggle} expanded={open} controls={panelId} buttonRef={fabRef} />
 
-      {open && (
+      {opened && (
         <ChatWindow
+          open={open}
+          panelId={panelId}
+          onStopReady={registerStop}
           api={api}
           settings={settings}
           codexLoggedIn={codexLoggedIn}
@@ -92,7 +112,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
           onCodexStatusChange={handleCodexStatusChange}
           onNewConversation={handleNewConversation}
           onResumeConversation={handleResumeConversation}
-          onClose={() => setOpen(false)}
+          onClose={close}
         />
       )}
     </div>

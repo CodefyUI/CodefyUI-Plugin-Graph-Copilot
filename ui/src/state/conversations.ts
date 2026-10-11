@@ -11,6 +11,7 @@
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { WireToolCall, Provider } from '../llm/client';
 import type { Attachment } from './attachments';
+import type { AgentMode, RunSummary, ToolOutcome } from '../agent/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +27,10 @@ export interface ChatTurn {
   /** Files attached to a user turn (images/pdf/text). Persisted for display
    *  and re-sent to the model on later turns within the history window. */
   attachments?: Attachment[];
+  /** Optional local metadata; old conversations need no migration. */
+  runId?: string;
+  toolOutcome?: ToolOutcome;
+  runSummary?: RunSummary;
 }
 
 export interface Conversation {
@@ -36,6 +41,7 @@ export interface Conversation {
   provider: Provider;
   model: string;
   messages: ChatTurn[];
+  mode?: AgentMode;
 }
 
 // ---------------------------------------------------------------------------

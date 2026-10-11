@@ -10,13 +10,14 @@ vi.mock('./ChatWindow', () => ({
     codexLoggedIn: boolean;
     codexEmail: string | null;
     settings: unknown;
+    open: boolean;
     onNewConversation: () => void;
     onResumeConversation: (c: unknown) => void;
     onSettingsChange: (s: unknown) => void;
     onCodexStatusChange: (l: boolean, e: string | null) => void;
     onClose: () => void;
   }) => (
-    <div data-testid="chatwindow">
+    <div data-testid="chatwindow" hidden={!props.open}>
       <span data-testid="codex-logged-in">{String(props.codexLoggedIn)}</span>
       <span data-testid="codex-email">{String(props.codexEmail)}</span>
       <button onClick={() => props.onNewConversation()}>cw-new</button>
@@ -75,7 +76,9 @@ describe('CopilotApp', () => {
     fireEvent.click(fab);
     expect(screen.getByTestId('chatwindow')).toBeTruthy();
     fireEvent.click(fab);
-    expect(screen.queryByTestId('chatwindow')).toBeNull();
+    expect(screen.getByTestId('chatwindow')).not.toBeVisible();
+    expect(fab).toHaveAttribute('aria-expanded', 'false');
+    expect(fab).toHaveFocus();
   });
 
   it('persists settings on mount', () => {
@@ -112,6 +115,6 @@ describe('CopilotApp', () => {
     );
 
     fireEvent.click(screen.getByText('cw-close'));
-    expect(screen.queryByTestId('chatwindow')).toBeNull();
+    expect(screen.getByTestId('chatwindow')).not.toBeVisible();
   });
 });

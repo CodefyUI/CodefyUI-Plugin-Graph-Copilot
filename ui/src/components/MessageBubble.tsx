@@ -1,14 +1,17 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import type { ChatTurn } from '../state/conversations';
 import type { AttachmentKind } from '../state/attachments';
 import type { ToolStage } from './turnStages';
 import { describeStage } from './turnStages';
 import { Markdown } from './markdown';
+import { RunResult } from './RunResult';
 
 interface MessageBubbleProps {
   turn: ChatTurn;
   /** Tool stages grouped under this assistant turn (see turnStages). */
   stages?: ToolStage[];
+  /** Only the current run's pending stages may animate. Saved history defaults off. */
+  active?: boolean;
   streaming?: boolean;
   streamingText?: string;
 }
@@ -41,6 +44,14 @@ function AlertIcon() {
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 5v9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
       <circle cx="12" cy="19" r="1.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="5" y="5" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="2.4" />
     </svg>
   );
 }
@@ -86,18 +97,20 @@ function renderPlain(text: string): React.ReactNode[] {
 // detail. This is what makes an agent run read as distinct steps.
 // ---------------------------------------------------------------------------
 
-function ToolStageRow({ stage }: { stage: ToolStage }) {
+function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) {
   const [open, setOpen] = useState(false);
-  const d = describeStage(stage);
+  const detailId = useId();
+  const d = describeStage(stage, active);
   const expandable = !!d.detail;
 
   return (
-    <div className={`gcp-stage ${d.status}`}>
+    <div className={`gcp-stage ${d.status}`} aria-busy={d.status === 'running'}>
       <button
         type="button"
         className="gcp-stage-head"
         onClick={() => expandable && setOpen((v) => !v)}
         aria-expanded={expandable ? open : undefined}
+        aria-controls={expandable && open ? detailId : undefined}
         aria-label={`${d.label}${d.summary ? `: ${d.summary}` : ''}`}
         disabled={!expandable}
       >
@@ -106,6 +119,8 @@ function ToolStageRow({ stage }: { stage: ToolStage }) {
             <span className="gcp-stage-spinner" />
           ) : d.status === 'ok' ? (
             <CheckIcon />
+          ) : d.status === 'cancelled' || d.status === 'not_executed' || d.status === 'interrupted' ? (
+            <StopIcon />
           ) : (
             <AlertIcon />
           )}
@@ -114,7 +129,7 @@ function ToolStageRow({ stage }: { stage: ToolStage }) {
         {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
         {expandable && <ChevronIcon open={open} />}
       </button>
-      {open && d.detail && <pre className="gcp-stage-detail">{d.detail}</pre>}
+      {open && d.detail && <pre id={detailId} className="gcp-stage-detail">{d.detail}</pre>}
     </div>
   );
 }
@@ -126,6 +141,7 @@ function ToolStageRow({ stage }: { stage: ToolStage }) {
 export function MessageBubble({
   turn,
   stages = [],
+  active = false,
   streaming = false,
   streamingText,
 }: MessageBubbleProps) {
@@ -167,13 +183,15 @@ export function MessageBubble({
       {stages.length > 0 && (
         <div className="gcp-stages">
           {stages.map((s, i) => (
-            <ToolStageRow key={`${s.call.id}-${i}`} stage={s} />
+            <ToolStageRow key={`${s.call.id}-${i}`} stage={s} active={active && !turn.runSummary} />
           ))}
         </div>
       )}
 
-      {/* Legacy ops summary chip — only for turns without renderable stages */}
-      {!isUser && turn.opsSummary && stages.length === 0 && (
+      {!isUser && turn.runSummary && <RunResult summary={turn.runSummary} />}
+
+      {/* Legacy ops summary chip — never contradict a structured run result. */}
+      {!isUser && !turn.runSummary && turn.opsSummary && stages.length === 0 && (
         <div className="gcp-ops-chip">
           <span>Applied: {turn.opsSummary}</span>
         </div>

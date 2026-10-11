@@ -263,6 +263,31 @@ describe('SettingsView', () => {
   // Footnote
   // -------------------------------------------------------------------------
 
+  it('shows concrete setup guidance when a required model is only whitespace', () => {
+    renderSettings({ settings: makeSettings({ models: { openai: '   ' }, apiKeys: { openai: 'key' } }) });
+    expect(screen.getByText(/enter a model id/i)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /model id/i })).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('treats a malformed saved model as missing instead of throwing', () => {
+    const settings = makeSettings({ models: { openai: 123 } as unknown as Settings['models'] });
+    expect(() => renderSettings({ settings })).not.toThrow();
+    expect(screen.getByText(/enter a model id/i)).toBeInTheDocument();
+  });
+
+  it('model validation description points to guidance only for the invalid model', () => {
+    renderSettings({ settings: makeSettings({ apiKeys: {} }) });
+    expect(screen.getByRole('combobox', { name: /model id/i })).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('shows relevant API key guidance and accepts an optional custom key', () => {
+    const view = renderSettings({ settings: makeSettings({ apiKeys: { openai: '   ' } }) });
+    expect(screen.getByText(/enter an openai api key/i)).toBeInTheDocument();
+    view.unmount();
+    renderSettings({ settings: makeSettings({ provider: 'custom', models: { custom: 'local' }, customBaseUrl: 'http://local/v1', apiKeys: {} }) });
+    expect(screen.queryByText(/enter.*api key/i)).toBeNull();
+  });
+
   it('renders the privacy footnote', () => {
     renderSettings();
     expect(screen.getByText(/keys are stored/i)).toBeTruthy();
