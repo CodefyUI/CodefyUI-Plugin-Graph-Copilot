@@ -1,4 +1,4 @@
-import { test, expect, readyPreview, openCopilot, send, snapshot } from './fixtures';
+import { test, expect, readyPreview, openCopilot, send, snapshot, chatRequests } from './fixtures';
 
 for (const entry of ['source', 'bundle'] as const) {
   test(`real ${entry} activate(api) mounts into the mock host widget stack`, async ({ page }) => {
@@ -6,7 +6,7 @@ for (const entry of ['source', 'bundle'] as const) {
     const button = page.getByRole('button', { name: 'Graph Copilot', exact: true });
     await expect(button).toBeVisible();
     await button.click();
-    await expect(page.getByRole('dialog', { name: 'Graph Copilot', exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true })).toBeVisible();
     await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeEnabled();
     const state = await snapshot(page);
     expect(state.entry).toBe(entry);
@@ -45,9 +45,9 @@ for (const scenario of ['ask', 'edit', 'pending'] as const) {
       expect(state.graph).toEqual(before);
       expect(state.receipts).toEqual([]);
       expect(summary).toMatchObject({ mutation: 'none', mutationAttempted: false });
-      if (scenario === 'ask') expect(state.requests[0].tools).not.toContain('apply_graph_operations');
+      if (scenario === 'ask') expect(chatRequests(state)[0].tools).not.toContain('apply_graph_operations');
       else {
-        expect(state.requests[0].status).toBe('aborted');
+        expect(chatRequests(state)[0].status).toBe('aborted');
         expect(state.pending).toEqual([]);
       }
     }

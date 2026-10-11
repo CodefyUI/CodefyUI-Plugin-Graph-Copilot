@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { ChatTurn } from '../state/conversations';
-import { groupTurns, describeStage } from './turnStages';
+import { groupTurns, describeStage, formatDuration } from './turnStages';
 
 const applyCall = (id = 'tc1', ops: unknown = [{ op: 'add_node', node_type: 'Conv2d' }, { op: 'add_node', node_type: 'ReLU' }, { op: 'connect', source: 'a', source_handle: 'y', target: 'b', target_handle: 'x' }]) => ({
   id,
@@ -83,10 +83,51 @@ describe('groupTurns', () => {
     expect(items[0].stages[0].result?.content).toBe('first');
     expect(items[1].stages[0].result?.content).toBe('second');
   });
+
+  it('numbers tool-calling rounds as steps, resetting at each user turn', () => {
+    const turns: ChatTurn[] = [
+      { role: 'user', content: 'build it' },
+      { role: 'assistant', content: 'plan', tool_calls: [applyCall('a')] },
+      { role: 'tool', content: 'r', tool_call_id: 'a' },
+      { role: 'assistant', content: 'more', tool_calls: [applyCall('b')] },
+      { role: 'tool', content: 'r', tool_call_id: 'b' },
+      { role: 'assistant', content: 'done' }, // plain reply: no step
+      { role: 'user', content: 'again' },
+      { role: 'assistant', content: '', tool_calls: [applyCall('c')] },
+    ];
+    const items = groupTurns(turns);
+    expect(items[0].step).toBeUndefined(); // user
+    expect(items[1].step).toBe(1);
+    expect(items[2].step).toBe(2);
+    expect(items[3].step).toBeUndefined(); // final reply
+    expect(items[4].step).toBeUndefined(); // user
+    expect(items[5].step).toBe(1); // counter reset
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats sub-10s durations with one decimal', () => {
+    expect(formatDuration(437)).toBe('0.4s');
+    expect(formatDuration(9_940)).toBe('9.9s');
+  });
+
+  it('clamps tiny durations instead of showing 0.0s', () => {
+    expect(formatDuration(12)).toBe('0.1s');
+  });
+
+  it('formats seconds and minutes', () => {
+    expect(formatDuration(42_000)).toBe('42s');
+    expect(formatDuration(125_000)).toBe('2m 05s');
+  });
+
+  it('returns empty for invalid input', () => {
+    expect(formatDuration(-5)).toBe('');
+    expect(formatDuration(Number.NaN)).toBe('');
+  });
 });
 
 describe('describeStage', () => {
-  it.each(['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'mystery_tool'])('treats an old missing %s receipt as interrupted, not running', (name) => {
+  it.each(['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run', 'mystery_tool'])('treats an old missing %s receipt as interrupted, not running', (name) => {
     const stage = { call: { id: 'old', name, arguments: {} } };
     expect(describeStage(stage).status).toBe('interrupted');
     expect(describeStage(stage).summary).toMatch(/interrupted/i);
@@ -99,7 +140,7 @@ describe('describeStage', () => {
     ['unknown', 'unknown', /unknown/i],
     ['error', 'error', /failed/i],
   ] as const)('honors local outcome %s before formatting a successful-looking payload', (toolOutcome, status, text) => {
-    for (const name of ['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'other']) {
+    for (const name of ['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run', 'other']) {
       const d = describeStage({
         call: { ...applyCall(), name },
         result: { role: 'tool', content: '{"valid":true,"results":[{"index":0,"ok":true}]}', toolOutcome },
@@ -291,6 +332,143 @@ describe('describeStage', () => {
     expect(done.status).toBe('ok');
   });
 
+  it('run_graph_experiments: shows planned runs, winner, apply state, and failures', () => {
+    const call = {
+      id: 'e1',
+      name: 'run_graph_experiments',
+      arguments: { variants: [{}, {}, {}], repetitions: 2 },
+    };
+    const running = describeStage({ call }, true);
+    expect(running.label).toBe('Experiment study');
+    expect(running.summary).toContain('3 candidates');
+    expect(running.summary).toContain('6 runs');
+
+    const done = describeStage({
+      call,
+      result: {
+        role: 'tool', tool_call_id: 'e1',
+        content: JSON.stringify({ winnerLabel: 'Wide model', appliedVariantId: 'wide' }),
+      },
+    });
+    expect(done.status).toBe('ok');
+    expect(done.summary).toContain('Wide model');
+    expect(done.summary).toContain('applied');
+
+    const noMetric = describeStage({
+      call,
+      result: { role: 'tool', tool_call_id: 'e1', content: JSON.stringify({ variants: [] }) },
+    });
+    expect(noMetric.status).toBe('error');
+    expect(noMetric.summary).toContain('no rankable metric');
+
+    const failed = describeStage({
+      call,
+      result: { role: 'tool', tool_call_id: 'e1', content: JSON.stringify({ error: 'budget exceeded' }) },
+    });
+    expect(failed.status).toBe('error');
+    expect(failed.summary).toContain('budget exceeded');
+  });
+
+  it('optimize_graph_parameters: shows bounded plan, winner, and compiler errors', () => {
+    const call = {
+      id: 'o1',
+      name: 'optimize_graph_parameters',
+      arguments: {
+        strategy: 'seeded_random',
+        candidate_count: 3,
+        repetitions: 2,
+        bindings: [{ node_id: 'model', param: 'quality', values: [1, 2, 3, 4] }],
+      },
+    };
+    const running = describeStage({ call }, true);
+    expect(running.label).toBe('Parameter search');
+    expect(running.summary).toContain('8 runs');
+
+    const done = describeStage({
+      call,
+      result: {
+        role: 'tool',
+        tool_call_id: 'o1',
+        content: JSON.stringify({ winnerLabel: 'Random 2: model.quality=3' }),
+      },
+    });
+    expect(done.status).toBe('ok');
+    expect(done.summary).toContain('Random 2');
+
+    const failed = describeStage({
+      call,
+      result: { role: 'tool', tool_call_id: 'o1', content: JSON.stringify({ error: 'secret params are unsupported' }) },
+    });
+    expect(failed.status).toBe('error');
+    expect(failed.summary).toContain('secret params');
+  });
+
+  it('list_runs: shows a running caption based on active_only, then a run count', () => {
+    const call = { id: 'l1', name: 'list_runs', arguments: {} };
+    const running = describeStage({ call }, true);
+    expect(running.label).toBe('Reading run history');
+    expect(running.summary).toBe('recent runs');
+
+    const activeOnlyRunning = describeStage({
+      call: { id: 'l2', name: 'list_runs', arguments: { active_only: true } },
+    }, true);
+    expect(activeOnlyRunning.summary).toBe('active runs');
+
+    const done = describeStage({
+      call,
+      result: {
+        role: 'tool', tool_call_id: 'l1',
+        content: JSON.stringify({ total: 5, runs: [{ run_id: 'r1' }, { run_id: 'r2' }] }),
+      },
+    });
+    expect(done.status).toBe('ok');
+    expect(done.summary).toBe('2 runs');
+
+    const failed = describeStage({
+      call,
+      result: {
+        role: 'tool', tool_call_id: 'l1',
+        content: JSON.stringify({ error: 'Run history is unavailable: this CodefyUI host does not expose /api/runs' }),
+      },
+    });
+    expect(failed.status).toBe('error');
+    expect(failed.summary).toContain('Run history is unavailable');
+  });
+
+  it('get_run: shows the requested run id while running, then its fetched status', () => {
+    const call = { id: 'g1', name: 'get_run', arguments: { run_id: 'run-42' } };
+    const running = describeStage({ call }, true);
+    expect(running.label).toBe('Reading run details');
+    expect(running.summary).toBe('run-42');
+
+    const done = describeStage({
+      call,
+      result: {
+        role: 'tool', tool_call_id: 'g1',
+        content: JSON.stringify({ run: { run_id: 'run-42', status: 'succeeded' }, artifacts: [] }),
+      },
+    });
+    expect(done.status).toBe('ok');
+    expect(done.summary).toBe('succeeded');
+
+    const failed = describeStage({
+      call,
+      result: {
+        role: 'tool', tool_call_id: 'g1',
+        content: JSON.stringify({ error: "run 'run-42' not found on this host." }),
+      },
+    });
+    expect(failed.status).toBe('error');
+    expect(failed.summary).toContain('not found');
+  });
+
+  it.each(['list_runs', 'get_run'])('does not claim malformed %s history was read successfully', (name) => {
+    for (const content of ['{}', '{"runs":"missing","run":[]}', 'not JSON']) {
+      const d = describeStage({ call: { id: 'history', name, arguments: {} }, result: { role: 'tool', content } });
+      expect(d.status).not.toBe('ok');
+    }
+  });
+
   it('unknown tool: falls back to raw name and tolerates non-JSON content', () => {
     const call = { id: 'u1', name: 'mystery_tool', arguments: {} };
     const d = describeStage({ call, result: { role: 'tool', tool_call_id: 'u1', content: 'plain text' } });
@@ -303,5 +481,82 @@ describe('describeStage', () => {
     const d = describeStage({ call: { id: 'x', name: 'apply_graph_operations', arguments: {} } }, true);
     expect(d.status).toBe('running');
     expect(d.label).toBe('Edit graph');
+  });
+});
+
+describe('describeStage run_graph', () => {
+  const call = (args: Record<string, unknown> = { reason: 'Train the 200M model' }) => ({
+    id: 'run-call',
+    name: 'run_graph',
+    arguments: args,
+  });
+
+  it('shows the reason while the run streams', () => {
+    const d = describeStage({ call: call() }, true);
+    expect(d.label).toBe('Run graph');
+    expect(d.status).toBe('running');
+    expect(d.summary).toBe('Train the 200M model');
+  });
+
+  it.each(['not JSON', '', 'null', '{}', '{"status":"unexpected"}'])('does not infer execution success from an unreadable run receipt: %s', (content) => {
+    const d = describeStage({ call: call(), result: { role: 'tool', content } });
+    expect(d.status).not.toBe('ok');
+  });
+
+  it.each(['cancelled', 'stopped'])('shows legacy %s execution as stopped, not an error or success', (status) => {
+    const d = describeStage({ call: call(), result: { role: 'tool', content: JSON.stringify({ status }) } });
+    expect(d.status).toBe('cancelled');
+    expect(d.summary).toMatch(/stopped/i);
+  });
+
+  it.each(['//evil.example/clip.mp4', '/\\\\evil.example/clip.mp4', '/api/media/../../outside.mp4', '/api/media/%2e%2e/outside.mp4', '/api/other/clip.mp4'])('never renders unapproved media references: %s', (url) => {
+    const d = describeStage({ call: call(), result: {
+      role: 'tool', content: JSON.stringify({ status: 'complete', media: [{ kind: 'video', url, format: 'mp4' }] }),
+    } });
+    expect(d.media).toBeUndefined();
+  });
+
+  it('retains valid same-origin artifacts and ignores malformed entries', () => {
+    const d = describeStage({ call: call(), result: {
+      role: 'tool', content: JSON.stringify({ status: 'complete', media: [null, [], {}, { kind: 'video', url: '/api/media/clip.mp4?download=1', node: 'Writer' }] }),
+    } });
+    expect(d.media).toEqual([{ kind: 'video', url: '/api/media/clip.mp4?download=1', format: 'mp4', node: 'Writer' }]);
+  });
+
+  it('summarizes a completed run with node counts and duration', () => {
+    const result = {
+      role: 'tool' as const,
+      tool_call_id: 'run-call',
+      content: JSON.stringify({
+        status: 'complete', completedNodes: 5, totalNodes: 5, duration_s: 65,
+      }),
+    };
+    const d = describeStage({ call: call(), result });
+    expect(d.status).toBe('ok');
+    expect(d.summary).toBe('complete · 5/5 nodes · 1m 05s');
+  });
+
+  it('marks a non-complete run status as error', () => {
+    const result = {
+      role: 'tool' as const,
+      tool_call_id: 'run-call',
+      content: JSON.stringify({
+        status: 'timeout', completedNodes: 2, totalNodes: 5, duration_s: 600,
+      }),
+    };
+    const d = describeStage({ call: call(), result });
+    expect(d.status).toBe('error');
+    expect(d.summary).toContain('timeout');
+  });
+
+  it('marks pre-execution refusals as errors with the message', () => {
+    const result = {
+      role: 'tool' as const,
+      tool_call_id: 'run-call',
+      content: JSON.stringify({ cancelled: true, error: 'The run was not approved by the user.' }),
+    };
+    const d = describeStage({ call: call(), result });
+    expect(d.status).toBe('error');
+    expect(d.summary).toContain('not approved');
   });
 });

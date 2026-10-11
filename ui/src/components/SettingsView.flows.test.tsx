@@ -9,16 +9,23 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import { DEFAULT_SETTINGS } from '../state/settings';
+import type { ModelCatalogResult } from '../llm/models';
 
 vi.mock('../llm/client', () => ({
-  fetchModels: vi.fn(),
+  fetchModelCatalog: vi.fn(),
   codexLogin: vi.fn(),
   codexStatus: vi.fn(),
   codexLogout: vi.fn(),
 }));
 
 import { SettingsView } from './SettingsView';
-import { fetchModels, codexLogin, codexStatus, codexLogout } from '../llm/client';
+import { fetchModelCatalog, codexLogin, codexStatus, codexLogout } from '../llm/client';
+import {
+  clearModelCatalogCache,
+  modelCatalogCacheKey,
+  readCachedModelCatalog,
+} from '../llm/models';
+import { coordinatedCodexStatus, invalidateCodexStatusGeneration } from '../llm/codexStatusEpoch';
 
 function makeFakeApi(): CodefyUIPluginAPI {
   return {
@@ -41,6 +48,8 @@ function makeSettings(over: Partial<Settings> = {}): Settings {
     ...DEFAULT_SETTINGS,
     models: { ...DEFAULT_SETTINGS.models },
     apiKeys: { ...DEFAULT_SETTINGS.apiKeys },
+    reasoningEfforts: { ...DEFAULT_SETTINGS.reasoningEfforts },
+    providerCapabilities: { ...DEFAULT_SETTINGS.providerCapabilities },
     ...over,
   };
 }
@@ -50,28 +59,52 @@ function renderSettings(over: {
   codexLoggedIn?: boolean;
   codexEmail?: string | null;
   onCodexStatusChange?: (l: boolean, e: string | null) => void;
+  onChange?: (settings: Settings) => void;
 } = {}) {
   const api = makeFakeApi();
   const onCodexStatusChange = over.onCodexStatusChange ?? vi.fn();
-  const settings = over.settings ?? makeSettings();
-  const view = render(
+  const onChange = over.onChange ?? vi.fn();
+  const props = {
+    settings: over.settings ?? makeSettings(),
+    codexLoggedIn: over.codexLoggedIn ?? false,
+    codexEmail: over.codexEmail ?? null,
+  };
+  const result = render(
     <SettingsView
       api={api}
-      settings={settings}
-      codexLoggedIn={over.codexLoggedIn ?? false}
-      codexEmail={over.codexEmail ?? null}
+      settings={props.settings}
+      codexLoggedIn={props.codexLoggedIn}
+      codexEmail={props.codexEmail}
       onCodexStatusChange={onCodexStatusChange}
-      onChange={vi.fn()}
+      onChange={onChange}
     />,
   );
+  function rerenderSettings(next: Partial<typeof props> | Settings, loggedIn?: boolean) {
+    if ('provider' in next) props.settings = next;
+    else Object.assign(props, next);
+    if (loggedIn !== undefined) props.codexLoggedIn = loggedIn;
+    result.rerender(
+      <SettingsView
+        api={api}
+        settings={props.settings}
+        codexLoggedIn={props.codexLoggedIn}
+        codexEmail={props.codexEmail}
+        onCodexStatusChange={onCodexStatusChange}
+        onChange={onChange}
+      />,
+    );
+  }
+  return { ...result, api, onCodexStatusChange, onChange, rerenderSettings };
+}
+
+function catalog(
+  ids: string[],
+  reasoningEffort = false,
+  richModelCatalog = reasoningEffort,
+): ModelCatalogResult {
   return {
-    ...view, api, onCodexStatusChange,
-    rerenderSettings(nextSettings: Settings, loggedIn = over.codexLoggedIn ?? false) {
-      view.rerender(<SettingsView
-        api={api} settings={nextSettings} codexLoggedIn={loggedIn} codexEmail={over.codexEmail ?? null}
-        onCodexStatusChange={onCodexStatusChange} onChange={vi.fn()}
-      />);
-    },
+    models: ids.map((id) => ({ id, label: id })),
+    capabilities: { reasoningEffort, richModelCatalog },
   };
 }
 
@@ -93,16 +126,19 @@ describe('SettingsView flows', () => {
   });
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    clearModelCatalogCache();
+    invalidateCodexStatusGeneration();
     // The mount effect calls codexStatus() for the codex provider; give it a
     // benign default so it resolves instead of returning undefined.
     vi.mocked(codexStatus).mockResolvedValue({ status: 'logged_out' });
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog([]));
   });
 
   it.each(['provider', 'key', 'baseUrl'] as const)('ignores stale model responses after changing %s, including a switch back', async (changed) => {
-    const first = deferred<string[]>();
-    const second = deferred<string[]>();
-    vi.mocked(fetchModels).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const first = deferred<ModelCatalogResult>();
+    const second = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const initial = makeSettings({ provider: 'custom', models: { custom: 'local' }, apiKeys: { custom: 'first' }, customBaseUrl: 'http://first/v1' });
     const { rerenderSettings } = renderSettings({ settings: initial });
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
@@ -111,58 +147,59 @@ describe('SettingsView flows', () => {
       : { ...initial, customBaseUrl: 'http://second/v1' };
     rerenderSettings(next);
     expect(screen.getByRole('button', { name: /load available models/i })).not.toBeDisabled();
-    expect(modelValues()).toEqual([]);
+    expect(modelValues()).not.toContain('stale-model');
     rerenderSettings(initial);
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
-    await act(async () => { second.resolve(['current-model']); });
-    expect(modelValues()).toEqual(['current-model']);
-    await act(async () => { first.resolve(['stale-model']); });
-    expect(modelValues()).toEqual(['current-model']);
+    await act(async () => { second.resolve(catalog(['current-model'])); });
+    expect(modelValues()).toEqual(['current-model', 'local']);
+    await act(async () => { first.resolve(catalog(['stale-model'])); });
+    expect(modelValues()).toEqual(['current-model', 'local']);
+    expect(readCachedModelCatalog(modelCatalogCacheKey('custom', 'first', 'http://first/v1'))?.models.map((m) => m.id))
+      .toEqual(['current-model']);
   });
 
   it('clears previous list/error and ignores an old failure while the new model request is pending', async () => {
-    const old = deferred<string[]>();
-    const current = deferred<string[]>();
+    const old = deferred<ModelCatalogResult>();
+    const current = deferred<ModelCatalogResult>();
     const firstSettings = makeSettings({ apiKeys: { openai: 'first' } });
+    vi.mocked(fetchModelCatalog).mockResolvedValueOnce(catalog(['first-model']));
     const { rerenderSettings } = renderSettings({ settings: firstSettings });
-    vi.mocked(fetchModels).mockResolvedValueOnce(['first-model']);
-    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
-    await waitFor(() => expect(modelValues()).toEqual(['first-model']));
-    vi.mocked(fetchModels).mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    await waitFor(() => expect(modelValues()).toContain('first-model'));
+    vi.mocked(fetchModelCatalog).mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
     rerenderSettings({ ...firstSettings, apiKeys: { openai: 'new-key' } });
-    expect(modelValues()).toEqual([]);
-    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
+    expect(modelValues()).not.toContain('first-model');
     await act(async () => { old.reject(new Error('old credential failure')); });
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('button', { name: /load available models/i })).toBeDisabled();
-    await act(async () => { current.resolve(['new-model']); });
-    expect(modelValues()).toEqual(['new-model']);
-    vi.mocked(fetchModels).mockRejectedValueOnce(new Error('new credential failure'));
+    await act(async () => { current.resolve(catalog(['new-model'])); });
+    expect(modelValues()).toContain('new-model');
+    vi.mocked(fetchModelCatalog).mockRejectedValueOnce(new Error('new credential failure'));
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent('new credential failure');
     rerenderSettings({ ...firstSettings, provider: 'anthropic' });
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(modelValues()).toEqual([]);
+    expect(modelValues()).not.toContain('new-model');
   });
 
   it('invalidates a request as soon as a key is edited, before blur saves the key', async () => {
-    const request = deferred<string[]>();
-    vi.mocked(fetchModels).mockReturnValueOnce(request.promise);
+    const request = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog).mockReturnValueOnce(request.promise);
     renderSettings({ settings: makeSettings({ apiKeys: { openai: 'saved-key' } }) });
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
     fireEvent.change(screen.getByLabelText(/openai api key/i), { target: { value: 'unsaved-new-key' } });
-    await act(async () => { request.resolve(['old-key-model']); });
-    expect(modelValues()).toEqual([]);
+    await act(async () => { request.resolve(catalog(['old-key-model'])); });
+    expect(modelValues()).not.toContain('old-key-model');
+    expect(readCachedModelCatalog(modelCatalogCacheKey('openai', 'saved-key'))).toBeNull();
   });
 
   it('does not dispatch duplicate model requests before the loading state renders', () => {
-    const request = deferred<string[]>();
-    vi.mocked(fetchModels).mockReturnValue(request.promise);
-    renderSettings();
+    const request = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog).mockReturnValue(request.promise);
+    renderSettings({ settings: makeSettings({ provider: 'custom', customBaseUrl: 'http://local/v1' }) });
     const button = screen.getByRole('button', { name: /load available models/i });
     act(() => { button.click(); button.click(); });
-    expect(fetchModels).toHaveBeenCalledTimes(1);
+    expect(fetchModelCatalog).toHaveBeenCalledTimes(1);
   });
 
   it('does not publish a late mount status after logout begins', async () => {
@@ -286,20 +323,20 @@ describe('SettingsView flows', () => {
   });
 
   it('aborts model transport on key edits and unmount while retaining the stale-response guard', async () => {
-    const first = deferred<string[]>();
-    const second = deferred<string[]>();
-    vi.mocked(fetchModels).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const first = deferred<ModelCatalogResult>();
+    const second = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const { unmount } = renderSettings({ settings: makeSettings({ apiKeys: { openai: 'key' } }) });
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
-    const firstSignal = vi.mocked(fetchModels).mock.calls[0][4]!;
+    const firstSignal = vi.mocked(fetchModelCatalog).mock.calls[0][4]!;
     expect(firstSignal.aborted).toBe(false);
     fireEvent.change(screen.getByLabelText(/openai api key/i), { target: { value: 'new key' } });
     expect(firstSignal.aborted).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
-    const secondSignal = vi.mocked(fetchModels).mock.calls[1][4]!;
+    const secondSignal = vi.mocked(fetchModelCatalog).mock.calls[1][4]!;
     unmount();
     expect(secondSignal.aborted).toBe(true);
-    await act(async () => { first.reject(new Error('late abort')); second.resolve(['late model']); });
+    await act(async () => { first.reject(new Error('late abort')); second.resolve(catalog(['late model'])); });
   });
 
   it('ignores a pending poll status after signing out and clears all timers on unmount', async () => {
@@ -325,8 +362,8 @@ describe('SettingsView flows', () => {
   });
 
   it('does not show a model list from an expired Codex authentication context', async () => {
-    const models = deferred<string[]>();
-    vi.mocked(fetchModels).mockReturnValueOnce(models.promise);
+    const models = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog).mockReturnValueOnce(models.promise);
     vi.mocked(codexLogout).mockResolvedValueOnce(undefined);
     const settings = makeSettings({ provider: 'openai-codex' });
     const { rerenderSettings } = renderSettings({ settings, codexLoggedIn: true });
@@ -334,8 +371,9 @@ describe('SettingsView flows', () => {
     fireEvent.click(screen.getByRole('button', { name: /sign out from/i }));
     await act(async () => {});
     rerenderSettings(settings, false);
-    await act(async () => { models.resolve(['old-session-model']); });
-    expect(modelValues()).toEqual([]);
+    await act(async () => { models.resolve(catalog(['old-session-model'])); });
+    expect(modelValues()).not.toContain('old-session-model');
+    expect(readCachedModelCatalog(modelCatalogCacheKey('openai-codex', 'active-codex-session'))).toBeNull();
   });
 
   it('marks Codex signed out synchronously before a delayed logout and keeps that boundary after unmount', async () => {
@@ -352,6 +390,119 @@ describe('SettingsView flows', () => {
     expect(onCodexStatusChange).toHaveBeenCalledTimes(1);
   });
 
+  it('does not let a late initial status erase a newer signed-in catalog context', async () => {
+    const status = deferred<{ status: string }>();
+    vi.mocked(codexStatus).mockReturnValueOnce(status.promise);
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['current-account-model'], true));
+    const view = renderSettings({ settings: makeSettings({ provider: 'openai-codex' }) });
+    await act(async () => {});
+    view.rerenderSettings({ codexLoggedIn: true, codexEmail: 'current@example.com' });
+    await waitFor(() => expect(modelValues()).toContain('current-account-model'));
+    await act(async () => { status.resolve({ status: 'logged_out' }); });
+    expect(view.onCodexStatusChange).not.toHaveBeenCalledWith(false, null);
+    expect(modelValues()).toContain('current-account-model');
+    expect(readCachedModelCatalog(modelCatalogCacheKey('openai-codex', 'current@example.com'))).not.toBeNull();
+  });
+
+  it('does not restore stale signed-in readiness when Settings reopens during delayed logout', async () => {
+    const logout = deferred<void>();
+    vi.mocked(codexLogout).mockReturnValueOnce(logout.promise);
+    vi.mocked(codexStatus).mockResolvedValue({ status: 'logged_in', email: 'old@example.com' });
+    const onCodexStatusChange = vi.fn();
+    const settings = makeSettings({ provider: 'openai-codex' });
+    const old = renderSettings({ settings, codexLoggedIn: true, codexEmail: 'old@example.com', onCodexStatusChange });
+    await act(async () => {});
+    onCodexStatusChange.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /sign out from/i }));
+    expect(onCodexStatusChange).toHaveBeenCalledWith(false, null);
+    old.unmount();
+    const reopened = renderSettings({ settings, onCodexStatusChange });
+    await act(async () => {});
+    expect(onCodexStatusChange).not.toHaveBeenCalledWith(true, 'old@example.com');
+    await act(async () => { logout.resolve(); });
+    expect(onCodexStatusChange).not.toHaveBeenCalledWith(true, 'old@example.com');
+    expect(screen.getByText('Not signed in')).toBeInTheDocument();
+    reopened.unmount();
+  });
+
+  it('preserves a new explicit sign-in when an older unmounted logout finishes', async () => {
+    vi.useFakeTimers();
+    const logout = deferred<void>();
+    vi.mocked(codexLogout).mockReturnValueOnce(logout.promise);
+    vi.mocked(codexStatus).mockResolvedValueOnce({ status: 'logged_in', email: 'old@example.com' });
+    const old = renderSettings({ settings: makeSettings({ provider: 'openai-codex' }), codexLoggedIn: true, codexEmail: 'old@example.com' });
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: /sign out from/i }));
+    old.unmount();
+    vi.mocked(codexStatus).mockResolvedValue({ status: 'logged_in', email: 'new@example.com' });
+    vi.mocked(codexLogin).mockResolvedValueOnce('https://auth.example.com');
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const onCodexStatusChange = vi.fn();
+    const reopened = renderSettings({ settings: makeSettings({ provider: 'openai-codex' }), onCodexStatusChange });
+    fireEvent.click(screen.getByRole('button', { name: /sign in with/i }));
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(onCodexStatusChange).toHaveBeenCalledWith(true, 'new@example.com');
+    onCodexStatusChange.mockClear();
+    await act(async () => { logout.resolve(); });
+    expect(onCodexStatusChange).not.toHaveBeenCalledWith(false, null);
+    await expect(coordinatedCodexStatus(() => Promise.resolve({ status: 'logged_in', email: 'new@example.com' })))
+      .resolves.toEqual({ status: 'logged_in', email: 'new@example.com' });
+    reopened.unmount();
+  });
+
+  it('invalidates shared status reads at logout completion even after navigation unmounts Settings', async () => {
+    const logout = deferred<void>();
+    const lateStatus = deferred<{ status: string }>();
+    vi.mocked(codexLogout).mockReturnValueOnce(logout.promise);
+    const onCodexStatusChange = vi.fn();
+    const view = renderSettings({ settings: makeSettings({ provider: 'openai-codex' }), codexLoggedIn: true, onCodexStatusChange });
+    await act(async () => {});
+    onCodexStatusChange.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /sign out from/i }));
+    const sharedStatus = coordinatedCodexStatus(() => lateStatus.promise);
+    view.unmount();
+    await act(async () => { logout.resolve(); });
+    lateStatus.resolve({ status: 'logged_in' });
+    await expect(sharedStatus).resolves.toBeNull();
+    expect(view.onCodexStatusChange).toHaveBeenCalledTimes(1);
+    expect(view.onCodexStatusChange).toHaveBeenCalledWith(false, null);
+  });
+
+  it('does not invalidate a newer shared auth action when an old logout settles', async () => {
+    const logout = deferred<void>();
+    const currentStatus = deferred<{ status: string }>();
+    vi.mocked(codexLogout).mockReturnValueOnce(logout.promise);
+    const view = renderSettings({ settings: makeSettings({ provider: 'openai-codex' }), codexLoggedIn: true });
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: /sign out from/i }));
+    view.unmount();
+    invalidateCodexStatusGeneration();
+    const sharedStatus = coordinatedCodexStatus(() => currentStatus.promise);
+    await act(async () => { logout.resolve(); });
+    currentStatus.resolve({ status: 'logged_in' });
+    await expect(sharedStatus).resolves.toEqual({ status: 'logged_in' });
+  });
+
+  it('does not cache or publish capability metadata from an expired Codex auth epoch', async () => {
+    const models = deferred<ModelCatalogResult>();
+    vi.mocked(codexStatus).mockResolvedValueOnce({ status: 'logged_in', email: 'old@example.com' });
+    vi.mocked(fetchModelCatalog).mockReturnValueOnce(models.promise);
+    const onChange = vi.fn();
+    const view = renderSettings({ settings: makeSettings({ provider: 'openai-codex' }), codexLoggedIn: true, codexEmail: 'old@example.com', onChange });
+    await act(async () => {});
+    onChange.mockClear();
+    invalidateCodexStatusGeneration();
+    await act(async () => { models.resolve(catalog(['expired-model'], true)); });
+    expect(modelValues()).not.toContain('expired-model');
+    expect(view.onChange).not.toHaveBeenCalled();
+    expect(readCachedModelCatalog(modelCatalogCacheKey('openai-codex', 'old@example.com'))).toBeNull();
+    expect(screen.getByRole('button', { name: /load available models/i })).not.toBeDisabled();
+    vi.mocked(fetchModelCatalog).mockResolvedValueOnce(catalog(['current-epoch-model'], true));
+    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
+    await waitFor(() => expect(modelValues()).toContain('current-epoch-model'));
+  });
+
   it('reconciles an explicit logged-out mount response without treating unknown status as logged out', async () => {
     const onCodexStatusChange = vi.fn();
     vi.mocked(codexStatus).mockResolvedValueOnce({ status: 'logged_out' });
@@ -365,26 +516,309 @@ describe('SettingsView flows', () => {
     expect(onCodexStatusChange).not.toHaveBeenCalled();
   });
 
-  it('loads the model list into the datalist on "Load list"', async () => {
-    vi.mocked(fetchModels).mockResolvedValue(['gpt-4', 'gpt-5']);
+  it('automatically syncs a queryable provider and refresh bypasses the cache', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['gpt-4', 'gpt-5']));
     renderSettings({ settings: makeSettings({ provider: 'openai', apiKeys: { openai: 'sk' } }) });
 
-    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
-    await waitFor(() => expect(fetchModels).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
     await waitFor(() => {
       const values = Array.from(
         document.querySelectorAll('#gcp-model-datalist option'),
       ).map((o) => (o as HTMLOptionElement).value);
       expect(values).toEqual(expect.arrayContaining(['gpt-4', 'gpt-5']));
     });
+    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(2));
   });
 
   it('shows an error when loading models fails', async () => {
-    vi.mocked(fetchModels).mockRejectedValue(new Error('boom'));
+    vi.mocked(fetchModelCatalog).mockRejectedValue(new Error('boom'));
     renderSettings({ settings: makeSettings({ provider: 'openai', apiKeys: { openai: 'sk' } }) });
 
-    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/boom/i);
+  });
+
+  it('reuses the five-minute cache when Settings is reopened', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['cached-model']));
+    const settings = makeSettings({ provider: 'openai', apiKeys: { openai: 'sk-cache' } });
+    const first = renderSettings({ settings });
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    await screen.findByDisplayValue('gpt-5.6-sol');
+    first.unmount();
+
+    renderSettings({ settings });
+    await waitFor(() => {
+      const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+        .map((option) => (option as HTMLOptionElement).value);
+      expect(values).toContain('cached-model');
+    });
+    expect(fetchModelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('never auto-syncs custom, but explicit refresh queries its current endpoint', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['custom-live']));
+    renderSettings({
+      settings: makeSettings({
+        provider: 'custom',
+        customBaseUrl: 'https://custom.example/v1',
+      }),
+    });
+
+    await Promise.resolve();
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    expect(fetchModelCatalog).toHaveBeenCalledWith(
+      expect.anything(),
+      'custom',
+      undefined,
+      'https://custom.example/v1',
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => {
+      const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+        .map((option) => (option as HTMLOptionElement).value);
+      expect(values).toContain('custom-live');
+    });
+  });
+
+  it('ignores a stale provider response after the active provider changes', async () => {
+    const openai = deferred<ModelCatalogResult>();
+    const openrouter = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog)
+      .mockReturnValueOnce(openai.promise)
+      .mockReturnValueOnce(openrouter.promise);
+    const view = renderSettings({
+      settings: makeSettings({ provider: 'openai', apiKeys: { openai: 'sk-openai' } }),
+    });
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+
+    view.rerenderSettings({
+      settings: makeSettings({
+        provider: 'openrouter',
+        apiKeys: { openai: 'sk-openai', openrouter: 'sk-router' },
+      }),
+    });
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(2));
+    openrouter.resolve(catalog(['router-current']));
+    await waitFor(() => {
+      const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+        .map((option) => (option as HTMLOptionElement).value);
+      expect(values).toContain('router-current');
+    });
+
+    openai.resolve(catalog(['openai-stale']));
+    await Promise.resolve();
+    const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+      .map((option) => (option as HTMLOptionElement).value);
+    expect(values).not.toContain('openai-stale');
+  });
+
+  it('invalidates an in-flight custom refresh when the base URL changes', async () => {
+    const oldEndpoint = deferred<ModelCatalogResult>();
+    const newEndpoint = deferred<ModelCatalogResult>();
+    vi.mocked(fetchModelCatalog)
+      .mockReturnValueOnce(oldEndpoint.promise)
+      .mockReturnValueOnce(newEndpoint.promise);
+    const view = renderSettings({
+      settings: makeSettings({ provider: 'custom', customBaseUrl: 'https://old.example/v1' }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+
+    view.rerenderSettings({
+      settings: makeSettings({ provider: 'custom', customBaseUrl: 'https://new.example/v1' }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: /load available models/i }));
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(2));
+    newEndpoint.resolve(catalog(['new-endpoint-model']));
+    await waitFor(() => {
+      const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+        .map((option) => (option as HTMLOptionElement).value);
+      expect(values).toContain('new-endpoint-model');
+    });
+    oldEndpoint.resolve(catalog(['old-endpoint-model']));
+    await Promise.resolve();
+    const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+      .map((option) => (option as HTMLOptionElement).value);
+    expect(values).not.toContain('old-endpoint-model');
+  });
+
+  it('clears a stale error and same-provider catalog when credentials stop being queryable', async () => {
+    vi.mocked(fetchModelCatalog).mockRejectedValueOnce(new Error('old credential failed'));
+    const view = renderSettings({
+      settings: makeSettings({ provider: 'openai', apiKeys: { openai: 'sk-old' } }),
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/old credential/i);
+
+    view.rerenderSettings({
+      settings: makeSettings({ provider: 'openai', apiKeys: {} }),
+    });
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('retains a pinned selection omitted by discovery', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['provider-only-model']));
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        models: { ...DEFAULT_SETTINGS.models, openai: 'pinned-private-model' },
+        apiKeys: { openai: 'sk' },
+      }),
+    });
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+        .map((option) => (option as HTMLOptionElement).value);
+      expect(values).toContain('pinned-private-model');
+    });
+    expect(screen.getByRole('combobox', { name: /model id/i })).toHaveValue('pinned-private-model');
+  });
+
+  it('clears a stale effort only when a rich capable catalog proves it unsupported', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue({
+      models: [{
+        id: 'rich-model',
+        label: 'Rich model',
+        reasoningEfforts: [{ effort: 'low' }],
+      }],
+      capabilities: { reasoningEffort: true, richModelCatalog: true },
+    });
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        models: { ...DEFAULT_SETTINGS.models, openai: 'rich-model' },
+        apiKeys: { openai: 'sk' },
+        reasoningEfforts: { openai: 'max' },
+        providerCapabilities: { openai: { reasoningEffort: true } },
+      }),
+      onChange,
+    });
+
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const updated = onChange.mock.calls.at(-1)?.[0] as Settings | undefined;
+      expect(updated?.reasoningEfforts?.openai).toBeUndefined();
+      expect(updated?.providerCapabilities?.openai?.reasoningEffort).toBe(true);
+    });
+  });
+
+  it('preserves effort when OpenAI advertises forwarding but only returns model ids', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue({
+      models: [{ id: 'gpt-id-only', label: 'gpt-id-only' }],
+      capabilities: { reasoningEffort: true, richModelCatalog: false },
+    });
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        models: { ...DEFAULT_SETTINGS.models, openai: 'gpt-id-only' },
+        apiKeys: { openai: 'sk' },
+        reasoningEfforts: { openai: 'max' },
+        providerCapabilities: {},
+      }),
+      onChange,
+    });
+
+    await waitFor(() => {
+      const updated = onChange.mock.calls.at(-1)?.[0] as Settings | undefined;
+      expect(updated?.providerCapabilities?.openai).toEqual({
+        reasoningEffort: true,
+        richModelCatalog: false,
+      });
+      expect(updated?.reasoningEfforts?.openai).toBe('max');
+    });
+  });
+
+  it("preserves a future Codex effort when source: 'fallback' lacks that effort", async () => {
+    vi.mocked(codexStatus).mockResolvedValueOnce({
+      status: 'logged_in',
+      email: 'future@example.com',
+    });
+    vi.mocked(fetchModelCatalog).mockResolvedValue({
+      models: [{
+        id: 'gpt-5.6-sol',
+        label: 'GPT-5.6 Sol fallback',
+        reasoningEfforts: [{ effort: 'low' }],
+      }],
+      capabilities: { reasoningEffort: true, richModelCatalog: true },
+      source: 'fallback',
+    });
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai-codex',
+        models: { ...DEFAULT_SETTINGS.models, 'openai-codex': 'gpt-5.6-sol' },
+        reasoningEfforts: { 'openai-codex': 'future_effort' },
+        providerCapabilities: {},
+      }),
+      codexLoggedIn: true,
+      codexEmail: 'future@example.com',
+      onChange,
+    });
+
+    await waitFor(() => {
+      const updated = onChange.mock.calls.at(-1)?.[0] as Settings | undefined;
+      expect(updated?.providerCapabilities?.['openai-codex']?.richModelCatalog).toBe(true);
+      expect(updated?.reasoningEfforts?.['openai-codex']).toBe('future_effort');
+      expect(updated?.providerCapabilities?.['openai-codex']?.reasoningModel).toBeUndefined();
+    });
+  });
+
+  it('preserves effort preferences when a legacy host reports no capability', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['legacy-model'], false));
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        models: { ...DEFAULT_SETTINGS.models, openai: 'legacy-model' },
+        apiKeys: { openai: 'sk' },
+        reasoningEfforts: { openai: 'max' },
+        providerCapabilities: { openai: { reasoningEffort: true } },
+      }),
+      onChange,
+    });
+
+    await waitFor(() => {
+      const updated = onChange.mock.calls.at(-1)?.[0] as Settings | undefined;
+      expect(updated?.providerCapabilities?.openai?.reasoningEffort).toBe(false);
+      expect(updated?.reasoningEfforts?.openai).toBe('max');
+    });
+  });
+
+  it('preserves a Codex effort while login status is still false', async () => {
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai-codex',
+        reasoningEfforts: { 'openai-codex': 'max' },
+        providerCapabilities: { 'openai-codex': { reasoningEffort: true } },
+      }),
+      codexLoggedIn: false,
+      onChange,
+    });
+
+    await waitFor(() => {
+      const updated = onChange.mock.calls.at(-1)?.[0] as Settings | undefined;
+      expect(updated?.providerCapabilities?.['openai-codex']?.reasoningEffort).toBe(false);
+      expect(updated?.reasoningEfforts?.['openai-codex']).toBe('max');
+    });
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('clears stale Codex login state when the status endpoint reports logged out', async () => {
+    const onCodexStatusChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({ provider: 'openai-codex' }),
+      codexLoggedIn: true,
+      codexEmail: 'stale@example.com',
+      onCodexStatusChange,
+    });
+
+    await waitFor(() => {
+      expect(onCodexStatusChange).toHaveBeenCalledWith(false, null);
+    });
   });
 
   it('starts the Codex sign-in flow (opens auth url, goes pending)', async () => {
@@ -406,18 +840,104 @@ describe('SettingsView flows', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/nope/i);
   });
 
-  it('signs out of Codex', async () => {
+  it('syncs Codex after login becomes available', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['codex-live'], true));
+    const view = renderSettings({
+      settings: makeSettings({ provider: 'openai-codex' }),
+      codexLoggedIn: false,
+    });
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+
+    view.rerenderSettings({ codexLoggedIn: true, codexEmail: 'account@example.com' });
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const values = Array.from(document.querySelectorAll('#gcp-model-datalist option'))
+        .map((option) => (option as HTMLOptionElement).value);
+      expect(values).toContain('codex-live');
+    });
+  });
+
+  it('signs out of Codex and clears its account-scoped model cache', async () => {
+    vi.mocked(codexStatus).mockResolvedValueOnce({
+      status: 'logged_in',
+      email: 'account-a@example.com',
+    });
+    vi.mocked(codexLogout).mockResolvedValue(undefined);
+    vi.mocked(fetchModelCatalog).mockResolvedValue(catalog(['account-a-model'], true));
+    const onCodexStatusChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({ provider: 'openai-codex' }),
+      codexLoggedIn: true,
+      codexEmail: 'account-a@example.com',
+      onCodexStatusChange,
+    });
+
+    await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    const cacheKey = modelCatalogCacheKey('openai-codex', 'account-a@example.com');
+    await waitFor(() => expect(readCachedModelCatalog(cacheKey)).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /sign out from chatgpt codex/i }));
+    await waitFor(() => expect(codexLogout).toHaveBeenCalledTimes(1));
+    expect(onCodexStatusChange).toHaveBeenCalledWith(false, null);
+    expect(readCachedModelCatalog(cacheKey)).toBeNull();
+  });
+
+  it('ignores a stale logged-in status response that finishes after sign-out', async () => {
+    const staleStatus = deferred<{ status: 'logged_in'; email: string }>();
+    vi.mocked(codexStatus).mockReturnValueOnce(staleStatus.promise);
     vi.mocked(codexLogout).mockResolvedValue(undefined);
     const onCodexStatusChange = vi.fn();
     renderSettings({
       settings: makeSettings({ provider: 'openai-codex' }),
       codexLoggedIn: true,
-      codexEmail: 'me@x.com',
+      codexEmail: 'old@example.com',
       onCodexStatusChange,
     });
 
     fireEvent.click(screen.getByRole('button', { name: /sign out from chatgpt codex/i }));
+    await waitFor(() => {
+      expect(codexLogout).toHaveBeenCalledTimes(1);
+      expect(onCodexStatusChange).toHaveBeenCalledWith(false, null);
+    });
+
+    staleStatus.resolve({ status: 'logged_in', email: 'old@example.com' });
+    await Promise.resolve();
+    expect(onCodexStatusChange).not.toHaveBeenCalledWith(true, 'old@example.com');
+  });
+
+  it('invalidates a status read started while logout is awaiting the server', async () => {
+    vi.mocked(codexStatus).mockResolvedValueOnce({
+      status: 'logged_in',
+      email: 'old@example.com',
+    });
+    const logout = deferred<void>();
+    const lateStatus = deferred<{ status: 'logged_in'; email: string }>();
+    vi.mocked(codexLogout).mockReturnValueOnce(logout.promise);
+    vi.mocked(codexStatus).mockReturnValueOnce(lateStatus.promise);
+    const onCodexStatusChange = vi.fn();
+    const view = renderSettings({
+      settings: makeSettings({ provider: 'openai-codex' }),
+      codexLoggedIn: true,
+      codexEmail: 'old@example.com',
+      onCodexStatusChange,
+    });
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(onCodexStatusChange).toHaveBeenCalledWith(true, 'old@example.com');
+    });
+    onCodexStatusChange.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: /sign out from chatgpt codex/i }));
     await waitFor(() => expect(codexLogout).toHaveBeenCalledTimes(1));
-    expect(onCodexStatusChange).toHaveBeenCalledWith(false, null);
+    const inFlightStatus = coordinatedCodexStatus(() => codexStatus(view.api));
+    await expect(inFlightStatus).resolves.toBeNull();
+    expect(codexStatus).toHaveBeenCalledTimes(1);
+
+    logout.resolve(undefined);
+    await waitFor(() => expect(onCodexStatusChange).toHaveBeenCalledWith(false, null));
+    lateStatus.resolve({ status: 'logged_in', email: 'old@example.com' });
+
+    await expect(inFlightStatus).resolves.toBeNull();
+    expect(onCodexStatusChange).not.toHaveBeenCalledWith(true, 'old@example.com');
   });
 });

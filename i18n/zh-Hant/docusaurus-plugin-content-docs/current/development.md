@@ -18,7 +18,7 @@ pnpm --dir ui exec tsc --noEmit
 pnpm --dir ui build                   # 型別檢查 + 打包到 frontend/index.js
 ```
 
-UI CI 使用 **Node 22 / pnpm 9**。若本機工具鏈不同，請在結果中註明；不要在可靠性修正中改動模型預設值或宿主相容性。基線仍為 **CodefyUI 1.3.0+ / 外掛 API v1**。
+UI CI 使用 **Node 22 / pnpm 10**，本機工具鏈不同請在結果註明。Manifest 的 **CodefyUI 1.3.0+** 基線使用 stable 前端 helpers；新版 run history、model catalog、reasoning 與選用 API v2 能力另行協商。保留目前 provider／model 預設與 capability guards，不退回舊可靠性基線；見[架構](./architecture.md)與[供應商設定](./provider-setup.md)。
 
 `ui/vite.config.ts` 的覆蓋率門檻維持 **statements 90%、lines 90%、functions 85%、branches 80%**。不要降低門檻或排除新的業務邏輯來讓回歸通過。
 
@@ -60,18 +60,21 @@ Agent 整合測試應使用真實 `runTurn` + `streamChat`，搭配可變動的�
 
 回歸案例應涵蓋：
 
-- 執行前、串流／驗證／research 期間、`done` 後工具前、工具之間取消；Stop 後不再派送新修改；
+- Turn 前、串流／驗證／research／核准期間、`done` 後工具前、工具之間取消；Stop 後不再派送新畫布修改**或執行**；
 - 缺少／格式錯誤終止事件、indexed 回執缺漏／重複、部分修改、宿主修改在派送後拋錯；
-- 執行層強制 Ask 唯讀、singleton／快照綁定清空核准、拒絕不繞過、導覽／關閉取消；
-- 僅本次修改的驗證／修復、由成功回執建立的修復 allowlist（不改無關節點／輸入、不用衝突 ref）、不可用與無效驗證的區別、過期快照、上限耗盡時 incomplete；
-- 只在修改未派送時重試且原始使用者要求僅保留一次；已嘗試／未知寫入後不重播而接續；完整 assistant／tool 歷史群組；
+- Ask 對全部四個畫布／執行工具強制唯讀、singleton／快照綁定清空核准、拒絕不繞過、Settings／History／Lab 導覽或關閉取消；
+- 僅本次修改驗證／修復（含已套用 promotion）、成功回執 allowlist（不改無關節點／輸入、不用衝突 ref）、unavailable 與 invalid 區別、stale 快照及上限耗盡時 incomplete；
+- 只有 `!mutationAttempted && !sideEffectAttempted` 才 Retry，原始使用者要求保留一次；已嘗試／未知寫入或執行後不重播／重提交；完整 assistant／tool 歷史群組；
+- 新提交即時執行的原生取消／清理，對比既有 run follower abort／unmount 只停止觀察；未知 socket 失敗保留 run ID／pointer 供查詢，不證明取消；
+- 研究核准／預算、確定性搜尋、promotion revision／fingerprint 衝突、schema-redacted evidence、canonical bundle 驗證、明確匯入不執行／套用，以及 storage 失敗不重跑；
+- Rich catalog／effort 協商、保留已選模型、快取／明確 Refresh，以及 custom endpoint 不自動 discovery；
 - 隱藏檢視時保留草稿／附件、對話 ID 防護、設定就緒與重複送出防護、IME、歷史鍵盤刪除、焦點還原、固定閱讀位置。
 
 | 證據層 | 能確立／不能確立的事 |
 | --- | --- |
 | Vitest／jsdom 與 real-stack 假宿主測試 | 受控 fixture 下的元件與執行層行為，不是瀏覽器或真宿主 |
-| Mock-browser harness／Playwright | 真實外掛進入點、瀏覽器互動、假的圖／SSE 副作用，不是真 CodefyUI 整合 |
-| 真 CodefyUI-host smoke | 只有另外實測並記錄時，才代表實際宿主操作、驗證及 Undo 整合 |
+| Mock-browser harness／Playwright | 已實作 fixture 的真外掛進入點、瀏覽器互動、假圖／SSE 副作用，不是真 CodefyUI 整合或 live execution |
+| 真 CodefyUI-host smoke | 只有另外實測並記錄的能力，才代表實際宿主操作、驗證、Undo、執行／取消或 reattach |
 | 真 LLM／供應商測試 | 只有另外授權並實測時，才代表真實傳輸／模型行為 |
 
 **Mock browser、真宿主、真 LLM 是不同聲明。** 這個 harness 不呼叫真實供應商。請分開記錄實際指令輸出與未驗證層；有 script 或 fixture 不代表測試通過，也不是模型品質提升的證據。不要把真實 key、供應商請求或完整附件加入新的執行摘要 metadata。
@@ -92,5 +95,5 @@ pnpm start -- --locale zh-Hant      # 預覽繁體中文
 
 ## 持續整合
 
-- **`ci.yml`** 在 Node 22 / pnpm 9 跑 `ui/` 的 Vitest 覆蓋率門檻、重建 bundle，若 committed 的 `frontend/` 過期就失敗。目前不跑 `test:e2e` 或真實供應商測試。
+- **`ci.yml`** 使用 Node 22 / pnpm 10。UI job 跑 Vitest 覆蓋率、型別檢查／重建 bundle，拒絕過期 committed `frontend/`；獨立 root docs job 跑 `pnpm typecheck` 並建置英文／繁體中文。目前不跑 `test:e2e` 或真供應商測試。
 - **`deploy-docs.yml`** 在 Node 22 / pnpm 10 建置兩種語系，於 pull request 檢查文件變更，並將相關 `main` push（或手動執行）部署到 GitHub Pages。

@@ -33,7 +33,14 @@ export function RunResult({ summary }: { summary: RunSummary }) {
         {summary.mutation === 'unknown' && (
           <p className="gcp-run-result-detail">Changes may have been applied. Check the current graph before continuing.</p>
         )}
+        {summary.hostRunId && <p className="gcp-run-result-detail">Host run: {bounded(summary.hostRunId, 160)}</p>}
+        {summary.sideEffectAttempted && (
+          <p className="gcp-run-result-detail">A host action was attempted. Check run or study results before repeating it.</p>
+        )}
         <p className="gcp-run-result-detail">{VALIDATION_LABEL[summary.validation.status]}</p>
+        {summary.status === 'cancelled' && summary.sideEffectAttempted && (
+          <p className="gcp-run-result-detail">Stopping chat does not undo host execution or study changes.</p>
+        )}
         {summary.status === 'cancelled' && summary.mutation !== 'none' && (
           <p className="gcp-run-result-detail">Applied changes are not undone by Stop. Use the host's Undo to undo them.</p>
         )}

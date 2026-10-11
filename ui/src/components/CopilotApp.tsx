@@ -1,12 +1,26 @@
 import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import { loadSettings, saveSettings } from '../state/settings';
+import {
+  activeReasoningEffort,
+  loadSettings,
+  reconcileModelCatalogSettings,
+  saveSettings,
+} from '../state/settings';
 import type { Conversation } from '../state/conversations';
 import { newConversation } from '../state/conversations';
 import { Fab } from './Fab';
 import { ChatWindow } from './ChatWindow';
-import { codexStatus } from '../llm/client';
+import { codexStatus, fetchModelCatalog } from '../llm/client';
+import {
+  clearModelCatalogCache,
+  modelCatalogCacheKey,
+  readCachedModelCatalog,
+  writeCachedModelCatalog,
+} from '../llm/models';
+import {
+  coordinatedCodexStatus,
+} from '../llm/codexStatusEpoch';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -41,7 +55,11 @@ export function CopilotApp({ api }: CopilotAppProps) {
   const [codexLoggedIn, setCodexLoggedIn] = useState(false);
   const [codexEmail, setCodexEmail] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation>(() =>
-    newConversation(settings.provider, settings.models[settings.provider] ?? ''),
+    newConversation(
+      settings.provider,
+      settings.models[settings.provider] ?? '',
+      activeReasoningEffort(settings),
+    ),
   );
 
   // Persist settings whenever they change
@@ -57,18 +75,106 @@ export function CopilotApp({ api }: CopilotAppProps) {
     if (settings.provider !== 'openai-codex') return;
     let cancelled = false;
     const revision = ++authRevision.current;
-    codexStatus(api)
+    coordinatedCodexStatus(() => codexStatus(api))
       .then((s) => {
-        if (!cancelled && authRevision.current === revision) {
-          setCodexLoggedIn(s.status === 'logged_in');
-          setCodexEmail(s.status === 'logged_in' ? s.email ?? null : null);
+        if (cancelled || authRevision.current !== revision || s === null) return;
+        const loggedIn = s.status === 'logged_in';
+        const email = loggedIn ? s.email ?? null : null;
+        if (loggedIn !== codexLoggedIn || email !== codexEmail) {
+          setSettings((current) => reconcileModelCatalogSettings(
+            current,
+            'openai-codex',
+            [],
+            { reasoningEffort: false, richModelCatalog: false },
+          ));
         }
+        if (!loggedIn) clearModelCatalogCache('openai-codex');
+        setCodexLoggedIn(loggedIn);
+        setCodexEmail(email);
       })
       .catch(() => { /* ignore */ });
     return () => {
       cancelled = true;
     };
+    // codexLoggedIn/email are intentionally snapshots for identity-change
+    // detection; adding them would turn this one-shot status read into a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, settings.provider]);
+
+  // Prime the active built-in provider catalog on startup/provider changes.
+  // Besides making future models available immediately when Settings opens,
+  // this renegotiates non-persisted host capabilities so a saved effort can
+  // safely resume after a page reload without trusting stale host metadata.
+  useEffect(() => {
+    const provider = settings.provider;
+    if (provider === 'custom') return;
+
+    const apiKey = provider === 'openai'
+      ? settings.apiKeys.openai
+      : provider === 'openrouter'
+      ? settings.apiKeys.openrouter
+      : provider === 'anthropic'
+      ? settings.apiKeys.anthropic
+      : undefined;
+    const canQuery = provider === 'openai-codex' ? codexLoggedIn : Boolean(apiKey);
+    if (!canQuery) return;
+
+    const identity = modelCatalogCacheKey(
+      provider,
+      provider === 'openai-codex'
+        ? codexEmail ?? 'active-codex-session'
+        : apiKey,
+    );
+    let cancelled = false;
+    const applyCatalog = (result: Awaited<ReturnType<typeof fetchModelCatalog>>) => {
+      if (cancelled) return;
+      setSettings((current) => {
+        if (current.provider !== provider) return current;
+        const currentApiKey = provider === 'openai'
+          ? current.apiKeys.openai
+          : provider === 'openrouter'
+          ? current.apiKeys.openrouter
+          : provider === 'anthropic'
+          ? current.apiKeys.anthropic
+          : undefined;
+        if (provider !== 'openai-codex' && currentApiKey !== apiKey) return current;
+        return reconcileModelCatalogSettings(
+          current,
+          provider,
+          result.models,
+          result.capabilities,
+          result.source,
+        );
+      });
+    };
+
+    const cached = readCachedModelCatalog(identity);
+    if (cached) {
+      applyCatalog(cached);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    fetchModelCatalog(api, provider, apiKey)
+      .then((result) => {
+        if (cancelled) return;
+        writeCachedModelCatalog(identity, result);
+        applyCatalog(result);
+      })
+      .catch(() => { /* Settings exposes refresh errors; startup stays quiet. */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    settings.provider,
+    settings.apiKeys.openai,
+    settings.apiKeys.openrouter,
+    settings.apiKeys.anthropic,
+    codexLoggedIn,
+    codexEmail,
+  ]);
 
   const handleSettingsChange = (s: Settings) => {
     setSettings(s);
@@ -85,6 +191,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
       newConversation(
         settings.provider,
         settings.models[settings.provider] ?? '',
+        activeReasoningEffort(settings),
       ),
     );
   };

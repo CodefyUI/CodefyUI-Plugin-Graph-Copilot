@@ -18,7 +18,7 @@ pnpm --dir ui exec tsc --noEmit
 pnpm --dir ui build                   # type-check + bundle to frontend/index.js
 ```
 
-UI CI uses **Node 22 / pnpm 9**. If you use a different local toolchain, record that difference with the results; do not change model defaults or host compatibility as part of a reliability fix. The baseline remains **CodefyUI 1.3.0+ / plugin API v1**.
+UI CI uses **Node 22 / pnpm 10**. Record any local toolchain difference with your results. The manifest's **CodefyUI 1.3.0+** baseline uses stable frontend helpers; newer run-history, model-catalog, reasoning, and optional API v2 capabilities are negotiated separately. Preserve the current provider/model defaults and capability guards rather than reverting them to an older reliability baseline; see [Architecture](./architecture.md) and [Provider setup](./provider-setup.md).
 
 Coverage thresholds in `ui/vite.config.ts` remain **statements 90%, lines 90%, functions 85%, branches 80%**. Do not lower thresholds or exclude new business logic to make a regression pass.
 
@@ -60,18 +60,21 @@ Use real `runTurn` + `streamChat` with mutable fake graph APIs and controllable 
 
 Regression cases should cover:
 
-- cancellation before a run, during streaming/validation/research, after `done` but before tools, and between tools; no new mutation dispatch after Stop;
+- cancellation before a turn, during streaming/validation/research/approval, after `done` but before tools, and between tools; no new canvas **or execution** dispatch after Stop;
 - missing/malformed terminal events, indexed receipt gaps/duplicates, partial changes, and a host mutation throwing after dispatch;
-- executor-enforced Ask read-only, singleton/snapshot-bound clear approval, refusal without bypass, and cancellation on navigation/close;
-- current-run-only validation/repair, successful-receipt repair allowlists (no unrelated node/input mutations or colliding refs), unavailable versus invalid validation, stale snapshots, and incomplete results when limits are exhausted;
-- retry with the original user request once only before mutation dispatch; continuation without replay after attempted/unknown writes; complete assistant/tool history groups;
+- executor-enforced Ask read-only for all four canvas/execution tools, singleton/snapshot-bound clear approval, refusal without bypass, and cancellation on Settings/History/Lab navigation or close;
+- current-turn-only validation/repair (including applied promotion), successful-receipt allowlists (no unrelated node/input changes or colliding refs), unavailable versus invalid validation, stale snapshots, and incomplete results when limits are exhausted;
+- retry with the original user request once only when `!mutationAttempted && !sideEffectAttempted`; no replay/resubmission after attempted or unknown writes/execution; complete assistant/tool history groups;
+- native cancellation/cleanup for newly submitted live runs versus observation-only abort/unmount of an existing-run follower; unknown socket failures retaining run IDs/pointers for inspection, not proving cancellation;
+- study approval/budgets, deterministic search plans, promotion revision/fingerprint conflicts, schema-redacted evidence, canonical bundle verification, explicit import with no execution/application, and storage failure without reruns;
+- rich catalog/effort negotiation, saved-model preservation, cache/explicit Refresh behavior, and no automatic discovery calls to custom endpoints;
 - draft/attachment preservation while views are hidden, conversation identity guards, readiness and duplicate-send guards, IME, keyboard history deletion, focus restoration, and pinned scrolling.
 
 | Evidence layer | What it establishes / does not establish |
 | --- | --- |
 | Vitest/jsdom and real-stack fake-host tests | Component and executor behavior under controlled fixtures; not a browser or real host |
-| Mock-browser harness / Playwright | Actual plugin entry, browser interactions, and fake graph/SSE side effects; not real CodefyUI integration |
-| Real CodefyUI-host smoke | Actual host operation, validation, and Undo integration, only when separately exercised and recorded |
+| Mock-browser harness / Playwright | Actual plugin entry, browser interactions, and fake graph/SSE side effects for implemented fixtures; not real CodefyUI integration or live execution |
+| Real CodefyUI-host smoke | Actual host operations, validation, Undo, execution/cancellation, or reattachment only for the capabilities separately exercised and recorded |
 | Real-LLM/provider test | Live transport/model behavior, only when separately authorized and exercised |
 
 **Mock browser, real host, and real LLM are separate claims.** This harness makes no live provider calls. Document actual command outputs and unverified layers separately; the existence of a script or fixture is not a passing test result or a model-quality improvement claim. Do not put real keys, provider requests, or full attachments into new run-summary metadata.
@@ -92,5 +95,5 @@ Root `pnpm build` builds documentation; `pnpm --dir ui build` builds the plugin.
 
 ## Continuous integration
 
-- **`ci.yml`** runs the `ui/` Vitest coverage gate on Node 22 / pnpm 9, rebuilds the bundle, and fails if committed `frontend/` is stale. It does not currently run `test:e2e` or live-provider tests.
+- **`ci.yml`** uses Node 22 / pnpm 10. Its UI job runs Vitest coverage, typechecks/rebuilds the bundle, and rejects stale committed `frontend/`. A separate root docs job runs `pnpm typecheck` and builds English/Traditional Chinese. It does not currently run `test:e2e` or live-provider tests.
 - **`deploy-docs.yml`** builds both locales on Node 22 / pnpm 10, checks documentation changes on pull requests, and deploys relevant pushes to `main` (or manual runs) to GitHub Pages.

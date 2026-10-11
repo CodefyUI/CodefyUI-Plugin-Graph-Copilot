@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   streamChat,
+  fetchModelCatalog,
   fetchModels,
   codexLogin,
   codexStatus,
@@ -261,6 +262,86 @@ describe('fetchModels', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: 'custom', api_key: 'fixture-key', base_url: 'https://fixture.invalid' }),
       signal: controller.signal,
+    });
+  });
+
+  it('forwards catalog cancellation while preserving source, capabilities, and reasoning metadata', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        models: [{ id: 'gpt-rich', reasoning_efforts: ['max'] }],
+        source: 'live',
+        capabilities: { reasoning_effort: true, rich_model_catalog: true },
+      }),
+    } as unknown as Response);
+    const controller = new AbortController();
+
+    await expect(fetchModelCatalog(makeApi(fetchMock), 'openai', 'fixture-key', undefined, controller.signal))
+      .resolves.toEqual({
+        models: [{ id: 'gpt-rich', label: 'gpt-rich', reasoningEfforts: [{ effort: 'max' }] }],
+        source: 'live',
+        capabilities: { reasoningEffort: true, richModelCatalog: true },
+      });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/llm/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'openai', api_key: 'fixture-key' }),
+      signal: controller.signal,
+    });
+  });
+
+  it('preserves rich model metadata returned by a newer host', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [{
+          id: 'gpt-rich',
+          label: 'GPT Rich',
+          reasoning_efforts: ['low', 'max', 'ultra'],
+        }],
+      }),
+    } as unknown as Response);
+
+    await expect(fetchModelCatalog(makeApi(fetchMock) as any, 'openai', 'sk-test')).resolves.toEqual({
+      models: [{
+        id: 'gpt-rich',
+        label: 'GPT Rich',
+        reasoningEfforts: [{ effort: 'low' }, { effort: 'max' }],
+      }],
+      capabilities: { reasoningEffort: false, richModelCatalog: false },
+    });
+  });
+
+  it('negotiates reasoning effort only when the host explicitly advertises it', async () => {
+    const response = (capabilities?: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ id: 'gpt-rich' }], capabilities }),
+    } as unknown as Response);
+
+    await expect(fetchModelCatalog(makeApi(vi.fn().mockResolvedValue(response())) as any, 'openai'))
+      .resolves.toMatchObject({
+        capabilities: { reasoningEffort: false, richModelCatalog: false },
+      });
+    await expect(fetchModelCatalog(makeApi(vi.fn().mockResolvedValue(response({
+      reasoning_effort: true,
+      rich_model_catalog: true,
+    }))) as any, 'openai')).resolves.toMatchObject({
+      capabilities: { reasoningEffort: true, richModelCatalog: true },
+    });
+  });
+
+  it('treats a malformed top-level model response as an empty legacy catalog', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    } as unknown as Response);
+
+    await expect(fetchModelCatalog(makeApi(fetchMock) as any, 'openai')).resolves.toEqual({
+      models: [],
+      capabilities: { reasoningEffort: false, richModelCatalog: false },
     });
   });
 });

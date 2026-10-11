@@ -3,6 +3,7 @@ import type { ChatReply, Scenario } from './scenarios';
 import { replyAt } from './scenarios';
 import type { SampleGraph } from './graph';
 import { validateSampleGraph } from './graph';
+import { MOCK_EXECUTION_TOKEN, mockHistoryRow } from './execution';
 
 export interface MockRequest {
   id: number;
@@ -21,9 +22,9 @@ const event = (value: unknown): Uint8Array => encoder.encode(`data: ${JSON.strin
 const abortError = () => new DOMException('Mock request aborted', 'AbortError');
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
-/** No native fetch, proxy, real key or provider URL exists in this mock. A strict
- * allowlist rejects everything not explicitly described by these four routes. */
-export function createMockHttp(scenario: Scenario, manual: boolean, graph: () => SampleGraph, onChange: () => void) {
+/** No native fetch, proxy, real key or provider URL exists in this mock. Only
+ * explicit fixture routes and bounded read-only run-list queries are accepted. */
+export function createMockHttp(scenario: Scenario, manual: boolean, graph: () => SampleGraph, onChange: () => void, runRows: () => Array<{ id: string }> = () => [mockHistoryRow()]) {
   let chatIndex = 0;
   let requestId = 0;
   const requests: MockRequest[] = [];
@@ -88,10 +89,13 @@ export function createMockHttp(scenario: Scenario, manual: boolean, graph: () =>
     const request: MockRequest = { id: ++requestId, url, method: (init?.method ?? 'GET').toUpperCase(), status: 'pending' };
     requests.push(request);
     onChange();
-    if (!['/api/llm/chat', '/api/graph/validate', '/api/llm/models', '/api/llm/codex/status'].includes(url)) {
-      return reject(request, `unexpected URL ${url}`);
-    }
-    const expectedMethod = url === '/api/llm/codex/status' ? 'GET' : 'POST';
+    const listMatch = /^\/api\/runs\?limit=([1-9]\d?)$/.exec(url);
+    const runMatch = /^\/api\/runs\/(mock-history-run|mock-native-run)(\/artifacts)?$/.exec(url);
+    const nativeRead = url === '/api/system/devices' || (url === '/api/auth/bootstrap' && scenario.id === 'native-run');
+    const allowed = ['/api/llm/chat', '/api/graph/validate', '/api/llm/models', '/api/llm/codex/status'].includes(url)
+      || nativeRead || (listMatch !== null && Number(listMatch[1]) <= 50) || runMatch !== null;
+    if (!allowed) return reject(request, `unexpected URL ${url}`);
+    const expectedMethod = ['/api/llm/chat', '/api/graph/validate', '/api/llm/models'].includes(url) ? 'POST' : 'GET';
     if (request.method !== expectedMethod) return reject(request, `${url} expected ${expectedMethod}, got ${request.method}`);
     if (init?.signal?.aborted) { request.status = 'aborted'; onChange(); throw abortError(); }
 
@@ -129,8 +133,30 @@ export function createMockHttp(scenario: Scenario, manual: boolean, graph: () =>
 
     request.status = 'complete';
     onChange();
-    if (url === '/api/llm/models') return json({ models: [{ id: 'mock-graph-model' }, { id: 'mock-small-model' }] });
-    return json({ status: 'logged_out' });
+    if (url === '/api/llm/models') {
+      const body = parsed as { provider?: unknown; api_key?: unknown; base_url?: unknown };
+      if (!['openai', 'anthropic', 'openrouter', 'openai-codex', 'custom'].includes(String(body.provider))) return reject(request, 'invalid mock model provider');
+      return json({
+        source: 'live', capabilities: { reasoning_effort: true, rich_model_catalog: true },
+        models: [
+          { id: 'mock-graph-model', label: 'Mock graph model', description: 'In-memory scripted model; no provider network.', default_reasoning_effort: 'medium', supported_reasoning_efforts: ['low', 'medium', 'high'] },
+          { id: 'mock-small-model', label: 'Mock small model', supported_reasoning_efforts: ['low', 'medium'] },
+        ],
+      });
+    }
+    if (url === '/api/llm/codex/status') return json({ status: 'logged_out' });
+    if (url === '/api/system/devices') return json({ default: 'cpu', devices: ['cpu'] });
+    if (url === '/api/auth/bootstrap') return json({ token: MOCK_EXECUTION_TOKEN });
+    if (listMatch) {
+      const rows = runRows();
+      return json({ runs: rows.slice(0, Number(listMatch[1])), total: rows.length });
+    }
+    if (runMatch) {
+      const row = runRows().find((candidate) => candidate.id === runMatch[1]);
+      if (!row) return json({ error: 'Mock run not found' }, 404);
+      return json(runMatch[2] ? { artifacts: [] } : row);
+    }
+    return reject(request, `unhandled mock URL ${url}`);
   };
 
   return {

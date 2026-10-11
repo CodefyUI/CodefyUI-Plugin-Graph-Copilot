@@ -77,6 +77,26 @@ describe('RunResult', () => {
     expect(screen.getByText('diagnostic text')).toBeInTheDocument();
   });
 
+  it('separates attempted host actions from verified graph edits or execution success', () => {
+    const { container } = render(<RunResult summary={summary({ sideEffectAttempted: true, hostRunId: 'run-42' })} />);
+    expect(screen.getByText('Host run: run-42')).toBeInTheDocument();
+    expect(screen.getByText(/host action was attempted.*before repeating/i)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/executed successfully|run succeeded|100%/i);
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
+
+  it('does not imply chat Stop rolls back execution or study side effects', () => {
+    render(<RunResult summary={summary({ status: 'cancelled', sideEffectAttempted: true })} />);
+    expect(screen.getByText(/stopping chat does not undo host execution or study changes/i)).toBeInTheDocument();
+    expect(screen.queryByText(/host.*undo/i)).toBeNull();
+  });
+
+  it('bounds and escapes a host run identity', () => {
+    const { container } = render(<RunResult summary={summary({ hostRunId: `<img src=x>${'x'.repeat(1000)}` })} />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByText(/^Host run:/).textContent!.length).toBeLessThanOrEqual(170);
+  });
+
   it('shows a plain, bounded reason/message and escapes error details', () => {
     const { container } = render(<RunResult summary={summary({
       status: 'failed', reason: 'http_error', message: '<img src=x onerror=alert(1)>',

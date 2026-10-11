@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 
 // Stub ChatWindow: expose the callbacks CopilotApp wires into it so we can
@@ -11,6 +11,7 @@ vi.mock('./ChatWindow', () => ({
     codexEmail: string | null;
     settings: unknown;
     open: boolean;
+    conversation: { reasoningEffort?: string };
     onNewConversation: () => void;
     onResumeConversation: (c: unknown) => void;
     onSettingsChange: (s: unknown) => void;
@@ -20,10 +21,30 @@ vi.mock('./ChatWindow', () => ({
     <div data-testid="chatwindow" hidden={!props.open}>
       <span data-testid="codex-logged-in">{String(props.codexLoggedIn)}</span>
       <span data-testid="codex-email">{String(props.codexEmail)}</span>
+      <span data-testid="conversation-effort">{props.conversation.reasoningEffort ?? ''}</span>
+      <span data-testid="openai-reasoning-model">
+        {(props.settings as {
+          providerCapabilities?: { openai?: { reasoningModel?: string } };
+        }).providerCapabilities?.openai?.reasoningModel ?? ''}
+      </span>
       <button onClick={() => props.onNewConversation()}>cw-new</button>
       <button onClick={() => props.onResumeConversation({ id: 'resumed', messages: [] })}>cw-resume</button>
       <button onClick={() => props.onSettingsChange({ ...(props.settings as object), provider: 'anthropic' })}>cw-setsettings</button>
+      <button onClick={() => props.onSettingsChange({ ...(props.settings as object), provider: 'openai-codex' })}>cw-setcodex</button>
+      <button
+        onClick={() => props.onSettingsChange({
+          ...(props.settings as object),
+          provider: 'openai',
+          reasoningEfforts: { openai: 'high' },
+          providerCapabilities: {
+            openai: { reasoningEffort: true, reasoningModel: 'gpt-5.6-sol' },
+          },
+        })}
+      >
+        cw-seteffort
+      </button>
       <button onClick={() => props.onCodexStatusChange(true, 'e@x')}>cw-codexstatus</button>
+      <button onClick={() => props.onCodexStatusChange(false, null)}>cw-codexlogout</button>
       <button onClick={() => props.onClose()}>cw-close</button>
     </div>
   ),
@@ -31,10 +52,16 @@ vi.mock('./ChatWindow', () => ({
 
 vi.mock('../llm/client', () => ({
   codexStatus: vi.fn().mockResolvedValue({ status: 'logged_out' }),
+  fetchModelCatalog: vi.fn().mockResolvedValue({
+    models: [],
+    capabilities: { reasoningEffort: false, richModelCatalog: false },
+  }),
 }));
 
 import { CopilotApp } from './CopilotApp';
-import { codexStatus } from '../llm/client';
+import { codexStatus, fetchModelCatalog } from '../llm/client';
+import { clearModelCatalogCache } from '../llm/models';
+import { invalidateCodexStatusGeneration } from '../llm/codexStatusEpoch';
 
 function makeFakeApi(initial: Record<string, string> = {}): CodefyUIPluginAPI {
   const store = new Map<string, string>(Object.entries(initial));
@@ -62,7 +89,11 @@ const codexSettings = JSON.stringify({
 });
 
 describe('CopilotApp', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearModelCatalogCache();
+    invalidateCodexStatusGeneration();
+  });
 
   it('shows the FAB and hides the window until opened', () => {
     render(<CopilotApp api={makeFakeApi()} />);
@@ -102,6 +133,65 @@ describe('CopilotApp', () => {
     expect(screen.getByTestId('codex-email').textContent).toBe('me@example.com');
   });
 
+  it('clears stale login state when switching to Codex reports logged out', async () => {
+    vi.mocked(codexStatus).mockResolvedValue({ status: 'logged_out' });
+    render(<CopilotApp api={makeFakeApi()} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    fireEvent.click(screen.getByText('cw-codexstatus'));
+    await waitFor(() => {
+      expect(screen.getByTestId('codex-logged-in').textContent).toBe('true');
+    });
+
+    fireEvent.click(screen.getByText('cw-setcodex'));
+    await waitFor(() => {
+      expect(screen.getByTestId('codex-logged-in').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('codex-email').textContent).toBe('null');
+  });
+
+  it('does not let an initial status snapshot overwrite a newer callback', async () => {
+    let resolve!: (status: { status: 'logged_out' }) => void;
+    const pending = new Promise<{ status: 'logged_out' }>((done) => { resolve = done; });
+    vi.mocked(codexStatus).mockReturnValueOnce(pending);
+    render(<CopilotApp api={makeFakeApi({ settings: codexSettings })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText('cw-codexstatus'));
+    await act(async () => { resolve({ status: 'logged_out' }); });
+    expect(screen.getByTestId('codex-logged-in')).toHaveTextContent('true');
+    expect(screen.getByTestId('codex-email')).toHaveTextContent('e@x');
+  });
+
+  it('does not revive auth from an epoch invalidated by logout', async () => {
+    let resolve!: (status: { status: 'logged_in'; email: string }) => void;
+    const pending = new Promise<{ status: 'logged_in'; email: string }>((done) => { resolve = done; });
+    vi.mocked(codexStatus).mockReturnValueOnce(pending);
+    render(<CopilotApp api={makeFakeApi({ settings: codexSettings })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+
+    invalidateCodexStatusGeneration();
+    await act(async () => { resolve({ status: 'logged_in', email: 'old@x' }); });
+    expect(screen.getByTestId('codex-logged-in')).toHaveTextContent('false');
+    expect(screen.getByTestId('codex-email')).toHaveTextContent('null');
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('does not apply initial auth after switching to a different provider', async () => {
+    let resolve!: (status: { status: 'logged_in'; email: string }) => void;
+    const pending = new Promise<{ status: 'logged_in'; email: string }>((done) => { resolve = done; });
+    vi.mocked(codexStatus).mockReturnValueOnce(pending);
+    render(<CopilotApp api={makeFakeApi({ settings: codexSettings })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText('cw-setsettings'));
+    await act(async () => { resolve({ status: 'logged_in', email: 'old@x' }); });
+    expect(screen.getByTestId('codex-logged-in')).toHaveTextContent('false');
+    expect(screen.getByTestId('codex-email')).toHaveTextContent('null');
+  });
+
   it('wires window callbacks (new, resume, settings, codex status, close)', async () => {
     render(<CopilotApp api={makeFakeApi()} />);
     fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
@@ -116,5 +206,44 @@ describe('CopilotApp', () => {
 
     fireEvent.click(screen.getByText('cw-close'));
     expect(screen.getByTestId('chatwindow')).not.toBeVisible();
+  });
+
+  it('stamps the active reasoning effort on a new conversation', () => {
+    render(<CopilotApp api={makeFakeApi()} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+
+    fireEvent.click(screen.getByText('cw-seteffort'));
+    fireEvent.click(screen.getByText('cw-new'));
+
+    expect(screen.getByTestId('conversation-effort').textContent).toBe('high');
+  });
+
+  it('renegotiates a saved effort on startup without opening Settings', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValueOnce({
+      models: [{
+        id: 'gpt-5.6-sol',
+        label: 'GPT-5.6 Sol',
+        reasoningEfforts: [{ effort: 'high' }],
+      }],
+      capabilities: { reasoningEffort: true, richModelCatalog: true },
+      source: 'live',
+    });
+    const saved = JSON.stringify({
+      provider: 'openai',
+      models: { openai: 'gpt-5.6-sol' },
+      apiKeys: { openai: 'sk-saved' },
+      reasoningEfforts: { openai: 'high' },
+      customBaseUrl: '',
+    });
+
+    render(<CopilotApp api={makeFakeApi({ settings: saved })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => {
+      expect(fetchModelCatalog).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('openai-reasoning-model').textContent).toBe('gpt-5.6-sol');
+    });
+
+    fireEvent.click(screen.getByText('cw-new'));
+    expect(screen.getByTestId('conversation-effort').textContent).toBe('high');
   });
 });

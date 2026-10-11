@@ -2,7 +2,7 @@ import React, { useId, useState } from 'react';
 import type { ChatTurn } from '../state/conversations';
 import type { AttachmentKind } from '../state/attachments';
 import type { ToolStage } from './turnStages';
-import { describeStage } from './turnStages';
+import { describeStage, formatDuration } from './turnStages';
 import { Markdown } from './markdown';
 import { RunResult } from './RunResult';
 
@@ -12,6 +12,8 @@ interface MessageBubbleProps {
   stages?: ToolStage[];
   /** Only the current run's pending stages may animate. Saved history defaults off. */
   active?: boolean;
+  /** 1-based agent step number for tool-calling rounds (see groupTurns). */
+  step?: number;
   streaming?: boolean;
   streamingText?: string;
 }
@@ -102,6 +104,7 @@ function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) 
   const detailId = useId();
   const d = describeStage(stage, active);
   const expandable = !!d.detail;
+  const durationMs = stage.result?.durationMs;
 
   return (
     <div className={`gcp-stage ${d.status}`} aria-busy={d.status === 'running'}>
@@ -127,8 +130,37 @@ function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) 
         </span>
         <span className="gcp-stage-label">{d.label}</span>
         {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
+        {typeof durationMs === 'number' && (
+          <span className="gcp-stage-time">{formatDuration(durationMs)}</span>
+        )}
         {expandable && <ChevronIcon open={open} />}
       </button>
+      {d.media && d.media.length > 0 && (
+        <div className="gcp-stage-media">
+          {d.media.map((m) => (
+            // #310: same-origin /api/media references, host-served with a
+            // real Content-Type. A gif is an animated image — browsers
+            // refuse it as a <video> source.
+            m.format === 'gif' ? (
+              <img
+                key={m.url}
+                className="gcp-stage-clip"
+                src={m.url}
+                alt={m.node ? `${m.node} output clip` : 'run output clip'}
+              />
+            ) : (
+              <video
+                key={m.url}
+                className="gcp-stage-clip"
+                src={m.url}
+                controls
+                loop
+                preload="metadata"
+              />
+            )
+          ))}
+        </div>
+      )}
       {open && d.detail && <pre id={detailId} className="gcp-stage-detail">{d.detail}</pre>}
     </div>
   );
@@ -142,6 +174,7 @@ export function MessageBubble({
   turn,
   stages = [],
   active = false,
+  step,
   streaming = false,
   streamingText,
 }: MessageBubbleProps) {
@@ -152,9 +185,10 @@ export function MessageBubble({
   const displayText = streaming && streamingText !== undefined ? streamingText : turn.content;
   const hasText = displayText.trim().length > 0;
   const attachments = turn.attachments ?? [];
+  const isStep = !isUser && stages.length > 0;
 
   return (
-    <div className={`gcp-msg-row ${isUser ? 'user' : 'assistant'}`}>
+    <div className={`gcp-msg-row ${isUser ? 'user' : 'assistant'}${isStep ? ' step' : ''}`}>
       {/* Attachments (above the text, for user turns) */}
       {attachments.length > 0 && (
         <div className="gcp-bubble-attachments">
@@ -171,6 +205,14 @@ export function MessageBubble({
         </div>
       )}
 
+      {/* Step marker — labels each tool-calling round of a multi-round run */}
+      {isStep && typeof step === 'number' && (
+        <div className="gcp-step-tag">
+          <span className="gcp-step-tag-dot" aria-hidden="true" />
+          Step {step}
+        </div>
+      )}
+
       {/* Text bubble — skipped when a turn carries only attachments/stages */}
       {(hasText || (streaming && stages.length === 0)) && (
         <div className="gcp-bubble">
@@ -179,7 +221,7 @@ export function MessageBubble({
         </div>
       )}
 
-      {/* Tool stages (assistant turns only) */}
+      {/* Tool stages (assistant turns only) — the wired step timeline */}
       {stages.length > 0 && (
         <div className="gcp-stages">
           {stages.map((s, i) => (

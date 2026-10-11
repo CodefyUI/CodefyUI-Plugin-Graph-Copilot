@@ -1,8 +1,8 @@
 [plugin]
 id              = "graph-copilot"
-name            = "Graph Copilot — AI chat assistant"
-version         = "0.1.0"
-description     = "Chat with an AI to generate, tune, and improve the node graph. Adds a floating assistant button, conversation history, and multi-provider LLM settings (OpenAI / ChatGPT Codex / OpenRouter / Claude / custom OpenAI-compatible)."
+name            = "Graph Copilot — Agent Workbench"
+version         = "0.3.0"
+description     = "An agentic graph workbench for CodefyUI: build and validate graphs, run approved isolated experiments and deterministic parameter searches, retain portable evidence, guard promotion, and develop evidence-grounded research hypotheses."
 schema_version  = 1
 requires_codefyui = ">=1.3.0"
 authors         = ["treeleaves30760"]

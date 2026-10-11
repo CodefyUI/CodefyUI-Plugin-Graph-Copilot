@@ -109,6 +109,7 @@ export function HistoryView({ api, activeId, onResume, onNew, disabled = false }
                     <span className="gcp-history-title">{title}</span>
                     <span className="gcp-history-meta">
                       {relativeTime(conv.updatedAt)} · {conv.provider}/{conv.model || '—'}
+                      {conv.reasoningEffort ? ` · ${conv.reasoningEffort} effort` : ''}
                     </span>
                   </span>
                 </button>

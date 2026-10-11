@@ -1,15 +1,20 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import { providerReady, readinessReason } from '../state/settings';
+import { providerReady, readinessReason, withReasoningEffort } from '../state/settings';
+import type { ReasoningEffort } from '../llm/models';
+import { catalogEntryForModel } from '../llm/models';
 import type { Conversation } from '../state/conversations';
 import { listConversations } from '../state/conversations';
 import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
 import type { AgentMode } from '../agent/types';
 import { useAgentRun } from './useAgentRun';
+import { RunSparkline } from './RunSparkline';
 import { MessageBubble } from './MessageBubble';
-import { groupTurns } from './turnStages';
+import { describeStage, groupTurns } from './turnStages';
+import { RunReattachBanner } from './RunReattachBanner';
+import { maybeRequestNotificationPermission } from './notify';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -91,6 +96,22 @@ function ErrorIcon() {
   );
 }
 
+function BoltIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CheckMiniIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Staged attachment (local, pre-send) state
 // ---------------------------------------------------------------------------
@@ -125,6 +146,8 @@ export interface ChatViewProps {
   codexLoggedIn: boolean;
   conversation: Conversation;
   onConversationChange: (c: Conversation) => void;
+  /** Enables the in-composer reasoning-effort quick control when provided. */
+  onSettingsChange?: (s: Settings) => void;
   onOpenSettings: () => void;
   onOpenHistory: () => void;
   active?: boolean;
@@ -142,6 +165,7 @@ export function ChatView({
   codexLoggedIn,
   conversation,
   onConversationChange,
+  onSettingsChange,
   onOpenSettings,
   onOpenHistory,
   active = true,
@@ -150,12 +174,13 @@ export function ChatView({
 }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<AgentMode>(conversation.mode ?? 'edit');
+  const [effortOpen, setEffortOpen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [staged, setStaged] = useState<Staged[]>([]);
   const [dragging, setDragging] = useState(false);
   const [showLatest, setShowLatest] = useState(false);
   const run = useAgentRun({ api, settings, conversation, onConversationChange, active, onBusyChange });
-  const { busy, streamingText, liveTurns, error: lastError } = run;
+  const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, runStatusLine, runLossSeries } = run;
   useEffect(() => { onStopReady?.(run.stop); }, [onStopReady, run.stop]);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -177,11 +202,13 @@ export function ChatView({
     setInput('');
     setStaged([]);
     setMode(conversation.mode ?? 'edit');
+    setEffortOpen(false);
     pinnedRef.current = true;
     setShowLatest(false);
   }, [conversation.id]);
 
   useEffect(() => {
+    if (!active) setEffortOpen(false);
     if (active && !busy) {
       if (ready) textareaRef.current?.focus();
       else setupRef.current?.focus();
@@ -338,7 +365,13 @@ export function ChatView({
   const handleContinue = () => {
     if (!ready || !active || busy) return;
     repin();
-    void run.start('Continue the previous request from the current graph. Read it again first; do not replay operations already applied.', [], mode);
+    void run.start('Continue the previous request from the current graph and recorded run results. Read the graph again first; do not replay operations or executions already dispatched.', [], mode);
+  };
+
+  const handleExperimentDecision = (approved: boolean) => run.decide(approved);
+  const handleRunDecision = (approved: boolean) => {
+    if (approved) maybeRequestNotificationPermission(settings);
+    run.decide(approved);
   };
 
   // ---------------------------------------------------------------------------
@@ -357,8 +390,40 @@ export function ChatView({
   // While a tool is executing, its stage row already shows a spinner — the
   // generic thinking indicator is only for gaps with no visible activity.
   const lastItem = items[items.length - 1];
-  const toolRunning = !!lastItem && liveTurns.includes(lastItem.turn) && lastItem.stages.some((s) => !s.result);
-  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation;
+  const runningStage = lastItem && liveTurns.includes(lastItem.turn)
+    ? lastItem.stages.find((stage) => !stage.result)
+    : undefined;
+  const toolRunning = !!runningStage;
+  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation && !experimentApproval && !runApproval;
+
+  // Live run status for the composer bar: what the agent is doing right now.
+  const liveStepCount = liveTurns.filter(
+    (t) => t.role === 'assistant' && (t.tool_calls?.length ?? 0) > 0,
+  ).length;
+  const runPhase = run.confirmation || experimentApproval || runApproval
+    ? 'Waiting for approval'
+    : runStatusLine
+    ? runStatusLine
+    : streamingText !== ''
+    ? 'Writing reply'
+    : runningStage
+    ? describeStage(runningStage, true).label
+    : run.phase === 'validating' ? 'Checking structure' : 'Thinking';
+
+  // Composer model/effort identity. Effort options surface only after the
+  // host has confirmed reasoning-effort support for this provider+model.
+  const provider = settings.provider;
+  const modelId = settings.models[provider] ?? '';
+  const catalogEntry = catalogEntryForModel(provider, modelId);
+  const effortCapable = settings.providerCapabilities?.[provider]?.reasoningEffort === true;
+  const effortOptions = onSettingsChange && effortCapable
+    ? catalogEntry?.reasoningEfforts ?? []
+    : [];
+  const selectedEffort = settings.reasoningEfforts?.[provider] ?? '';
+  const chooseEffort = (effort: ReasoningEffort | '') => {
+    setEffortOpen(false);
+    onSettingsChange?.(withReasoningEffort(settings, provider, effort));
+  };
 
   // On the welcome screen, surface a shortcut to past chats (every panel open
   // starts a fresh conversation, so this is where users look for earlier ones).
@@ -397,6 +462,15 @@ export function ChatView({
         {busy ? run.phase === 'awaiting_confirmation' ? 'Waiting for your confirmation' : 'Assistant working' :
           run.summary ? `Run ${run.summary.status}` : ''}
       </span>
+      {active && <RunReattachBanner
+        api={api}
+        settings={settings}
+        onAskAgent={(text) => {
+          setInput(text);
+          textareaRef.current?.focus();
+        }}
+      />}
+
       {/* Live tokens are readable, but only run transitions are announced. */}
       <div
         className="gcp-messages"
@@ -441,7 +515,7 @@ export function ChatView({
 
         {items.map((item) => (
           <MessageBubble key={item.key} turn={item.turn} stages={item.stages}
-            active={busy && liveTurns.includes(item.turn)} />
+            step={item.step} active={busy && liveTurns.includes(item.turn)} />
         ))}
 
         {/* Text currently streaming for this round */}
@@ -476,9 +550,9 @@ export function ChatView({
           <div className="gcp-recovery">
             {run.canRetry ? (
               <button className="gcp-retry-btn" onClick={handleRetry} disabled={!ready} aria-label="Retry">Retry</button>
-            ) : run.summary?.mutationAttempted ? (
+            ) : run.summary && (run.summary.mutationAttempted || run.summary.sideEffectAttempted) ? (
               <>
-                <span>Changes already made are kept. Stop does not undo them.</span>
+                <span>Changes and dispatched executions are not replayed. Stop does not undo applied changes.</span>
                 <button className="gcp-retry-btn" onClick={handleContinue} disabled={!ready}>
                   Continue from current graph
                 </button>
@@ -507,6 +581,119 @@ export function ChatView({
           <div className="gcp-dropzone-inner">
             <PaperclipIcon />
             <span>Drop files to attach</span>
+          </div>
+        </div>
+      )}
+
+      {/* Click-outside catcher for the effort menu */}
+      {effortOpen && (
+        <button
+          className="gcp-menu-backdrop"
+          aria-label="Close menu"
+          onClick={() => setEffortOpen(false)}
+        />
+      )}
+
+      {experimentApproval && (
+        <div className="gcp-experiment-approval-backdrop">
+          <div
+            className="gcp-experiment-approval"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gcp-experiment-approval-title"
+          >
+            <div className="gcp-experiment-approval-kicker">Execution approval</div>
+            <div id="gcp-experiment-approval-title" className="gcp-experiment-approval-title">
+              Run {experimentApproval.executionCount} graph execution{experimentApproval.executionCount === 1 ? '' : 's'}?
+            </div>
+            <div className="gcp-experiment-approval-body" role="region" aria-label="Execution approval details" tabIndex={0}>
+              <div className="gcp-experiment-approval-hypothesis">
+                {experimentApproval.hypothesis}
+              </div>
+              <div className="gcp-experiment-approval-facts">
+                <span>{experimentApproval.variantCount} variants</span>
+                <span>{experimentApproval.repetitions} repetitions</span>
+                <span>concurrency {experimentApproval.concurrency}</span>
+                <span>per-run cap {experimentApproval.runTimeoutMinutes} min</span>
+                {experimentApproval.applyBest && <span>parameter winner may be applied</span>}
+              </div>
+              <div className="gcp-experiment-approval-warning">
+                Review the candidate settings below. Credential values are schema-redacted.
+              </div>
+              <div className="gcp-experiment-approval-candidates" aria-label="Candidate changes">
+                {experimentApproval.variants.map((variant, index) => (
+                  <div key={`${index}-${variant.label}`}>
+                    <strong>{variant.label}</strong>
+                    <span>{variant.operations.length > 0 ? variant.operations.join(' · ') : 'baseline — no changes'}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="gcp-experiment-approval-nodes">
+                <strong>Nodes that may execute</strong>
+                <span>{experimentApproval.nodeTypes.length > 0 ? experimentApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
+              </div>
+              <div className="gcp-experiment-approval-warning">
+                Candidate edits stay off-canvas, but nodes may write files, call networks, use GPU time, or incur API costs.
+              </div>
+            </div>
+            <div className="gcp-experiment-approval-actions">
+              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
+                <StopIcon />
+              </button>
+              <button className="gcp-approval-secondary" onClick={() => handleExperimentDecision(false)} autoFocus>
+                Cancel
+              </button>
+              <button className="gcp-approval-primary" onClick={() => handleExperimentDecision(true)}>
+                Approve and run
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {runApproval && (
+        <div className="gcp-experiment-approval-backdrop">
+          <div
+            className="gcp-experiment-approval"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gcp-run-approval-title"
+          >
+            <div className="gcp-experiment-approval-kicker">Execution approval</div>
+            <div id="gcp-run-approval-title" className="gcp-experiment-approval-title">
+              Run the current graph?
+            </div>
+            <div className="gcp-experiment-approval-body" role="region" aria-label="Execution approval details" tabIndex={0}>
+              <div className="gcp-experiment-approval-hypothesis">
+                {runApproval.reason}
+              </div>
+              <div className="gcp-experiment-approval-facts">
+                <span>{runApproval.nodeCount} node{runApproval.nodeCount === 1 ? '' : 's'}</span>
+                <span>{runApproval.edgeCount} edge{runApproval.edgeCount === 1 ? '' : 's'}</span>
+                <span>device {runApproval.device}</span>
+                <span>time cap {runApproval.timeoutMinutes} min</span>
+              </div>
+              <div className="gcp-experiment-approval-nodes">
+                <strong>Nodes that will execute</strong>
+                <span>{runApproval.nodeTypes.length > 0 ? runApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
+              </div>
+              <div className="gcp-experiment-approval-warning">
+                This executes your live graph with real side effects — file writes, network
+                calls, GPU time. Progress streams into this panel. Stop requests cancellation;
+                completed side effects are not undone.
+              </div>
+            </div>
+            <div className="gcp-experiment-approval-actions">
+              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
+                <StopIcon />
+              </button>
+              <button className="gcp-approval-secondary" onClick={() => handleRunDecision(false)} autoFocus>
+                Cancel
+              </button>
+              <button className="gcp-approval-primary" onClick={() => handleRunDecision(true)}>
+                Run graph
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -585,9 +772,11 @@ export function ChatView({
           />
 
           {busy ? (
-            <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
-              <StopIcon />
-            </button>
+            !experimentApproval && !runApproval && (
+              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
+                <StopIcon />
+              </button>
+            )
           ) : (
             <button
               className="gcp-send-btn"
@@ -601,13 +790,110 @@ export function ChatView({
           )}
         </div>
 
-        {/* Keyboard hint */}
-        <div className="gcp-input-hint" aria-hidden="true">
-          {busy
-            ? 'Stopping keeps changes already applied'
-            : anyLoading ? 'Wait for attachments to finish reading'
-            : anyFailed ? 'Remove unreadable attachments before sending'
-            : 'Enter to send · Shift+Enter for a new line'}
+        {/* Composer bar: model + effort identity on the left, live run
+            status (or the keyboard hint) on the right. */}
+        <div className="gcp-composer-bar">
+          <div className="gcp-composer-context">
+            {effortOptions.length > 0 ? (
+              <div
+                className="gcp-effort"
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setEffortOpen(false);
+                }}
+              >
+                <button
+                  className={`gcp-context-chip${effortOpen ? ' open' : ''}`}
+                  onClick={() => setEffortOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={effortOpen}
+                  aria-label="Model and reasoning effort"
+                  title="Adjust reasoning effort"
+                >
+                  <BoltIcon />
+                  <span className="gcp-context-chip-model">{modelId || 'model'}</span>
+                  <span className="gcp-context-chip-effort">
+                    {selectedEffort || catalogEntry?.defaultReasoningEffort || 'auto'}
+                  </span>
+                </button>
+                {effortOpen && (
+                  <div className="gcp-effort-menu" role="menu" aria-label="Reasoning effort">
+                    <div className="gcp-effort-menu-title">Reasoning effort</div>
+                    {effortOptions.map((option) => (
+                      <button
+                        key={option.effort}
+                        role="menuitemradio"
+                        aria-checked={selectedEffort === option.effort}
+                        className={`gcp-effort-item${selectedEffort === option.effort ? ' selected' : ''}`}
+                        onClick={() => chooseEffort(option.effort)}
+                      >
+                        <span className="gcp-effort-item-name">{option.effort}</span>
+                        {option.description && (
+                          <span className="gcp-effort-item-desc">{option.description}</span>
+                        )}
+                        <span className="gcp-effort-item-check" aria-hidden="true">
+                          {selectedEffort === option.effort && <CheckMiniIcon />}
+                        </span>
+                      </button>
+                    ))}
+                    <button
+                      role="menuitemradio"
+                      aria-checked={selectedEffort === ''}
+                      className={`gcp-effort-item${selectedEffort === '' ? ' selected' : ''}`}
+                      onClick={() => chooseEffort('')}
+                    >
+                      <span className="gcp-effort-item-name">
+                        model default
+                        {catalogEntry?.defaultReasoningEffort
+                          ? ` (${catalogEntry.defaultReasoningEffort})`
+                          : ''}
+                      </span>
+                      <span className="gcp-effort-item-check" aria-hidden="true">
+                        {selectedEffort === '' && <CheckMiniIcon />}
+                      </span>
+                    </button>
+                    <div className="gcp-effort-menu-divider" role="separator" />
+                    <button
+                      role="menuitem"
+                      className="gcp-effort-item"
+                      onClick={() => {
+                        setEffortOpen(false);
+                        onOpenSettings();
+                      }}
+                    >
+                      <span className="gcp-effort-item-name">Change model…</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                className="gcp-context-chip"
+                onClick={onOpenSettings}
+                aria-label="Model settings"
+                title={`Provider: ${provider} — open settings`}
+              >
+                <span className="gcp-context-chip-model">{modelId || 'set up model'}</span>
+              </button>
+            )}
+          </div>
+
+          {busy ? (
+            <div className="gcp-runbar" role="status" aria-label="Agent activity" aria-live="off">
+              <span className="gcp-runbar-pulse" aria-hidden="true" />
+              <span className="gcp-runbar-phase">{runPhase}…</span>
+              {runLossSeries.length >= 2 && <RunSparkline series={runLossSeries} />}
+              {liveStepCount > 0 && (
+                <span className="gcp-runbar-step">step {liveStepCount}</span>
+              )}
+              {elapsed >= 1 && <span className="gcp-runbar-time">{elapsed}s</span>}
+            </div>
+          ) : (
+            <div className="gcp-composer-hint" aria-hidden="true">
+              {anyLoading ? 'Wait for attachments to finish reading'
+                : anyFailed ? 'Remove unreadable attachments before sending'
+                : 'Enter ↵ send · Shift+Enter newline'}
+            </div>
+          )}
         </div>
 
         {/* Provider-not-ready overlay */}

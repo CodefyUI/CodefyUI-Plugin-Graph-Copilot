@@ -2,6 +2,7 @@ import './host.css';
 import type { CodefyUIPluginAPI } from '../src/types/codefyui';
 import { createSampleGraph } from './graph';
 import { createMockHttp } from './http';
+import { createMockExecution } from './execution';
 import { seededConversations } from './history';
 import { LIGHT_HOST_TOKENS } from './hostTokens';
 import { scenarioById, SCENARIOS } from './scenarios';
@@ -32,13 +33,14 @@ const byId = <T extends HTMLElement>(id: string): T => {
 };
 
 const graph = createSampleGraph(render);
-const http = createMockHttp(scenario, manual, graph.getGraph, render);
+const execution = createMockExecution(scenario.id === 'native-run', window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason));
+const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows);
 
 function snapshot(): PreviewSnapshot {
   const graphState = graph.inspect();
   return {
     ready, scenario: scenario.id, entry: bundle ? 'bundle' : 'source', manual,
-    ...graphState, ...http.inspect(),
+    ...graphState, ...http.inspect(), ...execution.inspect(),
     conversations: JSON.parse(memory.get('conversations') ?? '[]') as unknown[],
     widgets: [...widgets.keys()],
   };
@@ -55,7 +57,7 @@ function render(): void {
     source.textContent = ` ${node.id}`;
     const detail = document.createElement('div');
     const edges = state.graph.edges.filter((edge) => edge.source === node.id).map((edge) => `${edge.sourceHandle} → ${edge.target}.${edge.targetHandle}`);
-    detail.textContent = `${JSON.stringify(node.params)}${edges.length ? `; ${edges.join('; ')}` : ''}`;
+    detail.textContent = `${JSON.stringify(node.data.params)}${edges.length ? `; ${edges.join('; ')}` : ''}`;
     row.append(name, source, detail);
     return row;
   }));
@@ -66,6 +68,8 @@ function render(): void {
   }
   byId('operation-receipts').textContent = JSON.stringify(state.receipts, null, 2);
   byId<HTMLButtonElement>('release-response').disabled = state.pending.length === 0;
+  byId<HTMLButtonElement>('release-execution').disabled = state.executionPending === 0;
+  byId('execution-receipts').textContent = JSON.stringify(state.executions, null, 2);
   byId('network-state').textContent = `${state.requests.length} mock requests. ${state.pending.length} pending. ${state.requests.filter((request) => request.status === 'aborted').length} aborted. ${state.blocked.length} blocked.`;
   byId('fixture-state').textContent = ready ? 'Fixture ready.' : 'Loading plugin…';
 }
@@ -97,8 +101,9 @@ const api: CodefyUIPluginAPI = {
   },
 };
 
-// Hard fail unexpected direct fetch/XHR/WebSocket/EventSource calls too. The
-// only network outside this mock is Vite's already initialized local HMR client.
+// Hard fail unexpected direct fetch/XHR/EventSource calls too. WebSocket is
+// replaced with an in-memory mock, never forwarded. The only native network
+// outside this mock is Vite's already initialized local HMR client.
 const nativeFetch = window.fetch.bind(window);
 const allowedOrigin = window.location.origin;
 window.fetch = async (input, init) => {
@@ -115,11 +120,11 @@ XMLHttpRequest.prototype.open = function (_method: string, url: string | URL) {
   http.recordBlocked(reason);
   throw new Error(`Mock host blocked network: ${reason}`);
 };
-window.WebSocket = new Proxy(window.WebSocket, { construct() { http.recordBlocked('direct WebSocket'); throw new Error('Mock host blocked direct WebSocket'); } });
+window.WebSocket = execution.WebSocket;
 window.EventSource = new Proxy(window.EventSource, { construct() { http.recordBlocked('direct EventSource'); throw new Error('Mock host blocked direct EventSource'); } });
 window.addEventListener('securitypolicyviolation', (event) => { http.recordBlocked(`CSP ${event.violatedDirective}`); });
 
-window.__graphCopilotPreview = { snapshot, releaseNext: () => http.releaseNext() };
+window.__graphCopilotPreview = { snapshot, releaseNext: () => http.releaseNext(), releaseExecution: () => execution.releaseNext() };
 
 const select = byId<HTMLSelectElement>('scenario-select');
 select.replaceChildren(...SCENARIOS.map((candidate) => {
@@ -140,6 +145,7 @@ byId('scenario-form').addEventListener('submit', (event) => {
   window.location.search = next.toString();
 });
 byId('release-response').addEventListener('click', () => { http.releaseNext(); });
+byId('release-execution').addEventListener('click', () => { execution.releaseNext(); });
 render();
 
 // Import the real plugin boundary, not individual components or a look-alike.

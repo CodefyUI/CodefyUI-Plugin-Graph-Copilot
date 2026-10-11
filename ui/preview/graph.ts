@@ -4,7 +4,7 @@ import { SAMPLE_CATALOG } from './catalog';
 export interface SampleNode {
   id: string;
   type: string;
-  params: Record<string, unknown>;
+  data: { params: Record<string, unknown> };
   position: { x: number; y: number };
 }
 
@@ -29,9 +29,9 @@ export interface GraphReceipt {
 export function initialGraph(): SampleGraph {
   return {
     nodes: [
-      { id: 'sample-start', type: 'Start', params: {}, position: { x: 40, y: 80 } },
-      { id: 'sample-dataset', type: 'Dataset', params: { batch_size: 16 }, position: { x: 240, y: 80 } },
-      { id: 'sample-preview', type: 'Preview', params: {}, position: { x: 440, y: 80 } },
+      { id: 'sample-start', type: 'Start', data: { params: {} }, position: { x: 40, y: 80 } },
+      { id: 'sample-dataset', type: 'Dataset', data: { params: { batch_size: 16 } }, position: { x: 240, y: 80 } },
+      { id: 'sample-preview', type: 'Preview', data: { params: {} }, position: { x: 440, y: 80 } },
     ],
     edges: [
       { id: 'sample-edge-1', source: 'sample-start', sourceHandle: 'trigger', target: 'sample-dataset', targetHandle: 'trigger' },
@@ -67,7 +67,7 @@ export function validateSampleGraph(graph: SampleGraph): { valid: boolean; error
         errors.push(`${node.id}.${input.name} is missing a required connection`);
       }
     }
-    try { checkParams(node.type, node.params); } catch (error) { errors.push(String((error as Error).message)); }
+    try { checkParams(node.type, node.data.params); } catch (error) { errors.push(String((error as Error).message)); }
   }
   for (const edge of graph.edges) {
     const source = graph.nodes.find((node) => node.id === edge.source);
@@ -113,7 +113,7 @@ export function createSampleGraph(onChange: () => void) {
             };
             checkParams(definition.node_name, params);
             const id = `mock-node-${nextNode++}`;
-            graph.nodes.push({ id, type: definition.node_name, params, position: clone(operation.position ?? { x: 40, y: 200 }) });
+            graph.nodes.push({ id, type: definition.node_name, data: { params }, position: clone(operation.position ?? { x: 40, y: 200 }) });
             if (operation.ref) refs[operation.ref] = id;
             return { index, ok: true, node_id: id };
           }
@@ -131,7 +131,7 @@ export function createSampleGraph(onChange: () => void) {
           case 'set_params': {
             const node = find(operation.node_id);
             checkParams(node.type, operation.params);
-            node.params = { ...node.params, ...clone(operation.params) };
+            node.data.params = { ...node.data.params, ...clone(operation.params) };
             break;
           }
           case 'remove_node': {

@@ -25,16 +25,35 @@ export const test = base.extend<{ evidence: BrowserEvidence }>({
     expect(evidence.networkLeaks, 'No provider or real-host network is allowed').toEqual([]);
     expect(evidence.errors, 'No uncaught browser errors').toEqual([]);
     expect(evidence.console.filter((message) => message.type === 'error'), 'No browser console errors').toEqual([]);
+    if (await page.evaluate(() => Boolean(window.__graphCopilotPreview))) {
+      expect((await snapshot(page)).blocked, 'No unexpected mock-host route or direct-network attempt').toEqual([]);
+    }
   }, { auto: true }],
 });
 
 export { expect };
+
+export function chatRequests(state: PreviewSnapshot) {
+  return state.requests.filter((request) => request.url === '/api/llm/chat');
+}
+
+/** Known startup discovery is read-only. Do not let it hide graph validation,
+ * native auth/execute requests, or an accidental model dispatch. */
+export function actionRequests(state: PreviewSnapshot) {
+  return state.requests.filter((request) =>
+    request.url !== '/api/llm/models' && request.url !== '/api/llm/codex/status' && request.url !== '/api/runs?limit=1');
+}
 
 export async function snapshot(page: Page): Promise<PreviewSnapshot> {
   return page.evaluate(() => window.__graphCopilotPreview.snapshot());
 }
 
 export async function readyPreview(page: Page, query = ''): Promise<void> {
+  // A reload replaces the in-memory ledger, so assert its network boundary
+  // first rather than letting an earlier scenario's blocked attempt disappear.
+  if (await page.evaluate(() => Boolean(window.__graphCopilotPreview))) {
+    expect((await snapshot(page)).blocked, 'Previous scenario had no unexpected network attempts').toEqual([]);
+  }
   await page.goto(`/${query ? `?${query}` : ''}`);
   // A pending SSE scenario intentionally never reaches networkidle. The actual
   // ready control and mounted FAB are the synchronization boundary instead.
@@ -43,7 +62,7 @@ export async function readyPreview(page: Page, query = ''): Promise<void> {
 
 export async function openCopilot(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Graph Copilot', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Graph Copilot', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true })).toBeVisible();
 }
 
 export async function send(page: Page, text: string): Promise<void> {

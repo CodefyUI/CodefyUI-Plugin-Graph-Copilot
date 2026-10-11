@@ -887,7 +887,12 @@ describe('streamChat observer failures and cleanup', () => {
     const fixture = transport([doneFrame()]);
     const handlers = observers();
     const controller = new AbortController();
-    const request = { ...body, api_key: 'fixture-secret-do-not-log', base_url: 'https://fixture.invalid' };
+    const request: ChatBody = {
+      ...body,
+      api_key: 'fixture-secret-do-not-log',
+      base_url: 'https://fixture.invalid',
+      reasoning_effort: 'max',
+    };
     const logs = (['log', 'debug', 'info', 'warn', 'error'] as const).map((method) => vi.spyOn(console, method).mockImplementation(() => {}));
     await streamChat(fixture.api, request, handlers, controller.signal);
     expect(fixture.fetch).toHaveBeenCalledExactlyOnceWith('/api/llm/chat', {

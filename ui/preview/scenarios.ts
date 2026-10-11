@@ -1,7 +1,7 @@
 import type { GraphOp } from '../src/types/codefyui';
 import type { WireToolCall } from '../src/llm/client';
 
-export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed';
+export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history';
 
 export interface ChatReply {
   text: string;
@@ -98,6 +98,44 @@ export const SCENARIOS: Scenario[] = [
     id: 'seed', label: 'Saved history (legacy, success, interrupted)', mode: 'ask', validation: 'actual',
     prompt: 'Explain the sample graph without changing it.',
     replies: [{ text: 'The current sample graph connects Start to Dataset and Dataset to Preview. The saved conversation is context only; no previous operations were replayed.' }],
+  },
+  {
+    id: 'native-run', label: 'Native run approval and cancellation (simulated)', mode: 'edit', validation: 'actual',
+    prompt: 'Run my current sample graph on CPU after I approve.',
+    replies: [
+      { text: 'I’ll validate the current sample graph before proposing a run.', tools: [tool('mock-run-validate', 'validate_graph')] },
+      { text: 'I’ll run the current graph only after your approval.', tools: [tool('mock-run', 'run_graph', { reason: 'Execute the sample graph using the in-memory mock runner.', timeout_minutes: 1, device: 'cpu' })] },
+      { text: 'The simulated host reports a completed run. No real node execution, provider call, file write, or graph edit occurred.' },
+    ],
+  },
+  {
+    id: 'ask-run', label: 'Ask rejects a native run tool', mode: 'ask', validation: 'actual',
+    prompt: 'Explain the graph, but do not run or edit it.',
+    replies: [{ text: 'This scripted model attempts an unauthorized run so the real Ask guard can refuse it.', tools: [tool('mock-ask-run', 'run_graph', { reason: 'Must be refused in Ask mode.', device: 'cpu' })] }],
+  },
+  {
+    id: 'ask-experiments', label: 'Ask rejects an experiment tool', mode: 'ask', validation: 'actual',
+    prompt: 'Explain possible comparisons without executing a study.',
+    replies: [{ text: 'This scripted model attempts an unauthorized study so the real Ask guard can refuse it.', tools: [tool('mock-ask-experiment', 'run_graph_experiments', {
+      hypothesis: 'Must be refused in Ask mode.', objective: { metric: 'loss', direction: 'minimize' }, variants: [{ label: 'baseline', operations: [] }], repetitions: 1,
+    })] }],
+  },
+  {
+    id: 'ask-optimizer', label: 'Ask rejects an optimizer tool', mode: 'ask', validation: 'actual',
+    prompt: 'Explain batch size options without searching or changing the graph.',
+    replies: [{ text: 'This scripted model attempts an unauthorized optimizer so the real Ask guard can refuse it.', tools: [tool('mock-ask-optimizer', 'optimize_graph_parameters', {
+      version: 1, strategy: 'grid', hypothesis: 'Must be refused in Ask mode.', objective: { metric: 'loss', direction: 'minimize' },
+      bindings: [{ node_id: 'sample-dataset', param: 'batch_size', values: [8, 16] }], repetitions: 1,
+    })] }],
+  },
+  {
+    id: 'ask-run-history', label: 'Ask reads host run history without execution', mode: 'ask', validation: 'actual',
+    prompt: 'List the mock host’s previous run and report its exact loss.',
+    replies: [
+      { text: 'I’ll inspect the mock host’s run history without executing anything.', tools: [tool('mock-list-runs', 'list_runs', { limit: 5 })] },
+      { text: 'I’ll read the completed run and its recorded metrics.', tools: [tool('mock-get-run', 'get_run', { run_id: 'mock-history-run' })] },
+      { text: 'The mock host’s previous run is **completed**, with recorded `loss: 0.25`. Reading this receipt did not execute or edit the graph.' },
+    ],
   },
   {
     id: 'unavailable-validation', label: 'Validation unavailable', mode: 'edit', validation: 'unavailable',

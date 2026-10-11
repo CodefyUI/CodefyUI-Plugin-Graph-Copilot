@@ -52,7 +52,7 @@ describe('panel navigation owns running work', () => {
     const setupButton = screen.getByRole('button', { name: 'Open settings to configure a provider' });
     expect(setupButton).toHaveFocus();
     fireEvent.keyDown(setupButton, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Graph Copilot' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /Graph Copilot agent workbench/i })).toBeNull();
     expect(fab).toHaveFocus();
   });
 
@@ -68,7 +68,7 @@ describe('panel navigation owns running work', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Graph Copilot' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /Graph Copilot agent workbench/i })).toBeNull();
     expect(fab).toHaveFocus();
     fireEvent.click(fab);
     expect(input).toHaveValue('Keep this draft');
@@ -92,7 +92,7 @@ describe('panel navigation owns running work', () => {
     expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
   });
 
-  it.each(['Close panel', 'Settings', 'Active model — open settings', 'Graph Copilot'])('stops immediately when using %s', async (name) => {
+  it.each(['Close panel', 'Settings', 'Experiments lab', 'Active model — open settings', 'Graph Copilot'])('stops immediately when using %s', async (name) => {
     const control = controlled();
     const { input } = setup();
     fireEvent.change(input, { target: { value: 'Request' } });

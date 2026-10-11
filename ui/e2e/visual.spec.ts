@@ -16,7 +16,7 @@ for (const size of sizes) {
     test('welcome, validated edit, partial error and confirmation screenshots', async ({ page }, testInfo) => {
       await readyPreview(page, 'scenario=edit');
       await openCopilot(page);
-      const dialog = page.getByRole('dialog', { name: 'Graph Copilot', exact: true });
+      const dialog = page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
       await expect(page.getByRole('radio', { name: 'Edit', exact: true })).toBeChecked();
       await expect(page.getByRole('textbox', { name: 'Message input' })).toBeFocused();
       await capture(page, testInfo, `${size.name}-welcome`);

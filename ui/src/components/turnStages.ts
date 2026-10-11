@@ -13,11 +13,15 @@ export interface DisplayItem {
   key: number;
   turn: ChatTurn;
   stages: ToolStage[];
+  /** 1-based agent step number among tool-calling rounds, reset at each user
+   *  turn — labels each round of a multi-round run. Absent on plain replies. */
+  step?: number;
 }
 
 /** Fold receipts into the nearest matching call. Orphan receipts stay hidden. */
 export function groupTurns(turns: ChatTurn[]): DisplayItem[] {
   const items: DisplayItem[] = [];
+  let stepInRun = 0;
   turns.forEach((turn, i) => {
     if (turn.role === 'tool') {
       for (let j = items.length - 1; j >= 0; j--) {
@@ -31,13 +35,28 @@ export function groupTurns(turns: ChatTurn[]): DisplayItem[] {
       }
       return;
     }
+
+    if (turn.role === 'user') stepInRun = 0;
+    const stages = (turn.tool_calls ?? []).map((call): ToolStage => ({ call }));
     items.push({
       key: i,
       turn,
-      stages: (turn.tool_calls ?? []).map((call) => ({ call })),
+      stages,
+      ...(stages.length > 0 ? { step: ++stepInRun } : {}),
     });
   });
   return items;
+}
+
+/** Compact human duration for stage rows: "0.4s", "12s", "2m 05s". */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 10_000) return `${Math.max(ms / 1000, 0.1).toFixed(1)}s`;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 }
 
 export type StageStatus =
@@ -49,6 +68,49 @@ export interface StageDescription {
   summary: string;
   status: StageStatus;
   detail?: string;
+  /** Playable artifacts a run produced (#310) — rendered without expanding.
+   * Only same-origin references survive parsing, so a crafted tool result
+   * cannot point the panel at another host. */
+  media?: StageMedia[];
+}
+
+export interface StageMedia {
+  kind: 'video';
+  /** Same-origin URL under /api/media, host-served with a real mime. */
+  url: string;
+  format: string;
+  node?: string;
+}
+
+/** Only host media endpoints may be embedded; a leading slash alone is unsafe. */
+function isMediaUrl(url: string): boolean {
+  if (!url.startsWith('/api/media/') || url.length > 2048 || /[\\\u0000- \u007f]/.test(url)) return false;
+  try {
+    const parsed = new URL(url, 'https://codefyui.invalid');
+    const path = decodeURIComponent(parsed.pathname);
+    return parsed.origin === 'https://codefyui.invalid' && path.startsWith('/api/media/')
+      && !path.includes('\\') && !path.split('/').some((part) => part === '.' || part === '..');
+  } catch { return false; }
+}
+
+/** Extract bounded renderable, same-origin media references from a run result. */
+function stageMedia(parsed: Record<string, unknown>): StageMedia[] {
+  const raw = Array.isArray(parsed.media) ? parsed.media : [];
+  const items: StageMedia[] = [];
+  for (const entry of raw) {
+    const item = asRecord(entry);
+    if (!item) continue;
+    const url = typeof item.url === 'string' ? item.url : '';
+    if (item.kind !== 'video' || !isMediaUrl(url)) continue;
+    items.push({
+      kind: 'video',
+      url,
+      format: typeof item.format === 'string' ? item.format : 'mp4',
+      ...(typeof item.node === 'string' && item.node ? { node: truncate(item.node, 160) } : {}),
+    });
+    if (items.length >= 24) break;
+  }
+  return items;
 }
 
 const LABELS: Record<string, string> = {
@@ -57,6 +119,11 @@ const LABELS: Record<string, string> = {
   get_node_schemas: 'Node schemas',
   validate_graph: 'Validate graph',
   research: 'Research',
+  run_graph: 'Run graph',
+  run_graph_experiments: 'Experiment study',
+  optimize_graph_parameters: 'Parameter search',
+  list_runs: 'Reading run history',
+  get_run: 'Reading run details',
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -186,6 +253,137 @@ function describeResearch(args: Record<string, unknown>, result?: ChatTurn): Sta
   return result.content.trim() ? { label, summary, status: 'ok', detail } : unknownResult(label, detail);
 }
 
+function describeExperiment(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.run_graph_experiments;
+  const variants = Array.isArray(args.variants) ? args.variants.length : 0;
+  const repetitions = typeof args.repetitions === 'number' ? args.repetitions : 1;
+  const planned = variants > 0 ? `${variants} candidates · ${variants * repetitions} runs` : 'preparing study';
+  if (!result) return { label, summary: planned, status: 'running' };
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.error === 'string') {
+    return {
+      label,
+      summary: typeof parsed?.error === 'string' ? truncate(parsed.error, 120) : 'study failed',
+      status: 'error',
+      detail: prettyDetail(result.content),
+    };
+  }
+  const winner = typeof parsed.winnerLabel === 'string' ? parsed.winnerLabel : null;
+  const applied = typeof parsed.appliedVariantId === 'string';
+  return {
+    label,
+    summary: winner ? `${winner} ranked first${applied ? ' · applied' : ''}` : 'no rankable metric',
+    status: winner ? 'ok' : 'error',
+    detail: prettyDetail(result.content),
+  };
+}
+
+function describeOptimizer(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.optimize_graph_parameters;
+  const bindings = Array.isArray(args.bindings) ? args.bindings.length : 0;
+  const strategy = args.strategy === 'seeded_random' ? 'seeded random' : 'grid';
+  const repetitions = typeof args.repetitions === 'number' ? args.repetitions : 1;
+  const candidateCount = args.strategy === 'seeded_random' && typeof args.candidate_count === 'number'
+    ? args.candidate_count + (args.include_baseline === false ? 0 : 1)
+    : undefined;
+  const planned = candidateCount
+    ? `${strategy} · ${bindings} params · ${candidateCount * repetitions} runs`
+    : `${strategy} · ${bindings} ${bindings === 1 ? 'parameter' : 'parameters'}`;
+  if (!result) return { label, summary: planned, status: 'running' };
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.error === 'string') {
+    return {
+      label,
+      summary: typeof parsed?.error === 'string' ? truncate(parsed.error, 120) : 'search failed',
+      status: 'error',
+      detail: prettyDetail(result.content),
+    };
+  }
+  const winner = typeof parsed.winnerLabel === 'string' ? parsed.winnerLabel : null;
+  const applied = typeof parsed.appliedVariantId === 'string';
+  return {
+    label,
+    summary: winner ? `${winner} ranked first${applied ? ' · applied' : ''}` : 'no rankable metric',
+    status: winner ? 'ok' : 'error',
+    detail: prettyDetail(result.content),
+  };
+}
+
+function describeRunGraph(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.run_graph;
+  const reason = typeof args.reason === 'string' ? truncate(args.reason, 90) : '';
+  if (!result) return { label, summary: reason || 'executing…', status: 'running' };
+  const detail = prettyDetail(result.content);
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.status !== 'string') return unknownResult(label, detail, 'Run outcome unknown');
+  const runStatus = parsed.status;
+  let status: StageStatus;
+  switch (runStatus) {
+    case 'complete': status = 'ok'; break;
+    case 'cancelled':
+    case 'stopped': status = 'cancelled'; break;
+    case 'not_executed': status = 'not_executed'; break;
+    case 'error':
+    case 'timeout': status = 'error'; break;
+    default: return unknownResult(label, detail, `Run outcome unknown — ${truncate(runStatus, 90)}`);
+  }
+  const parts: string[] = [status === 'cancelled' ? 'Stopped' : status === 'not_executed' ? 'Not executed' : runStatus];
+  const completed = parsed.completedNodes;
+  const total = parsed.totalNodes;
+  if (typeof completed === 'number' && Number.isInteger(completed) && completed >= 0
+    && typeof total === 'number' && Number.isInteger(total) && total >= completed) {
+    parts.push(`${completed}/${total} nodes`);
+  }
+  if (typeof parsed.duration_s === 'number' && Number.isFinite(parsed.duration_s) && parsed.duration_s >= 0) {
+    parts.push(formatDuration(parsed.duration_s * 1000));
+  }
+  const media = stageMedia(parsed);
+  if (media.length) parts.push(`${media.length} clip${media.length > 1 ? 's' : ''}`);
+  return { label, summary: parts.join(' · '), status, detail, ...(media.length ? { media } : {}) };
+}
+
+function describeListRuns(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.list_runs;
+  const summary = args.active_only === true ? 'active runs' : 'recent runs';
+  if (!result) return { label, summary, status: 'running' };
+
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.error === 'string') {
+    return {
+      label,
+      summary: typeof parsed?.error === 'string' ? truncate(parsed.error, 120) : 'could not list runs',
+      status: 'error',
+      detail: prettyDetail(result.content),
+    };
+  }
+
+  if (!Array.isArray(parsed.runs)) return unknownResult(label, prettyDetail(result.content), 'Run history outcome unknown');
+  return { label, summary: plural(parsed.runs.length, 'run'), status: 'ok', detail: prettyDetail(result.content) };
+}
+
+function describeGetRun(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
+  const label = LABELS.get_run;
+  const runId = typeof args.run_id === 'string' ? args.run_id : '';
+  if (!result) return { label, summary: runId || 'run', status: 'running' };
+
+  const parsed = parseJson(result.content);
+  if (!parsed || typeof parsed.error === 'string') {
+    return {
+      label,
+      summary: typeof parsed?.error === 'string' ? truncate(parsed.error, 120) : 'could not fetch run',
+      status: 'error',
+      detail: prettyDetail(result.content),
+    };
+  }
+
+  const run = asRecord(parsed.run);
+  if (!run || typeof run.status !== 'string' || !run.status.trim()) {
+    return unknownResult(label, prettyDetail(result.content), 'Run details outcome unknown');
+  }
+  // A successfully fetched failed run is a read receipt, not a new execution.
+  return { label, summary: truncate(run.status, 120), status: 'ok', detail: prettyDetail(result.content) };
+}
+
 /** Local terminal metadata takes precedence over the tool payload's appearance. */
 export function describeStage(stage: ToolStage, active = false): StageDescription {
   const { call, result } = stage;
@@ -209,6 +407,11 @@ export function describeStage(stage: ToolStage, active = false): StageDescriptio
     case 'get_current_graph': return describeReadGraph(result);
     case 'get_node_schemas': return describeSchemas(args, result);
     case 'research': return describeResearch(args, result);
+    case 'run_graph': return describeRunGraph(args, result);
+    case 'run_graph_experiments': return describeExperiment(args, result);
+    case 'optimize_graph_parameters': return describeOptimizer(args, result);
+    case 'list_runs': return describeListRuns(args, result);
+    case 'get_run': return describeGetRun(args, result);
     default:
       if (!result) return { label, summary: 'running…', status: 'running' };
       return result.content.trim()

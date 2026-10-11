@@ -26,7 +26,9 @@ describe('activate (plugin entry)', () => {
     document.body.appendChild(el);
     const api = makeFakeApi(el);
 
-    act(() => activate(api));
+    await act(async () => {
+      activate(api);
+    });
 
     expect(api.ui.addFloatingWidget).toHaveBeenCalledWith({ id: 'copilot' });
     await waitFor(() => {

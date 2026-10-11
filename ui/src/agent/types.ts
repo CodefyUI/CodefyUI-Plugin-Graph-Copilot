@@ -19,6 +19,12 @@ export interface RunSummary {
   message?: string;
   mutation: 'none' | 'applied' | 'unknown';
   mutationAttempted: boolean;
+  /** Conservatively true before live/study runner dispatch, including external
+   * execution and study persistence. Blocks automatic Retry independently of
+   * whether the canvas changed. */
+  sideEffectAttempted?: boolean;
+  /** Host execution identity for history/reattach; separate from this turn id. */
+  hostRunId?: string;
   appliedOps: number;
   failedOps: number;
   validation: ValidationReport;

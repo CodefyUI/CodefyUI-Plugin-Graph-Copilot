@@ -283,7 +283,7 @@ describe('clear confirmation boundary', () => {
     expect(streamChat).toHaveBeenCalledTimes(1);
   });
   it('graph differences beyond the prompt truncation invalidate approval', async () => {
-    const t = setup(); t.graph().nodes[0].data = 'x'.repeat(40_000); t.graph().presets = [{ late: false }];
+    const t = setup(); t.graph().nodes[0].data = 'x'.repeat(40_000) as unknown as NonNullable<SerializedGraph['nodes'][number]['data']>; t.graph().presets = [{ late: false }];
     t.script([done([clear])]);
     const result = await t.run({ confirmClearGraph: async () => { (t.graph().presets![0] as any).late = true; return true; } });
     expect(result).toMatchObject({ status: 'incomplete', mutationAttempted: false });

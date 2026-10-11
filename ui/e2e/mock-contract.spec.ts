@@ -1,6 +1,6 @@
-import { test, expect, readyPreview, snapshot } from './fixtures';
+import { test, expect, readyPreview, snapshot, actionRequests } from './fixtures';
 
-test('strict mock rejects unexpected/provider URLs and serves only the four approved routes', async ({ page }) => {
+test('strict mock rejects unexpected/provider URLs and serves only explicitly approved host routes', async ({ page }) => {
   await readyPreview(page);
   const result = await page.evaluate(async () => {
     const httpPath = '/http.ts';
@@ -11,7 +11,7 @@ test('strict mock rejects unexpected/provider URLs and serves only the four appr
     const { scenarioById } = await import(/* @vite-ignore */ scenariosPath) as typeof import('../preview/scenarios');
     const host = createMockHttp(scenarioById('ask'), false, initialGraph, () => {});
     const failures: string[] = [];
-    for (const url of ['https://api.openai.com/v1/chat/completions', '/api/llm/codex/login', '/api/graph/validate?unexpected=1']) {
+    for (const url of ['https://api.openai.com/v1/chat/completions', '/api/llm/codex/login', '/api/graph/validate?unexpected=1', '/api/runs?limit=51', '/api/runs?limit=1&unexpected=1', '/api/runs/real-run-id', '/api/runs/mock-history-run/cancel', '/api/auth/bootstrap', '/api/system/devices?unexpected=1']) {
       try { await host.fetch(url); } catch (error) { failures.push((error as Error).message); }
     }
     const models = await host.fetch('/api/llm/models', { method: 'POST', body: JSON.stringify({ provider: 'openai', api_key: 'mock-key' }) });
@@ -19,14 +19,14 @@ test('strict mock rejects unexpected/provider URLs and serves only the four appr
     const validate = await host.fetch('/api/graph/validate', { method: 'POST', body: JSON.stringify(initialGraph()) });
     return { failures, blocked: host.inspect().blocked, models: await models.json(), status: await status.json(), validation: await validate.json() };
   });
-  expect(result.failures).toHaveLength(3);
+  expect(result.failures).toHaveLength(9);
   expect(result.failures.every((message) => message.includes('Mock host blocked network'))).toBe(true);
-  expect(result.blocked).toHaveLength(3);
+  expect(result.blocked).toHaveLength(9);
   expect(result.models.models.map((model: { id: string }) => model.id)).toEqual(['mock-graph-model', 'mock-small-model']);
   expect(result.status).toEqual({ status: 'logged_out' });
   expect(result.validation).toEqual({ valid: true, errors: [] });
   // Isolated contract probes do not leak into the active plugin fixture.
-  expect((await snapshot(page)).requests).toEqual([]);
+  expect(actionRequests(await snapshot(page))).toEqual([]);
   expect((await snapshot(page)).blocked).toEqual([]);
 });
 

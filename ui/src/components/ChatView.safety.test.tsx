@@ -115,6 +115,25 @@ describe('ChatView safe input and recovery', () => {
     expect(input).toHaveFocus();
   });
 
+  it('offers continuation instead of replay after an attempted graph execution', async () => {
+    const capture = pendingRun();
+    const { input, latest } = setup();
+    fireEvent.change(input, { target: { value: 'Run the training graph' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    act(() => {
+      capture().callbacks.onTurnsCommitted([{ role: 'assistant', content: 'The host run was interrupted.' }]);
+      capture().callbacks.onFinished({ id: 'execution', mode: 'edit', status: 'failed', mutation: 'none',
+        mutationAttempted: false, sideEffectAttempted: true, hostRunId: 'host-execution',
+        appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] } });
+    });
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue from current graph' }));
+    await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(runTurn).mock.calls[1][0].userText).toContain('do not replay operations or executions already dispatched');
+    expect(latest().messages.filter((turn) => turn.role === 'user')).toHaveLength(2);
+    expect(latest().messages.filter((turn) => turn.content === 'Run the training graph')).toHaveLength(1);
+  });
+
   it('retries a failed read-only attempt without duplicating the original user turn', async () => {
     const capture = pendingRun();
     const { input, latest } = setup();

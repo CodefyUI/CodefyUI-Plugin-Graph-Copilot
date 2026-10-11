@@ -1,5 +1,5 @@
 import type { PreviewSnapshot } from '../preview/types';
-import { test, expect, readyPreview, openCopilot, send, snapshot, releaseResponse } from './fixtures';
+import { test, expect, readyPreview, openCopilot, send, snapshot, releaseResponse, chatRequests, actionRequests } from './fixtures';
 
 const requestCount = (state: PreviewSnapshot) => state.requests.filter((request) => request.url === '/api/llm/chat').length;
 
@@ -10,7 +10,7 @@ for (const navigation of ['Close panel', 'Settings', 'Conversation history'] as 
     await send(page, 'Inspect this graph while I test Stop.');
     await expect.poll(async () => (await snapshot(page)).pending[0]?.kind).toBe('stream');
     await page.getByRole('button', { name: navigation, exact: true }).click();
-    await expect.poll(async () => (await snapshot(page)).requests[0].status).toBe('aborted');
+    await expect.poll(async () => chatRequests(await snapshot(page))[0]?.status).toBe('aborted');
     expect((await snapshot(page)).receipts).toEqual([]);
     if (navigation === 'Close panel') await openCopilot(page);
     else await page.getByRole('button', { name: navigation, exact: true }).click();
@@ -47,7 +47,7 @@ test('failed attachments block Send until removed, and multi-line keyboard input
   await composer.fill('Explain the sample graph.');
   await composer.press('Shift+Enter');
   await expect(composer).toHaveValue('Explain the sample graph.\n');
-  expect((await snapshot(page)).requests).toEqual([]);
+  expect(actionRequests(await snapshot(page))).toEqual([]);
   // Exceeding the text-file bound fails intake deterministically; no PDF/CDN.
   // The browser file input is intentionally hidden and has no accessible role.
   await page.locator('input[type="file"]').setInputFiles({ name: 'too-large.txt', mimeType: 'text/plain', buffer: Buffer.alloc(2 * 1024 * 1024 + 1) });
@@ -55,5 +55,5 @@ test('failed attachments block Send until removed, and multi-line keyboard input
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Remove too-large.txt', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
-  expect((await snapshot(page)).requests).toEqual([]);
+  expect(actionRequests(await snapshot(page))).toEqual([]);
 });

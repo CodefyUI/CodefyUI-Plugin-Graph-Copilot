@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { runTurn } from '../agent/loop';
+import { runTurn, type ExperimentApprovalRequest, type RunApprovalRequest } from '../agent/loop';
+import { formatRunStatusLine } from '../agent/runGraph';
+import { appendLossPoint } from './RunSparkline';
+import { notifyRunFinished } from './notify';
 import type { AgentMode, ClearGraphRequest, RunPhase, RunSummary } from '../agent/types';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
-import type { Settings } from '../state/settings';
+import { activeReasoningEffort, type Settings } from '../state/settings';
 import type { Attachment } from '../state/attachments';
 import type { ChatTurn, Conversation } from '../state/conversations';
 import { saveConversation, titleFrom } from '../state/conversations';
@@ -21,6 +24,8 @@ interface ActiveRun {
   conversation: Conversation;
   committed: boolean;
   mutationPossible: boolean;
+  sideEffectPossible: boolean;
+  hostRunId?: string;
   settled: boolean;
 }
 
@@ -49,6 +54,10 @@ export function useAgentRun(options: Options) {
   const [summary, setSummary] = useState<RunSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ClearGraphRequest | null>(null);
+  const [experimentApproval, setExperimentApproval] = useState<ExperimentApprovalRequest | null>(null);
+  const [runApproval, setRunApproval] = useState<RunApprovalRequest | null>(null);
+  const [runStatusLine, setRunStatusLine] = useState<string | null>(null);
+  const [runLossSeries, setRunLossSeries] = useState<number[]>([]);
 
   const stop = useCallback(() => {
     runRef.current?.abort.abort();
@@ -72,6 +81,11 @@ export function useAgentRun(options: Options) {
     setSummary(null);
     setStreamingText('');
     setLiveTurns([]);
+    setConfirmation(null);
+    setExperimentApproval(null);
+    setRunApproval(null);
+    setRunStatusLine(null);
+    setRunLossSeries([]);
   }, [options.conversation.id, stop]);
 
   const decide = useCallback((approve: boolean) => pendingDecision.current?.(approve), []);
@@ -98,8 +112,11 @@ export function useAgentRun(options: Options) {
       messages: retry ? current.conversation.messages : [...current.conversation.messages, userTurn],
       updatedAt: Date.now(),
     };
+    const reasoningEffort = activeReasoningEffort(current.settings);
+    if (reasoningEffort) conversation.reasoningEffort = reasoningEffort;
+    else delete conversation.reasoningEffort;
     const run: ActiveRun = {
-      id, abort: new AbortController(), conversation, committed: false, mutationPossible: false, settled: false,
+      id, abort: new AbortController(), conversation, committed: false, mutationPossible: false, sideEffectPossible: false, settled: false,
     };
     // Synchronous latch: two submissions in one event cannot create two runs.
     runRef.current = run;
@@ -112,6 +129,8 @@ export function useAgentRun(options: Options) {
     setPhase('thinking');
     setStreamingText('');
     setLiveTurns([]);
+    setRunStatusLine(null);
+    setRunLossSeries([]);
 
     const isCurrent = () => mounted.current && latest.current.conversation.id === request.conversationId && generation.current === id;
     const publish = (value: Conversation) => {
@@ -135,10 +154,40 @@ export function useAgentRun(options: Options) {
         if (mounted.current) {
           setBusy(false);
           setConfirmation(null);
+          setExperimentApproval(null);
+          setRunApproval(null);
+          setRunStatusLine(null);
+          setRunLossSeries([]);
           latest.current.onBusyChange?.(false);
         }
       }
     };
+
+    const requestDecision = (show: () => void, signal?: AbortSignal) => new Promise<boolean>((resolve) => {
+      const signals = [...new Set([run.abort.signal, ...(signal ? [signal] : [])])];
+      if (!isCurrent() || run.settled || !latest.current.active || signals.some((value) => value.aborted)) {
+        resolve(false);
+        return;
+      }
+      pendingDecision.current?.(false);
+      const settle = (approved: boolean) => {
+        signals.forEach((value) => value.removeEventListener('abort', cancel));
+        if (pendingDecision.current !== settle) return;
+        pendingDecision.current = null;
+        if (isCurrent()) {
+          setConfirmation(null);
+          setExperimentApproval(null);
+          setRunApproval(null);
+        }
+        resolve(approved && isCurrent() && latest.current.active && !signals.some((value) => value.aborted));
+      };
+      const cancel = () => settle(false);
+      pendingDecision.current = settle;
+      signals.forEach((value) => value.addEventListener('abort', cancel, { once: true }));
+      setPhase('awaiting_confirmation');
+      show();
+    });
+    const notifiedRuns = new Set<string>();
 
     try {
       publish(conversation);
@@ -146,35 +195,49 @@ export function useAgentRun(options: Options) {
         api: current.api, settings: current.settings, history: request.history,
         userText: request.text, attachments: request.attachments.length ? request.attachments : undefined,
         runId: id, mode: request.mode, signal: run.abort.signal,
-        confirmClearGraph: (value, signal) => new Promise<boolean>((resolve) => {
-          if (!isCurrent() || run.settled || !latest.current.active || signal?.aborted) { resolve(false); return; }
-          const settle = (approved: boolean) => {
-            signal?.removeEventListener('abort', cancel);
-            if (pendingDecision.current !== settle) return;
-            pendingDecision.current = null;
-            if (isCurrent()) setConfirmation(null);
-            resolve(approved && isCurrent() && latest.current.active && !signal?.aborted);
-          };
-          const cancel = () => settle(false);
-          pendingDecision.current = settle;
-          signal?.addEventListener('abort', cancel, { once: true });
-          setConfirmation(value);
-        }),
+        confirmClearGraph: (value, signal) => requestDecision(() => setConfirmation(value), signal),
         callbacks: {
           onTextDelta: (text) => {
             if (isCurrent() && !run.settled && !run.abort.signal.aborted) setStreamingText((value) => value + text);
           },
           onTurnAppended: (turn) => {
+            if (run.settled) return;
             if (turn.tool_calls?.some((call) => call.name === 'apply_graph_operations')) run.mutationPossible = true;
-            if (!isCurrent() || run.settled) return;
+            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters'].includes(call.name))) {
+              run.sideEffectPossible = true;
+            }
+            if (!isCurrent()) return;
             if (turn.role !== 'tool') setStreamingText('');
+            else { setRunStatusLine(null); setRunLossSeries([]); }
             setLiveTurns((turns) => [...turns, turn]);
           },
           onPhase: (value) => { if (isCurrent() && !run.settled) setPhase(value); },
           onOpsApplied: () => { run.mutationPossible = true; },
+          onExperimentApproval: (request, signal) => requestDecision(() => setExperimentApproval(request), signal),
+          onRunApproval: (request, signal) => requestDecision(() => setRunApproval(request), signal),
+          onRunStarted: (hostRunId) => {
+            if (run.settled) return;
+            run.hostRunId = hostRunId;
+            run.sideEffectPossible = true;
+          },
+          onRunProgress: (update) => {
+            if (!isCurrent() || run.settled || run.abort.signal.aborted) return;
+            setRunStatusLine(formatRunStatusLine(update));
+            setRunLossSeries((previous) => update.phase === 'connecting' ? [] : appendLossPoint(previous, update));
+          },
+          onRunFinished: (outcome) => {
+            if (!isCurrent() || run.settled || (outcome.runId && notifiedRuns.has(outcome.runId))) return;
+            if (outcome.runId) notifiedRuns.add(outcome.runId);
+            const detail = [
+              ...Object.entries(outcome.metrics).slice(0, 2)
+                .map(([name, value]) => `${name} ${Number.isInteger(value) ? value : value.toFixed(4)}`),
+              `${Math.max(1, Math.round(outcome.durationMs / 60_000))} min`,
+            ].join(' · ');
+            notifyRunFinished(current.settings, { runId: outcome.runId, status: outcome.status, detail });
+          },
           onTurnsCommitted: (turns) => { if (!run.settled) commit(turns); },
           onError: (message) => { if (isCurrent() && !run.settled) setError(message); },
-          onFinished: finish,
+          onFinished: (value) => { if (!run.settled) finish(value); },
         },
       });
       // The returned journal also recovers from an observer that failed to commit.
@@ -185,7 +248,8 @@ export function useAgentRun(options: Options) {
       const fallback: RunSummary = {
         id, mode: request.mode, status: run.abort.signal.aborted ? 'cancelled' : 'failed', message,
         reason: 'unexpected_error', mutation: run.mutationPossible ? 'unknown' : 'none',
-        mutationAttempted: run.mutationPossible, appliedOps: 0, failedOps: 0,
+        mutationAttempted: run.mutationPossible, sideEffectAttempted: run.sideEffectPossible, hostRunId: run.hostRunId,
+        appliedOps: 0, failedOps: 0,
         validation: { status: 'not_run', errors: [] },
       };
       if (isCurrent()) setError(message);
@@ -196,10 +260,12 @@ export function useAgentRun(options: Options) {
   }, []);
 
   const canRetry = !busy && !!lastRequest.current && !!(error || (summary && summary.status !== 'completed')) &&
-    !summary?.mutationAttempted && summary?.reason !== 'confirmation_declined' && summary?.reason !== 'confirmation_denied';
+    !summary?.mutationAttempted && !summary?.sideEffectAttempted &&
+    summary?.reason !== 'confirmation_declined' && summary?.reason !== 'confirmation_denied';
 
   return {
     busy, streamingText, liveTurns, phase, summary, error, confirmation,
+    experimentApproval, runApproval, runStatusLine, runLossSeries,
     start, stop, decide, canRetry,
     retry: () => {
       const request = lastRequest.current;

@@ -154,6 +154,12 @@ describe('newConversation', () => {
     expect(conv.model).toBe('gpt-4o');
     expect(conv.messages).toEqual([]);
   });
+
+  it('records an optional reasoning effort', () => {
+    const conv = newConversation('openai-codex', 'gpt-5.6-sol', 'low');
+
+    expect(conv.reasoningEffort).toBe('low');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@
     </header>
     <main class="mock-workspace">
       <h1>Sample graph</h1>
-      <p class="mock-description">A small source list for inspecting the real plugin’s edits. This fixture does not execute the graph.</p>
+      <p class="mock-description">A small source list for inspecting the real plugin’s edits. Graph runs are simulated in memory; no nodes actually execute.</p>
       <p id="graph-counts" class="mock-counts" aria-label="Graph counts" aria-live="polite">Loading graph…</p>
       <ul id="source-list" class="mock-sources" aria-label="Graph sources"></ul>
       <details class="mock-controls">
@@ -30,8 +30,10 @@
         <p id="suggested-prompt"></p>
         <p class="mock-description">Settings start with an editable fake key and mock model; all provider choices stay mocked. Use the plugin’s composer to send the scenario prompt.</p>
         <button id="release-response" type="button" disabled>Release next response</button>
+        <button id="release-execution" type="button" disabled>Release next simulated run event</button>
         <p id="network-state" role="status" aria-label="Mock network">No mock requests yet.</p>
         <details><summary>Applied operation receipts</summary><pre id="operation-receipts">[]</pre></details>
+        <details><summary>Simulated execution receipts</summary><pre id="execution-receipts">[]</pre></details>
       </details>
       <p id="fixture-state" role="status" aria-label="Fixture status">Loading plugin…</p>
     </main>

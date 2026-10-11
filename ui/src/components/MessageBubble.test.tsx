@@ -173,6 +173,65 @@ describe('MessageBubble tool stages', () => {
     expect(container.querySelector('.gcp-stage')!.className).toContain('error');
   });
 
+  it('rejects protocol-relative media and honors local execution outcomes before rendering clips', () => {
+    const call = { id: 'run', name: 'run_graph', arguments: {} };
+    const content = JSON.stringify({ status: 'complete', media: [
+      { kind: 'video', url: '//evil.example/clip.mp4' },
+      { kind: 'video', url: '/api/media/valid.mp4' },
+    ] });
+    const { container, rerender } = render(<MessageBubble turn={{ role: 'assistant', content: '' }}
+      stages={[{ call, result: { role: 'tool', content, toolOutcome: 'unknown' } }]} active step={1} />);
+    expect(container.querySelector('.gcp-stage-clip')).toBeNull();
+    expect(container.querySelector('.gcp-stage-spinner')).toBeNull();
+    rerender(<MessageBubble turn={{ role: 'assistant', content: '' }}
+      stages={[{ call, result: { role: 'tool', content, toolOutcome: 'completed' } }]} step={1} />);
+    expect(container.querySelectorAll('.gcp-stage-clip')).toHaveLength(1);
+    expect(container.querySelector('.gcp-stage-clip')).toHaveAttribute('src', '/api/media/valid.mp4');
+    expect(screen.getByText('Step 1')).toBeInTheDocument();
+  });
+
+  it('plays run-produced clips inline without expanding (#310)', () => {
+    const call = { id: 'tc-run', name: 'run_graph', arguments: { reason: 'r' } };
+    const stage = {
+      call,
+      result: {
+        role: 'tool' as const,
+        tool_call_id: 'tc-run',
+        content: JSON.stringify({
+          status: 'complete', completedNodes: 3, totalNodes: 3, duration_s: 40,
+          media: [
+            { node: 'VideoWrite', kind: 'video', format: 'mp4', url: '/api/media/rollout.mp4' },
+            { node: 'Evil', kind: 'video', format: 'mp4', url: 'https://evil.example/x.mp4' },
+          ],
+        }),
+      },
+    };
+    const { container } = render(
+      <MessageBubble turn={{ role: 'assistant', content: '', tool_calls: [call] }} stages={[stage]} />,
+    );
+    const clips = container.querySelectorAll('.gcp-stage-clip');
+    expect(clips).toHaveLength(1);
+    expect(clips[0].tagName).toBe('VIDEO');
+    expect(clips[0].getAttribute('src')).toBe('/api/media/rollout.mp4');
+    // a gif reference renders as an animated <img>, not a <video>
+    const gifStage = {
+      call: { id: 'tc-g', name: 'run_graph', arguments: {} },
+      result: {
+        role: 'tool' as const,
+        tool_call_id: 'tc-g',
+        content: JSON.stringify({
+          status: 'complete',
+          media: [{ kind: 'video', format: 'gif', url: '/api/media/demo.gif' }],
+        }),
+      },
+    };
+    const second = render(
+      <MessageBubble turn={{ role: 'assistant', content: '', tool_calls: [gifStage.call] }} stages={[gifStage]} />,
+    );
+    const gif = second.container.querySelector('.gcp-stage-clip');
+    expect(gif!.tagName).toBe('IMG');
+  });
+
   it('expands and collapses stage details on click', async () => {
     const stage = applyStage({
       result: {
@@ -200,6 +259,50 @@ describe('MessageBubble tool stages', () => {
       />,
     );
     expect(screen.queryByText(/legacy-chip-text/)).toBeNull();
+  });
+
+  it('labels a tool-calling round with its step number', () => {
+    const stage = applyStage();
+    const { container } = render(
+      <MessageBubble
+        turn={{ role: 'assistant', content: 'wiring', tool_calls: [stage.call] }}
+        stages={[stage]}
+        step={2}
+      />,
+    );
+    expect(container.querySelector('.gcp-step-tag')!.textContent).toContain('Step 2');
+  });
+
+  it('never shows a step tag on plain replies or user turns', () => {
+    const plain = render(<MessageBubble turn={{ role: 'assistant', content: 'done' }} step={3} />);
+    expect(plain.container.querySelector('.gcp-step-tag')).toBeNull();
+    const user = render(<MessageBubble turn={{ role: 'user', content: 'hi' }} step={1} />);
+    expect(user.container.querySelector('.gcp-step-tag')).toBeNull();
+  });
+
+  it('shows the tool execution duration on completed stages', () => {
+    const stage = applyStage({
+      result: {
+        role: 'tool',
+        tool_call_id: 'tc1',
+        content: JSON.stringify({ results: [{ index: 0, ok: true }], refs: {}, node_count: 1, edge_count: 0 }),
+        durationMs: 1_400,
+      },
+    });
+    const { container } = render(
+      <MessageBubble turn={{ role: 'assistant', content: '', tool_calls: [stage.call] }} stages={[stage]} />,
+    );
+    expect(container.querySelector('.gcp-stage-time')!.textContent).toBe('1.4s');
+  });
+
+  it('omits the duration for legacy results without one', () => {
+    const stage = applyStage({
+      result: { role: 'tool', tool_call_id: 'tc1', content: '{"results":[]}' },
+    });
+    const { container } = render(
+      <MessageBubble turn={{ role: 'assistant', content: '', tool_calls: [stage.call] }} stages={[stage]} />,
+    );
+    expect(container.querySelector('.gcp-stage-time')).toBeNull();
   });
 });
 

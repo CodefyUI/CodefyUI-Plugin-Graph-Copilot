@@ -14,7 +14,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import { DEFAULT_SETTINGS } from '../state/settings';
+import { activeReasoningEffort, DEFAULT_SETTINGS } from '../state/settings';
 import type { Provider } from '../llm/client';
 
 // ---------------------------------------------------------------------------
@@ -22,14 +22,22 @@ import type { Provider } from '../llm/client';
 // ---------------------------------------------------------------------------
 
 vi.mock('../llm/client', () => ({
-  fetchModels: vi.fn().mockResolvedValue(['gpt-4', 'gpt-5']),
+  fetchModelCatalog: vi.fn().mockResolvedValue({
+    models: [
+      { id: 'gpt-4', label: 'GPT-4' },
+      { id: 'gpt-5', label: 'GPT-5' },
+    ],
+    capabilities: { reasoningEffort: false, richModelCatalog: false },
+  }),
   codexLogin: vi.fn().mockResolvedValue('https://auth.example.com'),
   codexStatus: vi.fn().mockResolvedValue({ status: 'logged_out' }),
   codexLogout: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { SettingsView } from './SettingsView';
-import { codexStatus } from '../llm/client';
+import { codexStatus, fetchModelCatalog } from '../llm/client';
+import { clearModelCatalogCache } from '../llm/models';
+import { invalidateCodexStatusGeneration } from '../llm/codexStatusEpoch';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,6 +64,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     ...DEFAULT_SETTINGS,
     models: { ...DEFAULT_SETTINGS.models },
     apiKeys: { ...DEFAULT_SETTINGS.apiKeys },
+    reasoningEfforts: { ...DEFAULT_SETTINGS.reasoningEfforts },
+    providerCapabilities: { ...DEFAULT_SETTINGS.providerCapabilities },
     ...overrides,
   };
 }
@@ -94,6 +104,14 @@ function renderSettings(opts: RenderOpts = {}) {
 describe('SettingsView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearModelCatalogCache();
+    invalidateCodexStatusGeneration();
+    // Rendering tests do not exercise the background auth read. Keep it pending
+    // unless a test supplies a response, just as for catalog completion below.
+    vi.mocked(codexStatus).mockImplementation(() => new Promise(() => {}));
+    // Most base rendering tests do not exercise catalog completion; keeping
+    // it pending avoids unrelated async state updates after synchronous asserts.
+    vi.mocked(fetchModelCatalog).mockImplementation(() => new Promise(() => {}));
   });
 
   // -------------------------------------------------------------------------
@@ -159,6 +177,82 @@ describe('SettingsView', () => {
     expect(onChange.mock.calls[0][0].models.openai).toBe('gpt-new-model');
   });
 
+  it('offers all three curated GPT-5.6 variants without credentials', () => {
+    renderSettings({ settings: makeSettings({ provider: 'openai', apiKeys: {} }) });
+    const values = Array.from(
+      document.querySelectorAll('#gcp-model-datalist option'),
+    ).map((option) => (option as HTMLOptionElement).value);
+    expect(values).toEqual(expect.arrayContaining([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+    ]));
+  });
+
+  it('shows provider-specific effort choices only after capability negotiation', () => {
+    const { unmount } = renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        providerCapabilities: { openai: { reasoningEffort: true } },
+      }),
+    });
+    const openaiEffort = screen.getByRole('combobox', { name: /reasoning effort/i });
+    expect(Array.from((openaiEffort as HTMLSelectElement).options).map((o) => o.value))
+      .toEqual(['', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(screen.getByRole('option', { name: /model default \(medium\)/i })).toBeTruthy();
+    unmount();
+
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai-codex',
+        providerCapabilities: { 'openai-codex': { reasoningEffort: true } },
+      }),
+      codexLoggedIn: true,
+    });
+    const codexEffort = screen.getByRole('combobox', { name: /reasoning effort/i });
+    expect(Array.from((codexEffort as HTMLSelectElement).options).map((o) => o.value))
+      .toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(screen.getByRole('option', { name: /model default \(max\)/i })).toBeTruthy();
+  });
+
+  it('keeps the effort selector for the official gpt-5.6 Sol alias', () => {
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        models: { ...DEFAULT_SETTINGS.models, openai: 'gpt-5.6' },
+        providerCapabilities: { openai: { reasoningEffort: true } },
+      }),
+    });
+
+    expect(screen.getByRole('combobox', { name: /reasoning effort/i })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /model default \(medium\)/i })).toBeTruthy();
+  });
+
+  it('preserves the effort but clears its model binding for an unknown model', () => {
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        reasoningEfforts: { openai: 'max' },
+        providerCapabilities: {
+          openai: {
+            reasoningEffort: true,
+            reasoningModel: 'gpt-5.6-sol',
+          },
+        },
+      }),
+      onChange,
+    });
+
+    fireEvent.change(screen.getByRole('combobox', { name: /model id/i }), {
+      target: { value: 'legacy-no-effort' },
+    });
+    const updated = onChange.mock.calls.at(-1)?.[0] as Settings;
+    expect(updated.models.openai).toBe('legacy-no-effort');
+    expect(updated.reasoningEfforts?.openai).toBe('max');
+    expect(updated.providerCapabilities?.openai?.reasoningModel).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // API key input
   // -------------------------------------------------------------------------
@@ -167,6 +261,52 @@ describe('SettingsView', () => {
     renderSettings({ settings: makeSettings({ provider: 'openai' }) });
     // PasswordInput has aria-label; getByLabelText matches on the input's aria-label
     expect(screen.getByLabelText(/openai api key/i)).toBeTruthy();
+  });
+
+  it('preserves negotiated effort and capabilities when the key is blurred without a change', () => {
+    const onChange = vi.fn();
+    const settings = makeSettings({
+      provider: 'openai', apiKeys: { openai: 'sk-same' }, reasoningEfforts: { openai: 'max' },
+      providerCapabilities: { openai: { reasoningEffort: true, richModelCatalog: true, reasoningModel: 'gpt-5.6-sol' } },
+    });
+    renderSettings({ settings, onChange });
+    const key = screen.getByLabelText(/openai api key/i);
+    fireEvent.focus(key);
+    fireEvent.blur(key);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('combobox', { name: /reasoning effort/i })).toHaveValue('max');
+    expect(activeReasoningEffort(settings)).toBe('max');
+    expect(fetchModelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates the old credential capability before the new-key catalog resolves', () => {
+    const onChange = vi.fn();
+    renderSettings({
+      settings: makeSettings({
+        provider: 'openai',
+        apiKeys: { openai: 'sk-old' },
+        reasoningEfforts: { openai: 'max' },
+        providerCapabilities: {
+          openai: {
+            reasoningEffort: true,
+            richModelCatalog: false,
+            reasoningModel: 'gpt-5.6-sol',
+          },
+        },
+      }),
+      onChange,
+    });
+
+    const keyInput = screen.getByLabelText(/openai api key/i);
+    fireEvent.change(keyInput, {
+      target: { value: 'sk-new' },
+    });
+    fireEvent.blur(keyInput);
+    const updated = onChange.mock.calls.at(-1)?.[0] as Settings;
+    expect(updated.apiKeys.openai).toBe('sk-new');
+    expect(updated.reasoningEfforts?.openai).toBe('max');
+    expect(updated.providerCapabilities?.openai).toBeUndefined();
+    expect(activeReasoningEffort(updated)).toBeUndefined();
   });
 
   it('api key blur triggers onChange with updated key', async () => {
@@ -257,6 +397,50 @@ describe('SettingsView', () => {
     await waitFor(() =>
       expect(onCodexStatusChange).toHaveBeenCalledWith(true, 'user@example.com'),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Notification toggle
+  // -------------------------------------------------------------------------
+
+  it('renders the notification toggle checkbox checked by default', () => {
+    renderSettings();
+    const checkbox = screen.getByRole('checkbox', { name: /notify when a graph run finishes/i });
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('clicking the notification toggle calls onChange with notifyOnRunCompletion: false', async () => {
+    const onChange = vi.fn();
+    renderSettings({ onChange });
+
+    const checkbox = screen.getByRole('checkbox', { name: /notify when a graph run finishes/i });
+    await userEvent.click(checkbox);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0].notifyOnRunCompletion).toBe(false);
+  });
+
+  it('re-rendering with notifyOnRunCompletion: false renders unchecked', () => {
+    const { rerender } = renderSettings({
+      settings: makeSettings({ notifyOnRunCompletion: false }),
+    });
+
+    let checkbox = screen.getByRole('checkbox', { name: /notify when a graph run finishes/i });
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
+
+    rerender(
+      <SettingsView
+        api={makeFakeApi()}
+        settings={makeSettings({ notifyOnRunCompletion: true })}
+        codexLoggedIn={false}
+        codexEmail={null}
+        onCodexStatusChange={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+
+    checkbox = screen.getByRole('checkbox', { name: /notify when a graph run finishes/i });
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
   });
 
   // -------------------------------------------------------------------------

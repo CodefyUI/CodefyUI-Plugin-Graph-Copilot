@@ -12,15 +12,33 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Using Graph Copilot',
+      label: 'Agent Workbench',
       collapsed: false,
-      items: ['graph-editing', 'attachments', 'conversation-history'],
+      items: [
+        'graph-editing',
+        'experiments-and-research',
+        'llm-training-research',
+        'vla-research',
+        'attachments',
+        'conversation-history',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Paper Reproductions',
+      collapsed: false,
+      items: [
+        'paper-reproductions',
+        'paper-early-convs',
+        'paper-chinchilla',
+        'paper-flow-matching',
+      ],
     },
     {
       type: 'category',
       label: 'Reference',
       collapsed: false,
-      items: ['architecture', 'development'],
+      items: ['architecture', 'backend-agent-contract', 'roadmap', 'development'],
     },
   ],
 };

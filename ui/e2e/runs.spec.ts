@@ -1,5 +1,5 @@
 import type { RunSummary } from '../src/agent/types';
-import { test, expect, readyPreview, openCopilot, send, snapshot, releaseResponse, capture } from './fixtures';
+import { test, expect, readyPreview, openCopilot, send, snapshot, releaseResponse, capture, chatRequests, actionRequests } from './fixtures';
 import type { Page } from '@playwright/test';
 
 async function latestSummary(page: Page): Promise<RunSummary | undefined> {
@@ -9,7 +9,7 @@ async function latestSummary(page: Page): Promise<RunSummary | undefined> {
 }
 
 async function terminal(page: Page, label: 'Completed' | 'Failed' | 'Stopped' | 'Incomplete'): Promise<void> {
-  const dialog = page.getByRole('dialog', { name: 'Graph Copilot', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
   await expect(dialog.getByRole('status').filter({ has: page.getByText(label, { exact: true }) }).last()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toHaveCount(0);
@@ -40,7 +40,7 @@ test('Edit is the default; a starter fills the composer without dispatching', as
   await expect(page.getByRole('radio', { name: 'Ask', exact: true })).not.toBeChecked();
   await page.getByRole('button', { name: 'Build a small CNN image classifier', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('Build a small CNN image classifier');
-  expect((await snapshot(page)).requests).toEqual([]);
+  expect(actionRequests(await snapshot(page))).toEqual([]);
   expect((await snapshot(page)).receipts).toEqual([]);
 });
 
@@ -55,7 +55,7 @@ test('Ask returns read-only guidance and leaves the sample graph unchanged', asy
   expect(state.graph).toEqual(before);
   expect(state.receipts).toEqual([]);
   expect(state.requests.filter((request) => request.url === '/api/graph/validate')).toEqual([]);
-  expect(state.requests[0].tools).not.toContain('apply_graph_operations');
+  expect(chatRequests(state)[0].tools).not.toContain('apply_graph_operations');
   await expect(page.getByRole('log', { name: 'Conversation' }).getByText('No graph changes', { exact: true })).toBeVisible();
   expect(await latestSummary(page)).toMatchObject({ mode: 'ask', status: 'completed', mutation: 'none', mutationAttempted: false });
   await capture(page, testInfo, 'ask-read-only');
@@ -72,7 +72,7 @@ test('Edit surfaces real stages, applies typed refs once and validates the chang
   expect(state.receipts).toHaveLength(1);
   expect(state.receipts[0].result.refs.normalized).toBe('mock-node-1');
   expect(state.receipts[0].result.results.every((receipt) => receipt.ok)).toBe(true);
-  expect(state.graph.nodes.find((node) => node.id === 'mock-node-1')).toMatchObject({ type: 'Normalize', params: { scale: 0.5 } });
+  expect(state.graph.nodes.find((node) => node.id === 'mock-node-1')).toMatchObject({ type: 'Normalize', data: { params: { scale: 0.5 } } });
   expect(state.graph.edges).toContainEqual(expect.objectContaining({ source: 'sample-dataset', target: 'mock-node-1' }));
   expect(state.graph.edges).toContainEqual(expect.objectContaining({ source: 'mock-node-1', target: 'sample-preview' }));
   expect(state.requests.filter((request) => request.url === '/api/llm/chat')).toHaveLength(4);
@@ -133,7 +133,7 @@ test('Stop cancels a genuinely pending stream through AbortSignal without graph 
   await terminal(page, 'Stopped');
   const state = await snapshot(page);
   expect(state.pending).toEqual([]);
-  expect(state.requests[0].status).toBe('aborted');
+  expect(chatRequests(state)[0].status).toBe('aborted');
   expect(state.receipts).toEqual([]);
   expect(state.graph.nodes).toHaveLength(3);
   expect(await latestSummary(page)).toMatchObject({ status: 'cancelled', mutation: 'none' });

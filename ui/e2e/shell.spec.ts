@@ -19,7 +19,7 @@ for (const size of sizes) {
       await capture(page, testInfo, `${size.name}-host-widgets`);
       await openCopilot(page);
       await expect(fab).toHaveAttribute('aria-expanded', 'true');
-      const dialog = page.getByRole('dialog', { name: 'Graph Copilot', exact: true });
+      const dialog = page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
       const composer = page.getByRole('textbox', { name: 'Message input', exact: true });
       await expect(composer).toBeFocused();
       await expect(page.getByRole('radio', { name: 'Edit', exact: true })).toBeChecked();
