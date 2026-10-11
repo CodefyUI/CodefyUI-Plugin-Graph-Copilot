@@ -46,7 +46,15 @@ describe('compactCatalog', () => {
   it('formats a basic node with in/out ports and no params', () => {
     const defs = [makeNode()];
     const result = compactCatalog(defs);
-    expect(result).toBe('Conv2d: in[x:TENSOR] out[y:TENSOR] [category: Layer]');
+    expect(result).toBe('Conv2d: in[x:TENSOR (required)] out[y:TENSOR] [category: Layer]');
+  });
+
+  it('distinguishes optional and required inputs without changing exact port names', () => {
+    const result = compactCatalog([makeNode({ inputs: [
+      { name: 'x', data_type: 'TENSOR', description: '', optional: false },
+      { name: 'mask', data_type: 'TENSOR', description: '', optional: true },
+    ] })]);
+    expect(result).toContain('in[x:TENSOR (required), mask:TENSOR (optional)]');
   });
 
   it('omits in[] section when inputs is empty', () => {
@@ -59,7 +67,7 @@ describe('compactCatalog', () => {
   it('omits out[] section when outputs is empty', () => {
     const defs = [makeNode({ outputs: [], inputs: [{ name: 'x', data_type: 'TENSOR', description: '', optional: false }] })];
     const result = compactCatalog(defs);
-    expect(result).toContain('in[x:TENSOR]');
+    expect(result).toContain('in[x:TENSOR (required)]');
     expect(result).not.toContain('out[');
   });
 
@@ -156,7 +164,7 @@ describe('compactCatalog', () => {
       ],
     })];
     const result = compactCatalog(defs);
-    expect(result).toBe('Conv2d: in[x:TENSOR] out[y:TENSOR] params[out_channels:int=32{1..}, mode:select=a{a|b}] [category: Layer]');
+    expect(result).toBe('Conv2d: in[x:TENSOR (required)] out[y:TENSOR] params[out_channels:int=32{1..}, mode:select=a{a|b}] [category: Layer]');
   });
 
   it('outputs one line per node, joined by newlines', () => {
@@ -383,7 +391,7 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Conv2d [Layer]');
     // Token reduction: full ports/params are fetched on demand via
     // get_node_schemas, NOT embedded in the per-round system prompt.
-    expect(prompt).not.toContain('in[x:TENSOR] out[y:TENSOR]');
+    expect(prompt).not.toContain('in[x:TENSOR (required)] out[y:TENSOR]');
   });
 
   it('contains the graph snapshot content', () => {
@@ -402,6 +410,14 @@ describe('buildSystemPrompt', () => {
     const prompt = buildSystemPrompt(defs, graph);
     expect(prompt).toContain('Graph Copilot');
     expect(prompt).toContain('CodefyUI');
+  });
+
+  it('Ask prompt has no edit workflow and structural validation is not runtime success', () => {
+    const prompt = buildSystemPrompt(defs, graph, 'ask');
+    expect(prompt).toContain('Ask (read-only)');
+    expect(prompt).not.toContain('3. Build');
+    expect(prompt).toContain('Structural validation does not execute the graph');
+    expect(prompt).toContain('research answers are not port evidence');
   });
 
   it('contains auto_layout rule', () => {

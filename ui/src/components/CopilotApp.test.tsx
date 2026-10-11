@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 
 // Stub ChatWindow: expose the callbacks CopilotApp wires into it so we can
@@ -10,6 +10,7 @@ vi.mock('./ChatWindow', () => ({
     codexLoggedIn: boolean;
     codexEmail: string | null;
     settings: unknown;
+    open: boolean;
     conversation: { reasoningEffort?: string };
     onNewConversation: () => void;
     onResumeConversation: (c: unknown) => void;
@@ -17,7 +18,7 @@ vi.mock('./ChatWindow', () => ({
     onCodexStatusChange: (l: boolean, e: string | null) => void;
     onClose: () => void;
   }) => (
-    <div data-testid="chatwindow">
+    <div data-testid="chatwindow" hidden={!props.open}>
       <span data-testid="codex-logged-in">{String(props.codexLoggedIn)}</span>
       <span data-testid="codex-email">{String(props.codexEmail)}</span>
       <span data-testid="conversation-effort">{props.conversation.reasoningEffort ?? ''}</span>
@@ -43,6 +44,7 @@ vi.mock('./ChatWindow', () => ({
         cw-seteffort
       </button>
       <button onClick={() => props.onCodexStatusChange(true, 'e@x')}>cw-codexstatus</button>
+      <button onClick={() => props.onCodexStatusChange(false, null)}>cw-codexlogout</button>
       <button onClick={() => props.onClose()}>cw-close</button>
     </div>
   ),
@@ -59,6 +61,7 @@ vi.mock('../llm/client', () => ({
 import { CopilotApp } from './CopilotApp';
 import { codexStatus, fetchModelCatalog } from '../llm/client';
 import { clearModelCatalogCache } from '../llm/models';
+import { invalidateCodexStatusGeneration } from '../llm/codexStatusEpoch';
 
 function makeFakeApi(initial: Record<string, string> = {}): CodefyUIPluginAPI {
   const store = new Map<string, string>(Object.entries(initial));
@@ -89,6 +92,7 @@ describe('CopilotApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearModelCatalogCache();
+    invalidateCodexStatusGeneration();
   });
 
   it('shows the FAB and hides the window until opened', () => {
@@ -103,7 +107,9 @@ describe('CopilotApp', () => {
     fireEvent.click(fab);
     expect(screen.getByTestId('chatwindow')).toBeTruthy();
     fireEvent.click(fab);
-    expect(screen.queryByTestId('chatwindow')).toBeNull();
+    expect(screen.getByTestId('chatwindow')).not.toBeVisible();
+    expect(fab).toHaveAttribute('aria-expanded', 'false');
+    expect(fab).toHaveFocus();
   });
 
   it('persists settings on mount', () => {
@@ -143,6 +149,49 @@ describe('CopilotApp', () => {
     expect(screen.getByTestId('codex-email').textContent).toBe('null');
   });
 
+  it('does not let an initial status snapshot overwrite a newer callback', async () => {
+    let resolve!: (status: { status: 'logged_out' }) => void;
+    const pending = new Promise<{ status: 'logged_out' }>((done) => { resolve = done; });
+    vi.mocked(codexStatus).mockReturnValueOnce(pending);
+    render(<CopilotApp api={makeFakeApi({ settings: codexSettings })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText('cw-codexstatus'));
+    await act(async () => { resolve({ status: 'logged_out' }); });
+    expect(screen.getByTestId('codex-logged-in')).toHaveTextContent('true');
+    expect(screen.getByTestId('codex-email')).toHaveTextContent('e@x');
+  });
+
+  it('does not revive auth from an epoch invalidated by logout', async () => {
+    let resolve!: (status: { status: 'logged_in'; email: string }) => void;
+    const pending = new Promise<{ status: 'logged_in'; email: string }>((done) => { resolve = done; });
+    vi.mocked(codexStatus).mockReturnValueOnce(pending);
+    render(<CopilotApp api={makeFakeApi({ settings: codexSettings })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+
+    invalidateCodexStatusGeneration();
+    await act(async () => { resolve({ status: 'logged_in', email: 'old@x' }); });
+    expect(screen.getByTestId('codex-logged-in')).toHaveTextContent('false');
+    expect(screen.getByTestId('codex-email')).toHaveTextContent('null');
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('does not apply initial auth after switching to a different provider', async () => {
+    let resolve!: (status: { status: 'logged_in'; email: string }) => void;
+    const pending = new Promise<{ status: 'logged_in'; email: string }>((done) => { resolve = done; });
+    vi.mocked(codexStatus).mockReturnValueOnce(pending);
+    render(<CopilotApp api={makeFakeApi({ settings: codexSettings })} />);
+    fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
+    await waitFor(() => expect(codexStatus).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText('cw-setsettings'));
+    await act(async () => { resolve({ status: 'logged_in', email: 'old@x' }); });
+    expect(screen.getByTestId('codex-logged-in')).toHaveTextContent('false');
+    expect(screen.getByTestId('codex-email')).toHaveTextContent('null');
+  });
+
   it('wires window callbacks (new, resume, settings, codex status, close)', async () => {
     render(<CopilotApp api={makeFakeApi()} />);
     fireEvent.click(screen.getByRole('button', { name: /graph copilot/i }));
@@ -156,7 +205,7 @@ describe('CopilotApp', () => {
     );
 
     fireEvent.click(screen.getByText('cw-close'));
-    expect(screen.queryByTestId('chatwindow')).toBeNull();
+    expect(screen.getByTestId('chatwindow')).not.toBeVisible();
   });
 
   it('stamps the active reasoning effort on a new conversation', () => {

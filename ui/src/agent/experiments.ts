@@ -15,6 +15,17 @@ import { redactToolResultForContext } from './historyRedaction';
 import { createPortableStudyCapture } from './studyCapture';
 import { saveStudyBundle, StudyStorageError, withRequiredWebLock } from './studyStorage';
 import { normalizeNodeStatus } from './wireOutputs';
+import { awaitWithSignal, isAbortError, reviewReceipt, throwIfAborted } from './toolGuards';
+
+/** Execution-local hooks for the authoritative chat journal. They run before
+ * study persistence, and may refuse promotion before any canvas write. */
+export interface ExperimentRuntimeHooks {
+  beforePromotion?(operations: GraphOp[]): void;
+  onPromotionReceipt?(operations: GraphOp[], receipt: ApplyResult): void;
+  onPromotionError?(operations: GraphOp[], error: unknown): void;
+  receiptCaptured?(): boolean;
+}
+
 
 export const EXPERIMENTS_STORAGE_KEY = 'experiment-sessions-v1';
 export const EXPERIMENTS_CHANGED_EVENT = 'gcp:experiments-changed';
@@ -497,9 +508,10 @@ async function validateCandidate(
   graph: SerializedGraph,
   signal?: AbortSignal,
 ): Promise<string[]> {
+  throwIfAborted(signal);
   try {
     const candidate = executableGraph(graph);
-    const response = await api.http.fetch('/api/graph/validate', {
+    const response = await awaitWithSignal(api.http.fetch('/api/graph/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal,
@@ -508,9 +520,11 @@ async function validateCandidate(
         edges: candidate.edges,
         presets: candidate.presets ?? [],
       }),
-    });
+    }), signal);
+    throwIfAborted(signal);
     if (!response.ok) return [`Validation request failed: HTTP ${response.status}`];
-    const body = await response.json() as { valid?: unknown; errors?: unknown };
+    const body = await awaitWithSignal(response.json(), signal) as { valid?: unknown; errors?: unknown };
+    throwIfAborted(signal);
     const errors = Array.isArray(body.errors) ? body.errors.map(String) : [];
     if (body.valid !== true) {
       return errors.length > 0 ? errors : ['Graph validation returned an invalid or malformed result'];
@@ -525,9 +539,12 @@ async function validateCandidate(
 }
 
 export async function executionToken(api: CodefyUIPluginAPI, signal?: AbortSignal): Promise<string> {
-  const response = await api.http.fetch('/api/auth/bootstrap', { signal });
+  throwIfAborted(signal);
+  const response = await awaitWithSignal(api.http.fetch('/api/auth/bootstrap', { signal }), signal);
+  throwIfAborted(signal);
   if (!response.ok) throw new Error(`Execution auth bootstrap failed: HTTP ${response.status}`);
-  const body = await response.json() as { token?: unknown };
+  const body = await awaitWithSignal(response.json(), signal) as { token?: unknown };
+  throwIfAborted(signal);
   if (typeof body.token !== 'string' || !body.token) {
     throw new Error('Execution auth bootstrap returned no token');
   }
@@ -616,6 +633,7 @@ export function executeCandidateGraph(
   signal?: AbortSignal,
   timeoutMs = DEFAULT_RUN_TIMEOUT_MS,
 ): Promise<RunObservation> {
+  if (signal?.aborted) return Promise.reject(new DOMException('Experiment cancelled', 'AbortError'));
   const candidate = executableGraph(graph);
   const startedAt = Date.now();
   return new Promise<RunObservation>((resolve, reject) => {
@@ -624,90 +642,79 @@ export function executeCandidateGraph(
     const metricIdentities: Record<string, string> = {};
     const metricSources: Record<string, 'output_summary' | 'progress' | 'client'> = {};
     let settled = false;
-
+    let executeSent = false;
+    let runId = newId('gcp-experiment-run');
+    let cancelError: Error | undefined;
+    let cancelTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (cancelTimer !== undefined) clearTimeout(cancelTimer);
       signal?.removeEventListener('abort', onAbort);
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-        socket.close();
-      }
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
       const durationMs = Date.now() - startedAt;
       metrics['system.runtime_ms'] = durationMs;
       metricIdentities['system.runtime_ms'] = 'system.runtime_ms';
       metricSources['system.runtime_ms'] = 'client';
       const observation = { metrics, metricIdentities, metricSources, durationMs };
       if (error) {
-        // Cancellation is control flow, not experiment evidence. Preserve its
-        // exact DOMException behavior so the coordinator still aborts the
-        // whole study immediately.
-        if (error instanceof DOMException && error.name === 'AbortError') reject(error);
+        if (isAbortError(error)) reject(error);
         else reject(new ExperimentExecutionError(error, observation));
       } else resolve(observation);
     };
-    const onAbort = () => finish(new DOMException('Experiment cancelled', 'AbortError'));
-    const timer = setTimeout(
-      () => finish(new Error(`Experiment run timed out after ${Math.round(timeoutMs / 1000)}s`)),
-      timeoutMs,
-    );
-
+    const requestCancel = (error: Error) => {
+      if (settled || cancelError) return;
+      cancelError = error;
+      if (!executeSent) { finish(error); return; }
+      // Current hosts own their runs: close alone is NOT cancellation.
+      // Older socket-owned hosts still stop when cleanup closes the socket.
+      cancelTimer = setTimeout(() => finish(error), 5_000);
+      try { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: 'cancel', run_id: runId })); }
+      catch { /* grace cleanup still closes older socket-owned hosts */ }
+    };
+    const onAbort = () => requestCancel(new DOMException('Experiment cancelled', 'AbortError'));
+    const timer = setTimeout(() => requestCancel(new Error(`Experiment run timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
     signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-
+    if (signal?.aborted) { onAbort(); return; }
     socket.onopen = () => {
-      socket.send(JSON.stringify({
-        action: 'execute',
-        nodes: candidate.nodes,
-        edges: candidate.edges,
-        presets: candidate.presets ?? [],
-        run_id: newId('gcp-experiment-run'),
-        // Scalar summaries arrive on node_status regardless. Avoid retaining
-        // full tensors for every candidate in CodefyUI's in-memory run store.
-        record_outputs: false,
-        graph_id: newId('gcp-experiment-graph'),
-        weights_persistent: false,
-      }));
+      if (settled || cancelError || signal?.aborted) return;
+      // Set before send because a host/mock can synchronously acknowledge.
+      executeSent = true;
+      try {
+        socket.send(JSON.stringify({
+          action: 'execute', nodes: candidate.nodes, edges: candidate.edges,
+          presets: candidate.presets ?? [], run_id: runId,
+          record_outputs: false, graph_id: newId('gcp-experiment-graph'), weights_persistent: false,
+        }));
+      } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
     };
     socket.onmessage = (event) => {
+      if (settled) return;
       let message: Record<string, unknown>;
-      try {
-        message = JSON.parse(String(event.data)) as Record<string, unknown>;
-      } catch {
-        return;
-      }
+      try { message = JSON.parse(String(event.data)) as Record<string, unknown>; } catch { return; }
+      if (!message || typeof message !== 'object') return;
+      if (typeof message.run_id === 'string' && message.run_id) runId = message.run_id;
       const type = String(message.type ?? '');
+      if (message.rejected === true) { finish(cancelError ?? new Error(String(message.error ?? 'Experiment execution rejected'))); return; }
       if (type === 'node_status') {
         const nodeId = String(message.node_id ?? '');
-        // normalizeNodeStatus reads both the 1.3.0 shape (output_summary /
-        // progress on the message) and the current typed outputs entry list.
         const normalized = normalizeNodeStatus(message);
         collectSummaryMetrics(candidate, nodeId, normalized.scalars, metrics, metricIdentities, metricSources);
-        if (normalized.progress) {
-          collectProgressMetrics(candidate, nodeId, normalized.progress, metrics, metricIdentities, metricSources);
-        }
-      } else if (type === 'execution_complete') {
-        finish();
-      } else if (type === 'execution_error' || type === 'execution_stopped' || type === 'error') {
-        finish(new Error(String(message.error ?? type)));
-      }
+        if (normalized.progress) collectProgressMetrics(candidate, nodeId, normalized.progress, metrics, metricIdentities, metricSources);
+      } else if (type === 'execution_complete') finish(cancelError);
+      else if (type === 'execution_error' || type === 'execution_stopped' || type === 'error') finish(cancelError ?? new Error(String(message.error ?? type)));
     };
-    socket.onerror = () => finish(new Error('Experiment execution WebSocket failed'));
-    socket.onclose = () => {
-      if (!settled) finish(new Error('Experiment execution WebSocket closed before completion'));
-    };
+    socket.onerror = () => finish(cancelError ?? new Error('Experiment execution WebSocket failed'));
+    socket.onclose = () => { if (!settled) finish(cancelError ?? new Error('Experiment execution WebSocket closed before completion')); };
   }).catch((error: unknown) => {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    if (isAbortError(error)) throw error;
     if (error instanceof ExperimentExecutionError) {
       const safeError = new Error(scrubExecutionCredential(error.message, token));
       safeError.name = error.name;
       throw new ExperimentExecutionError(safeError, error.observation);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(scrubExecutionCredential(message, token));
+    throw new Error(scrubExecutionCredential(error instanceof Error ? error.message : String(error), token));
   });
 }
 
@@ -768,7 +775,11 @@ async function mapLimit<T, R>(
       results[index] = await worker(values[index], index);
     }
   });
-  await Promise.all(runners);
+  // Await every worker's teardown even when one rejects. Promise.all would
+  // return on the first abort while another native cancel is still in flight.
+  const settled = await Promise.allSettled(runners);
+  const failed = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+  if (failed) throw failed.reason;
   return results;
 }
 
@@ -1351,7 +1362,9 @@ async function runGraphExperimentsTracked(
   signal?: AbortSignal,
   hasLiveGraphChanged: () => boolean = () => false,
   stopGraphWatch: () => void = () => {},
+  hooks: ExperimentRuntimeHooks = {},
 ): Promise<GraphExperimentResult> {
+  throwIfAborted(signal);
   const { repetitions, concurrency } = validateRequest(request);
   const studyStartedAt = new Date().toISOString();
   const baseline = clone(api.graph.getGraph());
@@ -1599,19 +1612,32 @@ async function runGraphExperimentsTracked(
           .map((result) => result.error)
           .join('; ')}`;
       } else {
+        hooks.beforePromotion?.(winnerInput.operations);
+        // No await/observer after this final guard until the host write.
+        throwIfAborted(signal);
+        let receipt: ApplyResult | undefined;
+        let returned = false;
         try {
-          session.applyResult = api.graph.applyOperations(winnerInput.operations);
-          session.appliedOperations = winnerInput.operations;
-          if (session.applyResult.results.every((result) => result.ok)) {
-            session.appliedVariantId = winner.id;
-          } else {
-            session.applyConflict = 'Winner promotion was only partially applied; the canvas may contain a partial parameter update. Inspect operation errors.';
-          }
+          receipt = api.graph.applyOperations(winnerInput.operations);
+          returned = true;
         } catch (error) {
+          // Callback records unknown canvas effects synchronously and may end
+          // the agent run. Do not swallow that structured terminal decision.
+          hooks.onPromotionError?.(winnerInput.operations, error);
           session.applyConflict = `Winner promotion threw unexpectedly; the canvas may contain a partial parameter update: ${String(error)}`;
         }
+        if (returned) {
+          session.applyResult = receipt;
+          session.appliedOperations = winnerInput.operations;
+          hooks.onPromotionReceipt?.(winnerInput.operations, receipt as ApplyResult);
+          const review = reviewReceipt(receipt, winnerInput.operations.length);
+          if (!review.unknown && review.failed === 0) session.appliedVariantId = winner.id;
+          else session.applyConflict = review.unknown
+            ? 'Winner promotion returned missing or invalid indexed receipts; canvas effects are unknown. Inspect before continuing.'
+            : 'Winner promotion was only partially applied; the canvas may contain a partial parameter update. Inspect operation errors.';
+        }
         if (session.applyConflict) {
-          api.ui.toast(session.applyConflict, 'error');
+          try { api.ui.toast(session.applyConflict, 'error'); } catch { /* reporting is non-fatal */ }
         }
       }
     } else {
@@ -1681,7 +1707,9 @@ export async function runGraphExperiments(
   api: CodefyUIPluginAPI,
   request: GraphExperimentRequest,
   signal?: AbortSignal,
+  hooks: ExperimentRuntimeHooks = {},
 ): Promise<GraphExperimentResult> {
+  throwIfAborted(signal);
   let liveGraphChanged = false;
   let unsubscribe: (() => void) | undefined;
   let watching = true;
@@ -1706,6 +1734,7 @@ export async function runGraphExperiments(
       signal,
       () => liveGraphChanged,
       stopGraphWatch,
+      hooks,
     );
   } finally {
     stopGraphWatch();

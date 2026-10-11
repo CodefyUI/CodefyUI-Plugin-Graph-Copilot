@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import type { Conversation } from '../state/conversations';
@@ -105,6 +105,9 @@ export interface ChatWindowProps {
   onNewConversation: () => void;
   onResumeConversation: (c: Conversation) => void;
   onClose: () => void;
+  open?: boolean;
+  panelId?: string;
+  onStopReady?: (stop: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,10 +126,29 @@ export function ChatWindow({
   onNewConversation,
   onResumeConversation,
   onClose,
+  open = true,
+  panelId = 'graph-copilot-panel',
+  onStopReady,
 }: ChatWindowProps) {
   const [view, setView] = useState<View>('chat');
   const [panelMode, setPanelMode] = useState<PanelMode>('compact');
   const [graphStats, setGraphStats] = useState<GraphStats>(() => readGraphStats(api));
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const stopRef = useRef<(() => void) | null>(null);
+  const viewRef = useRef<HTMLElement>(null);
+  const registerStop = useCallback((stop: () => void) => {
+    stopRef.current = stop;
+    onStopReady?.(stop);
+  }, [onStopReady]);
+  const handleBusy = useCallback((value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  }, []);
+
+  useEffect(() => {
+    if (open && view !== 'chat') viewRef.current?.focus();
+  }, [open, view]);
 
   useEffect(() => {
     const refresh = () => setGraphStats(readGraphStats(api));
@@ -139,18 +161,23 @@ export function ChatWindow({
   }, [api]);
 
   const handleResume = (conv: Conversation) => {
+    if (busyRef.current) return;
     onResumeConversation(conv);
     setView('chat');
   };
 
   const handleNew = () => {
+    if (busyRef.current) return;
     onNewConversation();
     setView('chat');
   };
 
-  const switchTo = (next: View) => {
-    setView((current) => current === next && next !== 'chat' ? 'chat' : next);
+  const navigate = (next: View) => {
+    if (next !== 'chat') stopRef.current?.();
+    setView(next);
   };
+  const switchTo = (next: View) => navigate(view === next ? 'chat' : next);
+  const close = () => { stopRef.current?.(); onClose(); };
 
   const model = settings.models[settings.provider] ?? '';
   const apiVersion = Number.isFinite(api.apiVersion) ? `API v${api.apiVersion}` : 'API legacy';
@@ -164,10 +191,18 @@ export function ChatWindow({
 
   return (
     <div
+      id={panelId}
       className={`gcp-window gcp-window--${panelMode}`}
       role="dialog"
       aria-label="Graph Copilot agent workbench"
       data-panel-mode={panelMode}
+      hidden={!open}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+          event.stopPropagation();
+          close();
+        }
+      }}
     >
       <header className="gcp-workbench-header">
         <div className="gcp-header-main">
@@ -182,7 +217,7 @@ export function ChatWindow({
           <div className="gcp-header-actions">
             <button
               className="gcp-model-chip"
-              onClick={() => setView('settings')}
+              onClick={() => navigate('settings')}
               aria-label="Active model — open settings"
               title={`Provider: ${settings.provider}${model ? ` · ${model}` : ''} — click to change`}
             >
@@ -199,7 +234,7 @@ export function ChatWindow({
               <ExpandIcon expanded={panelMode === 'expanded'} />
             </button>
 
-            <button className="gcp-icon-btn" onClick={onClose} aria-label="Close panel" title="Close">
+            <button className="gcp-icon-btn" onClick={close} aria-label="Close panel" title="Close">
               <CloseIcon />
             </button>
           </div>
@@ -229,8 +264,9 @@ export function ChatWindow({
         </nav>
       </header>
 
-      <main className="gcp-view">
-        {view === 'chat' && (
+      <main className="gcp-view" ref={viewRef} tabIndex={-1}>
+        {/* Keep the composer mounted so navigating or closing preserves drafts. */}
+        <div className="gcp-chat-view" hidden={view !== 'chat'}>
           <ChatView
             api={api}
             settings={settings}
@@ -238,18 +274,27 @@ export function ChatWindow({
             conversation={conversation}
             onConversationChange={onConversationChange}
             onSettingsChange={onSettingsChange}
-            onOpenSettings={() => setView('settings')}
-            onOpenHistory={() => setView('history')}
+            onOpenSettings={() => navigate('settings')}
+            onOpenHistory={() => navigate('history')}
+            active={open && view === 'chat'}
+            onBusyChange={handleBusy}
+            onStopReady={registerStop}
+          />
+        </div>
+
+        {open && view === 'experiments' && <ExperimentsView api={api} />}
+
+        {open && view === 'history' && (
+          <HistoryView
+            api={api}
+            activeId={conversation.id}
+            onResume={handleResume}
+            onNew={handleNew}
+            disabled={busy}
           />
         )}
 
-        {view === 'experiments' && <ExperimentsView api={api} />}
-
-        {view === 'history' && (
-          <HistoryView api={api} activeId={conversation.id} onResume={handleResume} onNew={handleNew} />
-        )}
-
-        {view === 'settings' && (
+        {open && view === 'settings' && (
           <SettingsView
             api={api}
             settings={settings}

@@ -91,6 +91,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function isHostMediaUrl(url: string): boolean {
+  if (!url.startsWith('/api/media/') || /[\\\u0000- \u007f]/.test(url)) return false;
+  try {
+    const decoded = decodeURIComponent(url.split(/[?#]/, 1)[0]);
+    if (decoded.includes('\\') || decoded.split('/').some((part) => part === '.' || part === '..')) return false;
+    const base = 'https://codefyui.invalid';
+    const parsed = new URL(url, base);
+    return parsed.origin === base && parsed.pathname.startsWith('/api/media/') && parsed.pathname.length > '/api/media/'.length;
+  } catch { return false; }
+}
+
 /** Fold one per-port summary object ({type, value, ...}) into the result. */
 function collectPortSummary(
   out: NormalizedNodeStatus,
@@ -183,7 +194,7 @@ export function normalizeNodeStatus(
       // contract and will not be fetched.
       const payload = asRecord(entry.video);
       const url = payload && typeof payload.url === 'string' ? payload.url : '';
-      if (url && url.startsWith('/')) {
+      if (isHostMediaUrl(url)) {
         const media: MediaOutput = {
           kind: 'video',
           url,

@@ -9,7 +9,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { CodefyUIPluginAPI, SerializedGraph, NodeDefinition } from '../types/codefyui';
 import type { Settings } from '../state/settings';
@@ -348,8 +348,10 @@ describe('ChatView', () => {
       await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      await screen.findByRole('dialog');
-      await userEvent.click(screen.getByRole('button', { name: /stop generation/i }));
+      const dialog = await screen.findByRole('dialog');
+      const stop = within(dialog).getByRole('button', { name: /stop generation/i });
+      expect(screen.getAllByRole('button', { name: /stop generation/i })).toHaveLength(1);
+      await userEvent.click(stop);
 
       await waitFor(() => expect(decision).toBe(false));
       expect(aborted).toBe(true);

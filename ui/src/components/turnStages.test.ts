@@ -53,6 +53,25 @@ describe('groupTurns', () => {
     expect(items[1].key).toBe(2);
   });
 
+  it('does not match a receipt from a different run to an older call with the same id', () => {
+    const items = groupTurns([
+      { role: 'assistant', content: '', runId: 'old', tool_calls: [applyCall('same')] },
+      { role: 'tool', content: 'wrong run', runId: 'new', tool_call_id: 'same' },
+    ]);
+    expect(items[0].stages[0].result).toBeUndefined();
+  });
+
+  it('keeps run-scoped receipts separate from legacy pending calls', () => {
+    const items = groupTurns([
+      { role: 'assistant', content: '', tool_calls: [applyCall('same')] },
+      { role: 'tool', content: 'new receipt', runId: 'new', tool_call_id: 'same' },
+      { role: 'assistant', content: '', runId: 'new', tool_calls: [applyCall('other')] },
+      { role: 'tool', content: 'legacy receipt', tool_call_id: 'other' },
+    ]);
+    expect(items[0].stages[0].result).toBeUndefined();
+    expect(items[1].stages[0].result).toBeUndefined();
+  });
+
   it('matches tool results to the nearest preceding assistant turn by call id', () => {
     const turns: ChatTurn[] = [
       { role: 'assistant', content: '', tool_calls: [applyCall('a')] },
@@ -108,8 +127,116 @@ describe('formatDuration', () => {
 });
 
 describe('describeStage', () => {
+  it.each(['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run', 'mystery_tool'])('treats an old missing %s receipt as interrupted, not running', (name) => {
+    const stage = { call: { id: 'old', name, arguments: {} } };
+    expect(describeStage(stage).status).toBe('interrupted');
+    expect(describeStage(stage).summary).toMatch(/interrupted/i);
+    expect(describeStage(stage, true).status).toBe('running');
+  });
+
+  it.each([
+    ['cancelled', 'cancelled', /stopped/i],
+    ['not_executed', 'not_executed', /not executed/i],
+    ['unknown', 'unknown', /unknown/i],
+    ['error', 'error', /failed/i],
+  ] as const)('honors local outcome %s before formatting a successful-looking payload', (toolOutcome, status, text) => {
+    for (const name of ['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run', 'other']) {
+      const d = describeStage({
+        call: { ...applyCall(), name },
+        result: { role: 'tool', content: '{"valid":true,"results":[{"index":0,"ok":true}]}', toolOutcome },
+      }, true);
+      expect(d.status).toBe(status);
+      expect(d.summary).toMatch(text);
+      expect(d.detail).toContain('valid');
+    }
+  });
+
+  it.each(['validate_graph', 'get_current_graph', 'get_node_schemas', 'research'])('shows top-level errors for %s instead of success', (name) => {
+    const d = describeStage({
+      call: { id: 'error', name, arguments: {} },
+      result: { role: 'tool', content: '{"error":"service is unavailable"}' },
+    });
+    expect(d.status).toBe('error');
+    expect(d.summary).toContain('service is unavailable');
+  });
+
+  it.each([
+    'not JSON',
+    '',
+    '[]',
+    '{}',
+    '{"results":[]}',
+    '{"results":[{"index":0,"ok":true}]}',
+    '{"results":[{"index":0,"ok":true},{"index":0,"ok":true},{"index":2,"ok":true}]}',
+    '{"results":[{"index":0,"ok":true},{"index":1,"ok":true},{"index":3,"ok":true}]}',
+    '{"results":[{"index":-1,"ok":true},{"index":1,"ok":true},{"index":2,"ok":true}]}',
+    '{"results":[{"index":0.5,"ok":true},{"index":1,"ok":true},{"index":2,"ok":true}]}',
+    '{"results":[{"index":"0","ok":true},{"index":1,"ok":true},{"index":2,"ok":true}]}',
+    '{"results":[{"ok":true},{"index":1,"ok":true},{"index":2,"ok":true}]}',
+    '{"results":[{"index":0,"ok":"true"},{"index":1,"ok":true},{"index":2,"ok":true}]}',
+    '{"results":[null,{"index":1,"ok":true},{"index":2,"ok":true}]}',
+  ])('does not mark invalid or incomplete apply receipts successful: %s', (content) => {
+    const d = describeStage({ call: applyCall(), result: { role: 'tool', content, toolOutcome: 'completed' } });
+    expect(d.status).toBe('unknown');
+    expect(d.summary).toMatch(/unknown/i);
+  });
+
+  it('uses operation indices rather than receipt order and preserves refs in details', () => {
+    const d = describeStage({
+      call: applyCall(),
+      result: { role: 'tool', content: JSON.stringify({
+        results: [{ index: 2, ok: true }, { index: 0, ok: true }, { index: 1, ok: false }],
+        refs: { conv: 'node-id' },
+      }) },
+    });
+    expect(d.status).toBe('error');
+    expect(d.summary).toContain('2 applied');
+    expect(d.summary).toContain('1 failed');
+    expect(d.detail).toContain('node-id');
+  });
+
+  it('does not call an empty operations batch applied', () => {
+    const d = describeStage({ call: applyCall('empty', []), result: { role: 'tool', content: '{"results":[]}' } });
+    expect(d.status).toBe('unknown');
+  });
+
+  it.each(['unavailable', 'stale', 'not_run'] as const)('keeps validation state %s distinct from a valid graph', (status) => {
+    const d = describeStage({
+      call: { id: 'v', name: 'validate_graph', arguments: {} },
+      result: { role: 'tool', content: JSON.stringify({ status, valid: true, errors: ['context'] }) },
+    });
+    expect(d.status).toBe(status === 'not_run' ? 'not_executed' : status);
+    expect(d.summary).not.toMatch(/validated|runnable/i);
+    expect(d.detail).toContain('context');
+  });
+
+  it.each(['{"status":"invalid","valid":true,"errors":[]}', '{"status":"valid","valid":false,"errors":[]}'])('does not accept contradictory validation claims: %s', (content) => {
+    const d = describeStage({ call: { id: 'v', name: 'validate_graph', arguments: {} }, result: { role: 'tool', content } });
+    expect(d.status).toBe('unknown');
+    expect(d.summary).not.toBe('Structure validated');
+  });
+
+  it.each(['{}', 'null', 'malformed', '{"valid":"true"}'])('does not infer validation success from %s', (content) => {
+    const d = describeStage({ call: { id: 'v', name: 'validate_graph', arguments: {} }, result: { role: 'tool', content } });
+    expect(d.status).toBe('unknown');
+  });
+
+  it('does not infer a graph snapshot from an unreadable receipt', () => {
+    const d = describeStage({ call: { id: 'g', name: 'get_current_graph', arguments: {} }, result: { role: 'tool', content: 'no snapshot' } });
+    expect(d.status).toBe('unknown');
+  });
+
+  it('tolerates null operation entries and very large detail text', () => {
+    const d = describeStage({
+      call: applyCall('x', [null, {}]),
+      result: { role: 'tool', content: 'x'.repeat(6000) },
+    });
+    expect(d.status).toBe('unknown');
+    expect(d.detail!.length).toBeLessThanOrEqual(4000);
+  });
+
   it('apply_graph_operations (running): op-kind counts, running status', () => {
-    const d = describeStage({ call: applyCall() });
+    const d = describeStage({ call: applyCall() }, true);
     expect(d.status).toBe('running');
     expect(d.label).toBe('Edit graph');
     expect(d.summary).toContain('add_node ×2');
@@ -163,7 +290,8 @@ describe('describeStage', () => {
     const ok = describeStage({ call, result: { role: 'tool', tool_call_id: 'v1', content: '{"valid":true,"errors":[]}' } });
     expect(ok.label).toBe('Validate graph');
     expect(ok.status).toBe('ok');
-    expect(ok.summary).toMatch(/runnable/i);
+    expect(ok.summary).toBe('Structure validated');
+    expect(ok.summary).not.toMatch(/runnable/i);
 
     const bad = describeStage({
       call,
@@ -188,7 +316,7 @@ describe('describeStage', () => {
 
   it('get_node_schemas: lists requested types', () => {
     const call = { id: 's1', name: 'get_node_schemas', arguments: { node_types: ['Conv2d', 'ReLU'] } };
-    const running = describeStage({ call });
+    const running = describeStage({ call }, true);
     expect(running.label).toBe('Node schemas');
     expect(running.summary).toContain('Conv2d');
     const done = describeStage({ call, result: { role: 'tool', tool_call_id: 's1', content: 'Conv2d: in[...]' } });
@@ -197,7 +325,7 @@ describe('describeStage', () => {
 
   it('research: question count', () => {
     const call = { id: 'r1', name: 'research', arguments: { questions: ['a', 'b', 'c'] } };
-    const running = describeStage({ call });
+    const running = describeStage({ call }, true);
     expect(running.label).toBe('Research');
     expect(running.summary).toContain('3');
     const done = describeStage({ call, result: { role: 'tool', tool_call_id: 'r1', content: '[1] Q: a\nA: x' } });
@@ -210,7 +338,7 @@ describe('describeStage', () => {
       name: 'run_graph_experiments',
       arguments: { variants: [{}, {}, {}], repetitions: 2 },
     };
-    const running = describeStage({ call });
+    const running = describeStage({ call }, true);
     expect(running.label).toBe('Experiment study');
     expect(running.summary).toContain('3 candidates');
     expect(running.summary).toContain('6 runs');
@@ -252,7 +380,7 @@ describe('describeStage', () => {
         bindings: [{ node_id: 'model', param: 'quality', values: [1, 2, 3, 4] }],
       },
     };
-    const running = describeStage({ call });
+    const running = describeStage({ call }, true);
     expect(running.label).toBe('Parameter search');
     expect(running.summary).toContain('8 runs');
 
@@ -277,13 +405,13 @@ describe('describeStage', () => {
 
   it('list_runs: shows a running caption based on active_only, then a run count', () => {
     const call = { id: 'l1', name: 'list_runs', arguments: {} };
-    const running = describeStage({ call });
+    const running = describeStage({ call }, true);
     expect(running.label).toBe('Reading run history');
     expect(running.summary).toBe('recent runs');
 
     const activeOnlyRunning = describeStage({
       call: { id: 'l2', name: 'list_runs', arguments: { active_only: true } },
-    });
+    }, true);
     expect(activeOnlyRunning.summary).toBe('active runs');
 
     const done = describeStage({
@@ -309,7 +437,7 @@ describe('describeStage', () => {
 
   it('get_run: shows the requested run id while running, then its fetched status', () => {
     const call = { id: 'g1', name: 'get_run', arguments: { run_id: 'run-42' } };
-    const running = describeStage({ call });
+    const running = describeStage({ call }, true);
     expect(running.label).toBe('Reading run details');
     expect(running.summary).toBe('run-42');
 
@@ -334,6 +462,13 @@ describe('describeStage', () => {
     expect(failed.summary).toContain('not found');
   });
 
+  it.each(['list_runs', 'get_run'])('does not claim malformed %s history was read successfully', (name) => {
+    for (const content of ['{}', '{"runs":"missing","run":[]}', 'not JSON']) {
+      const d = describeStage({ call: { id: 'history', name, arguments: {} }, result: { role: 'tool', content } });
+      expect(d.status).not.toBe('ok');
+    }
+  });
+
   it('unknown tool: falls back to raw name and tolerates non-JSON content', () => {
     const call = { id: 'u1', name: 'mystery_tool', arguments: {} };
     const d = describeStage({ call, result: { role: 'tool', tool_call_id: 'u1', content: 'plain text' } });
@@ -343,7 +478,7 @@ describe('describeStage', () => {
   });
 
   it('malformed arguments never throw', () => {
-    const d = describeStage({ call: { id: 'x', name: 'apply_graph_operations', arguments: {} } });
+    const d = describeStage({ call: { id: 'x', name: 'apply_graph_operations', arguments: {} } }, true);
     expect(d.status).toBe('running');
     expect(d.label).toBe('Edit graph');
   });
@@ -357,10 +492,35 @@ describe('describeStage run_graph', () => {
   });
 
   it('shows the reason while the run streams', () => {
-    const d = describeStage({ call: call() });
+    const d = describeStage({ call: call() }, true);
     expect(d.label).toBe('Run graph');
     expect(d.status).toBe('running');
     expect(d.summary).toBe('Train the 200M model');
+  });
+
+  it.each(['not JSON', '', 'null', '{}', '{"status":"unexpected"}'])('does not infer execution success from an unreadable run receipt: %s', (content) => {
+    const d = describeStage({ call: call(), result: { role: 'tool', content } });
+    expect(d.status).not.toBe('ok');
+  });
+
+  it.each(['cancelled', 'stopped'])('shows legacy %s execution as stopped, not an error or success', (status) => {
+    const d = describeStage({ call: call(), result: { role: 'tool', content: JSON.stringify({ status }) } });
+    expect(d.status).toBe('cancelled');
+    expect(d.summary).toMatch(/stopped/i);
+  });
+
+  it.each(['//evil.example/clip.mp4', '/\\\\evil.example/clip.mp4', '/api/media/../../outside.mp4', '/api/media/%2e%2e/outside.mp4', '/api/other/clip.mp4'])('never renders unapproved media references: %s', (url) => {
+    const d = describeStage({ call: call(), result: {
+      role: 'tool', content: JSON.stringify({ status: 'complete', media: [{ kind: 'video', url, format: 'mp4' }] }),
+    } });
+    expect(d.media).toBeUndefined();
+  });
+
+  it('retains valid same-origin artifacts and ignores malformed entries', () => {
+    const d = describeStage({ call: call(), result: {
+      role: 'tool', content: JSON.stringify({ status: 'complete', media: [null, [], {}, { kind: 'video', url: '/api/media/clip.mp4?download=1', node: 'Writer' }] }),
+    } });
+    expect(d.media).toEqual([{ kind: 'video', url: '/api/media/clip.mp4?download=1', format: 'mp4', node: 'Writer' }]);
   });
 
   it('summarizes a completed run with node counts and duration', () => {

@@ -175,7 +175,7 @@ describe('ChatView live run bar', () => {
     let cbs: TurnCallbacks | null = null;
     vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
       cbs = opts.callbacks;
-      return new Promise<void>(() => {});
+      return new Promise(() => {});
     });
     render(<Harness />);
     const textarea = screen.getByRole('textbox', { name: /message input/i });

@@ -75,7 +75,7 @@ async function startRun(text = 'build it') {
   let cbs: TurnCallbacks | null = null;
   vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
     cbs = opts.callbacks;
-    return new Promise<void>(() => {}); // resolved manually via callbacks
+    return new Promise(() => {}); // resolved manually via callbacks
   });
 
   const utils = renderChatView();
@@ -180,16 +180,19 @@ describe('ChatView staged streaming', () => {
     expect(opts.userText).toBe('retry me');
   });
 
-  it('welcome suggestions send with one click', async () => {
-    vi.mocked(runTurn).mockImplementation(async (opts: RunTurnOpts) => {
+  it('welcome suggestions remain editable until explicitly sent', async () => {
+    vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
       opts.callbacks.onTurnsCommitted([{ role: 'assistant', content: 'ok' }]);
       opts.callbacks.onFinished();
+      return new Promise(() => {});
     });
     renderChatView();
 
     const chip = screen.getByRole('button', { name: 'Improve my current graph' });
     await userEvent.click(chip);
-
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('Improve my current graph');
+    await userEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
     expect(vi.mocked(runTurn).mock.calls[0][0].userText).toBe('Improve my current graph');
   });

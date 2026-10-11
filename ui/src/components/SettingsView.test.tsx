@@ -37,6 +37,7 @@ vi.mock('../llm/client', () => ({
 import { SettingsView } from './SettingsView';
 import { codexStatus, fetchModelCatalog } from '../llm/client';
 import { clearModelCatalogCache } from '../llm/models';
+import { invalidateCodexStatusGeneration } from '../llm/codexStatusEpoch';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,6 +105,10 @@ describe('SettingsView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearModelCatalogCache();
+    invalidateCodexStatusGeneration();
+    // Rendering tests do not exercise the background auth read. Keep it pending
+    // unless a test supplies a response, just as for catalog completion below.
+    vi.mocked(codexStatus).mockImplementation(() => new Promise(() => {}));
     // Most base rendering tests do not exercise catalog completion; keeping
     // it pending avoids unrelated async state updates after synchronous asserts.
     vi.mocked(fetchModelCatalog).mockImplementation(() => new Promise(() => {}));
@@ -256,6 +261,22 @@ describe('SettingsView', () => {
     renderSettings({ settings: makeSettings({ provider: 'openai' }) });
     // PasswordInput has aria-label; getByLabelText matches on the input's aria-label
     expect(screen.getByLabelText(/openai api key/i)).toBeTruthy();
+  });
+
+  it('preserves negotiated effort and capabilities when the key is blurred without a change', () => {
+    const onChange = vi.fn();
+    const settings = makeSettings({
+      provider: 'openai', apiKeys: { openai: 'sk-same' }, reasoningEfforts: { openai: 'max' },
+      providerCapabilities: { openai: { reasoningEffort: true, richModelCatalog: true, reasoningModel: 'gpt-5.6-sol' } },
+    });
+    renderSettings({ settings, onChange });
+    const key = screen.getByLabelText(/openai api key/i);
+    fireEvent.focus(key);
+    fireEvent.blur(key);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('combobox', { name: /reasoning effort/i })).toHaveValue('max');
+    expect(activeReasoningEffort(settings)).toBe('max');
+    expect(fetchModelCatalog).toHaveBeenCalledTimes(1);
   });
 
   it('invalidates the old credential capability before the new-key catalog resolves', () => {
@@ -425,6 +446,31 @@ describe('SettingsView', () => {
   // -------------------------------------------------------------------------
   // Footnote
   // -------------------------------------------------------------------------
+
+  it('shows concrete setup guidance when a required model is only whitespace', () => {
+    renderSettings({ settings: makeSettings({ models: { openai: '   ' }, apiKeys: { openai: 'key' } }) });
+    expect(screen.getByText(/enter a model id/i)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /model id/i })).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('treats a malformed saved model as missing instead of throwing', () => {
+    const settings = makeSettings({ models: { openai: 123 } as unknown as Settings['models'] });
+    expect(() => renderSettings({ settings })).not.toThrow();
+    expect(screen.getByText(/enter a model id/i)).toBeInTheDocument();
+  });
+
+  it('model validation description points to guidance only for the invalid model', () => {
+    renderSettings({ settings: makeSettings({ apiKeys: {} }) });
+    expect(screen.getByRole('combobox', { name: /model id/i })).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('shows relevant API key guidance and accepts an optional custom key', () => {
+    const view = renderSettings({ settings: makeSettings({ apiKeys: { openai: '   ' } }) });
+    expect(screen.getByText(/enter an openai api key/i)).toBeInTheDocument();
+    view.unmount();
+    renderSettings({ settings: makeSettings({ provider: 'custom', models: { custom: 'local' }, customBaseUrl: 'http://local/v1', apiKeys: {} }) });
+    expect(screen.queryByText(/enter.*api key/i)).toBeNull();
+  });
 
   it('renders the privacy footnote', () => {
     renderSettings();

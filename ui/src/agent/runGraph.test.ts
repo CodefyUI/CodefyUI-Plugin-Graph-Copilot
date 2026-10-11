@@ -188,6 +188,48 @@ describe('runLiveGraph', () => {
     expect((execute.nodes as unknown[]).length).toBe(3);
   });
 
+  it('does not submit an unapproved graph changed during deferred bootstrap', async () => {
+    const api = fakeApi();
+    const approved = structuredClone(GRAPH);
+    let live = structuredClone(approved);
+    let release!: () => void;
+    let entered!: () => void;
+    const bootstrapEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const bootstrap = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(api.graph.getGraph).mockImplementation(() => live);
+    vi.mocked(api.http.fetch).mockImplementation(async () => {
+      entered(); await bootstrap;
+      return { ok: true, json: async () => ({ token: 'token-123' }) } as Response;
+    });
+    const stale = new Error('The approved graph changed before execution.');
+    socketBehavior = (socket) => queueMicrotask(() => socket.emit({ type: 'execution_complete' }));
+    const pending = runLiveGraph(api, {
+      timeoutMs: 60_000, device: 'cpu', approvedGraph: approved,
+      beforeExecute: () => { if (JSON.stringify(live) !== JSON.stringify(approved)) throw stale; },
+    } as Parameters<typeof runLiveGraph>[1]);
+    // Attach the rejection expectation before releasing deferred auth.
+    const rejected = expect(pending).rejects.toBe(stale);
+    await bootstrapEntered;
+    live.nodes[1].data!.params = { dangerous: true };
+    release();
+    await rejected;
+    expect(sentPayloads).toEqual([]);
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it('sends an immutable approved payload and checks approval again at socket open', async () => {
+    const api = fakeApi();
+    const approved = structuredClone(GRAPH);
+    socketBehavior = (socket) => queueMicrotask(() => socket.emit({ type: 'execution_complete' }));
+    let checks = 0;
+    await runLiveGraph(api, {
+      timeoutMs: 60_000, device: 'cpu', approvedGraph: approved,
+      beforeExecute: () => { checks++; approved.nodes[1].data!.params = { dangerous: true }; },
+    } as Parameters<typeof runLiveGraph>[1]);
+    expect(checks).toBe(2);
+    expect((sentPayloads[0].nodes as SerializedGraph['nodes'])[1].data?.params).toEqual({});
+  });
+
   it('fires onRunId once with the first run_id', async () => {
     socketBehavior = (socket) => {
       queueMicrotask(() => {
@@ -313,6 +355,7 @@ describe('runLiveGraph', () => {
     const outcome = await pending;
 
     expect(outcome.status).toBe('cancelled');
+    expect(outcome).toMatchObject({ cancelConfirmed: true });
     const cancelPayload = sentPayloads.find((p) => p.action === 'cancel');
     expect(cancelPayload).toBeDefined();
     expect(cancelPayload!.run_id).toBe('run-c');
@@ -351,7 +394,9 @@ describe('runLiveGraph', () => {
     const outcome = await pending;
 
     expect(outcome.status).toBe('timeout');
+    expect(outcome).toMatchObject({ cancelConfirmed: false, runId: 'run-t' });
     expect(outcome.error).toContain('timed out');
+    expect(outcome.error).toContain('unconfirmed');
   });
 
   it('resolves cancelled when the socket closes before completion after abort', async () => {
@@ -362,13 +407,18 @@ describe('runLiveGraph', () => {
     };
     const controller = new AbortController();
     const pending = runLiveGraph(fakeApi(), { signal: controller.signal, timeoutMs: 60_000 });
-    await flushMicrotasks();
+    // Bootstrap now has guarded awaits; synchronize on real mocked dispatch,
+    // not a fixed microtask count, to exercise socket-owned close cancellation.
+    for (let i = 0; i < 80 && !sentPayloads.some((payload) => payload.action === 'execute'); i++) await Promise.resolve();
+    expect(sentPayloads.some((payload) => payload.action === 'execute')).toBe(true);
     controller.abort();
     // Host never confirms; force the close handler (1.3.0 behavior).
     const socket = MockWebSocket.instances[0];
     socket.onclose?.(new CloseEvent('close'));
     const outcome = await pending;
     expect(outcome.status).toBe('cancelled');
+    expect(outcome).toMatchObject({ cancelConfirmed: false });
+    expect(outcome.error).toContain('unconfirmed');
   });
 });
 

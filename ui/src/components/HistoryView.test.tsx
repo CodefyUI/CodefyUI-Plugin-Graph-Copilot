@@ -14,6 +14,7 @@ import userEvent from '@testing-library/user-event';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Conversation } from '../state/conversations';
 
+import { saveConversation } from '../state/conversations';
 import { HistoryView } from './HistoryView';
 
 // ---------------------------------------------------------------------------
@@ -199,6 +200,141 @@ describe('HistoryView', () => {
     await waitFor(() => {
       expect(screen.queryByText('Delete me')).toBeNull();
     });
+  });
+
+  it('uses sibling native buttons rather than a button role containing another button', () => {
+    const conv = makeConv({ title: 'Native controls' });
+    render(<HistoryView api={makeFakeApiWithConvs([conv])} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    const resume = screen.getByRole('button', { name: /resume conversation/i });
+    const remove = screen.getByRole('button', { name: /^delete/i });
+    expect(resume.tagName).toBe('BUTTON');
+    expect(resume.contains(remove)).toBe(false);
+    expect(remove.closest('[role="button"]')).toBeNull();
+  });
+
+  it('keyboard delete confirmation never resumes the conversation', async () => {
+    const conv = makeConv({ title: 'Keyboard delete' });
+    const onResume = vi.fn();
+    render(<HistoryView api={makeFakeApiWithConvs([conv])} activeId="" onResume={onResume} onNew={vi.fn()} />);
+    const user = userEvent.setup();
+    screen.getByRole('button', { name: /^delete/i }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('button', { name: /confirm delete/i })).toBeInTheDocument();
+    expect(onResume).not.toHaveBeenCalled();
+    await user.keyboard(' ');
+    expect(screen.queryByText('Keyboard delete')).toBeNull();
+    expect(onResume).not.toHaveBeenCalled();
+  });
+
+  it('provides an explicit cancel button and Escape cancels without deleting', async () => {
+    const conv = makeConv({ title: 'Keep me' });
+    const api = makeFakeApiWithConvs([conv]);
+    render(<HistoryView api={api} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete/i }));
+    expect(screen.getByText(/delete this conversation\?/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /cancel delete/i }));
+    expect(screen.queryByRole('button', { name: /confirm delete/i })).toBeNull();
+    expect(screen.getByText('Keep me')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^delete/i }));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('button', { name: /confirm delete/i })).toBeNull();
+    expect(screen.getByText('Keep me')).toBeInTheDocument();
+  });
+
+  it('disables resume, new and delete while a run is settling, including armed confirmation', () => {
+    const conv = makeConv({ title: 'Busy' });
+    const api = makeFakeApiWithConvs([conv]);
+    const onResume = vi.fn();
+    const onNew = vi.fn();
+    const props = { api, activeId: '', onResume, onNew };
+    const { rerender } = render(<HistoryView {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: /^delete/i }));
+    rerender(<HistoryView {...props} disabled />);
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(onResume).not.toHaveBeenCalled();
+    expect(onNew).not.toHaveBeenCalled();
+    expect(screen.getByText('Busy')).toBeInTheDocument();
+    rerender(<HistoryView {...props} disabled={false} />);
+    expect(screen.queryByRole('button', { name: /confirm delete/i })).toBeNull();
+  });
+
+  it('keyboard activation of a resume button invokes onResume once', async () => {
+    const conv = makeConv({ title: 'Resume by keyboard' });
+    const onResume = vi.fn();
+    render(<HistoryView api={makeFakeApiWithConvs([conv])} activeId="" onResume={onResume} onNew={vi.fn()} />);
+    const button = screen.getByRole('button', { name: /resume conversation/i });
+    button.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(onResume).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard(' ');
+    expect(onResume).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears pending confirmation when starting a new conversation', () => {
+    const conv = makeConv();
+    render(<HistoryView api={makeFakeApiWithConvs([conv])} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /^delete/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start new/i }));
+    expect(screen.queryByRole('button', { name: /confirm delete/i })).toBeNull();
+  });
+
+  it('confirmation has a readable description and restores focus on cancel', async () => {
+    const conv = makeConv({ title: 'Confirm safely' });
+    const { container } = render(<HistoryView api={makeFakeApiWithConvs([conv])} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete/i }));
+    const confirm = screen.getByRole('button', { name: /confirm delete/i });
+    const descriptionId = confirm.getAttribute('aria-describedby');
+    expect(descriptionId).toBeTruthy();
+    expect(container.querySelector(`[id="${descriptionId}"]`)).toHaveTextContent('Delete this conversation?');
+    await userEvent.click(screen.getByRole('button', { name: /cancel delete/i }));
+    expect(screen.getByRole('button', { name: /^delete/i })).toHaveFocus();
+  });
+
+  it('keeps keyboard focus in the history controls after confirming deletion', async () => {
+    const first = makeConv({ title: 'Remove first' });
+    const next = makeConv({ title: 'Keep next' });
+    render(<HistoryView api={makeFakeApiWithConvs([first, next])} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete "remove first"/i }));
+    await userEvent.click(screen.getByRole('button', { name: /confirm delete/i }));
+    expect(screen.getByRole('button', { name: /resume conversation: keep next/i })).toHaveFocus();
+  });
+
+  it('reloads final receipts after the run settles instead of resuming a stale row snapshot', () => {
+    const conv = makeConv({ title: 'Working', messages: [{ role: 'user', content: 'Request' }] });
+    const api = makeFakeApiWithConvs([conv]);
+    const onResume = vi.fn();
+    const props = { api, activeId: conv.id, onResume, onNew: vi.fn() };
+    const { rerender } = render(<HistoryView {...props} disabled />);
+    const committed: Conversation = { ...conv, title: 'Final receipt', messages: [...conv.messages, { role: 'assistant', content: 'Changes applied' }] };
+    saveConversation(api, committed);
+    rerender(<HistoryView {...props} disabled={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /resume conversation: final receipt/i }));
+    expect(onResume).toHaveBeenCalledWith(committed);
+  });
+
+  it('looks up the current conversation by id on resume rather than trusting a stale closure', () => {
+    const conv = makeConv({ title: 'Saved' });
+    const api = makeFakeApiWithConvs([conv]);
+    const onResume = vi.fn();
+    render(<HistoryView api={api} activeId="" onResume={onResume} onNew={vi.fn()} />);
+    const committed: Conversation = { ...conv, messages: [{ role: 'assistant', content: 'new receipt' }] };
+    saveConversation(api, committed);
+    fireEvent.click(screen.getByRole('button', { name: /resume conversation: saved/i }));
+    expect(onResume).toHaveBeenCalledWith(committed);
+  });
+
+  it('does not resume a row that was removed in storage after rendering', () => {
+    const conv = makeConv({ title: 'Gone' });
+    const api = makeFakeApiWithConvs([conv]);
+    const onResume = vi.fn();
+    render(<HistoryView api={api} activeId="" onResume={onResume} onNew={vi.fn()} />);
+    api.storage.set('conversations', '[]');
+    fireEvent.click(screen.getByRole('button', { name: /resume conversation: gone/i }));
+    expect(onResume).not.toHaveBeenCalled();
+    expect(screen.getByText(/no conversations yet/i)).toBeInTheDocument();
   });
 
   it('marks the active conversation', () => {
