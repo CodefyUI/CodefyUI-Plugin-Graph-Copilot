@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { RunTurnOpts } from '../agent/loop';
 import type { RunSummary, TurnResult } from '../agent/types';
+import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import type { Conversation } from '../state/conversations';
 import { newConversation, listConversations } from '../state/conversations';
 import { useAgentRun } from './useAgentRun';
@@ -147,7 +148,8 @@ describe('useAgentRun ownership and recovery', () => {
     hook.rerender({ active: false });
     await expect(decision).resolves.toBe(false);
     expect(hook.result.current.run.runApproval).toBeNull();
-    expect(attempts[0].opts.signal?.aborted).toBe(true);
+    expect(attempts[0].opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(attempts[0].opts.cancelSignal?.aborted).toBe(false);
   });
 
   it('rejects execution approval when its tool signal aborts and ignores late approval requests', async () => {
@@ -226,6 +228,101 @@ describe('useAgentRun ownership and recovery', () => {
     expect(hook.result.current.run.canRetry).toBe(false);
   });
 
+  it('keeps ownership latched after terminal callbacks until the executor returns', async () => {
+    const attempts = controlled();
+    const hook = setup();
+    start(hook);
+    act(() => attempts[0].opts.callbacks.onFinished(baseSummary));
+    expect(hook.result.current.run.busy).toBe(true);
+    expect(hook.busyChanged.mock.calls).toEqual([[true]]);
+    act(() => { void hook.result.current.run.start('Duplicate', [], 'edit'); });
+    expect(attempts).toHaveLength(1);
+    await act(async () => attempts[0].resolve(result()));
+    expect(hook.result.current.run.busy).toBe(false);
+    expect(hook.busyChanged.mock.calls).toEqual([[true], [false]]);
+    expect(hook.result.current.conversation.messages.map((turn) => turn.content)).toEqual(['Request', 'Answer']);
+  });
+
+  it('passive cleanup is repeatable without escalating to host cancellation', async () => {
+    const attempts = controlled();
+    const hook = setup();
+    start(hook);
+    const opts = attempts[0].opts;
+    const browserAbort = vi.fn();
+    const cancelAbort = vi.fn();
+    opts.signal?.addEventListener('abort', browserAbort);
+    opts.cancelSignal?.addEventListener('abort', cancelAbort);
+    act(() => { hook.result.current.run.detach(); hook.result.current.run.detach(); });
+    hook.rerender({ active: false });
+    hook.unmount();
+    expect(browserAbort).toHaveBeenCalledTimes(1);
+    expect(cancelAbort).not.toHaveBeenCalled();
+    expect(opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    await act(async () => attempts[0].resolve(result({ status: 'incomplete', reason: 'execution_detached',
+      sideEffectAttempted: true, hostRunId: 'host-run' })));
+    expect(listConversations(hook.api)[0].messages).toHaveLength(2);
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it('explicit Stop remains ordinary abort and cleanup cannot change the first reason', async () => {
+    const attempts = controlled();
+    const hook = setup();
+    start(hook);
+    act(() => hook.result.current.run.stop());
+    const opts = attempts[0].opts;
+    expect(opts.signal?.aborted).toBe(true);
+    expect(opts.signal?.reason).not.toBe(PASSIVE_DETACH_REASON);
+    expect(opts.cancelSignal?.aborted).toBe(true);
+    hook.rerender({ active: false });
+    expect(opts.signal?.reason).not.toBe(PASSIVE_DETACH_REASON);
+    await act(async () => attempts[0].resolve(result({ status: 'cancelled' })));
+  });
+
+  it('explicit Stop after passive detach signals cancellation even though browser abort reason is immutable', async () => {
+    const attempts = controlled();
+    const hook = setup();
+    start(hook);
+    hook.rerender({ active: false });
+    hook.rerender({ active: true });
+    expect(hook.result.current.run.busy).toBe(true);
+    act(() => hook.result.current.run.stop());
+    expect(attempts[0].opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(attempts[0].opts.cancelSignal?.aborted).toBe(true);
+    await act(async () => attempts[0].resolve(result({ status: 'cancelled', sideEffectAttempted: true, hostRunId: 'late-id' })));
+    expect(hook.result.current.run.canRetry).toBe(false);
+    expect(hook.result.current.conversation.messages).toHaveLength(2);
+  });
+
+  it('does not notify a detached view and journals a detached execution receipt exactly once', async () => {
+    const attempts = controlled();
+    const hook = setup();
+    start(hook);
+    act(() => attempts[0].opts.callbacks.onTurnAppended?.({ role: 'assistant', content: '',
+      tool_calls: [{ id: 'execute', name: 'run_graph', arguments: { reason: 'Train' } }] }));
+    hook.rerender({ active: false });
+    hook.rerender({ active: true });
+    const detached = result({ status: 'incomplete', reason: 'execution_detached', sideEffectAttempted: true,
+      hostRunId: 'host-run', turns: [{ role: 'tool', tool_call_id: 'execute', toolOutcome: 'unknown',
+        content: '{"status":"detached","run_id":"host-run"}' }] });
+    await act(async () => {
+      attempts[0].opts.callbacks.onRunStarted?.('host-run');
+      attempts[0].opts.callbacks.onRunFinished?.({ status: 'detached', durationMs: 1, runId: 'host-run', nodeErrors: {},
+        completedNodes: 0, totalNodes: 1, outputs: {}, finalProgress: {}, metrics: {}, textTail: '', media: [] });
+      attempts[0].opts.callbacks.onTurnsCommitted(detached.turns);
+      attempts[0].opts.callbacks.onTurnsCommitted(detached.turns);
+      attempts[0].opts.callbacks.onFinished(detached);
+      attempts[0].resolve(detached);
+    });
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+    expect(hook.result.current.conversation.messages).toHaveLength(2);
+    expect(listConversations(hook.api)[0].messages).toHaveLength(2);
+    expect(hook.busyChanged.mock.calls).toEqual([[true], [false]]);
+    expect(hook.result.current.run.summary).toMatchObject({ status: 'incomplete', reason: 'execution_detached' });
+    expect(hook.result.current.run.canRetry).toBe(false);
+    act(() => { void hook.result.current.run.retry(); });
+    expect(attempts).toHaveLength(1);
+  });
+
   it('does not offer Retry after the user declines a destructive request', async () => {
     vi.mocked(runTurn).mockResolvedValue(result({ status: 'cancelled', reason: 'confirmation_declined' }));
     const hook = setup();
@@ -242,7 +339,8 @@ describe('useAgentRun ownership and recovery', () => {
     act(() => { decision = opts.confirmClearGraph!({ runId: opts.runId!, toolCallId: 'clear', nodeCount: 2, edgeCount: 1 }, opts.signal); });
     expect(hook.result.current.run.confirmation?.nodeCount).toBe(2);
     hook.rerender({ active: false });
-    expect(opts.signal?.aborted).toBe(true);
+    expect(opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(opts.cancelSignal?.aborted).toBe(false);
     await expect(decision).resolves.toBe(false);
     expect(hook.result.current.run.confirmation).toBeNull();
     act(() => { void hook.result.current.run.start('Offscreen', [], 'edit'); });
@@ -270,7 +368,8 @@ describe('useAgentRun ownership and recovery', () => {
     start(hook);
     const replacement = newConversation('openai', 'test-model');
     act(() => { hook.result.current.setConversation(replacement); });
-    expect(attempts[0].opts.signal?.aborted).toBe(true);
+    expect(attempts[0].opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(attempts[0].opts.cancelSignal?.aborted).toBe(false);
     await act(async () => { attempts[0].resolve(result({ status: 'cancelled' })); });
     expect(hook.result.current.conversation).toEqual(replacement);
     expect(hook.result.current.run.summary).toBeNull();
@@ -285,7 +384,8 @@ describe('useAgentRun ownership and recovery', () => {
     const hook = setup();
     start(hook);
     hook.unmount();
-    expect(attempts[0].opts.signal?.aborted).toBe(true);
+    expect(attempts[0].opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(attempts[0].opts.cancelSignal?.aborted).toBe(false);
     await act(async () => { attempts[0].resolve(result({ status: 'cancelled' })); });
     expect(listConversations(hook.api)[0].messages).toHaveLength(2);
     expect(hook.busyChanged.mock.calls).toEqual([[true]]);

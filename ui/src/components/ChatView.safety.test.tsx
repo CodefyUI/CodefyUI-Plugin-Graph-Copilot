@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Conversation } from '../state/conversations';
 import type { RunTurnOpts } from '../agent/loop';
+import type { TurnResult } from '../agent/types';
 import { newConversation } from '../state/conversations';
 import { ChatView } from './ChatView';
 
@@ -39,11 +40,12 @@ function setup() {
 
 function pendingRun() {
   let opts: RunTurnOpts;
+  let resolve!: (result: TurnResult) => void;
   vi.mocked(runTurn).mockImplementation((value) => {
     opts = value;
-    return new Promise(() => {});
+    return new Promise<TurnResult>((done) => { resolve = done; });
   });
-  return () => opts;
+  return Object.assign(() => opts, { settle: (result: TurnResult) => resolve(result) });
 }
 
 describe('ChatView safe input and recovery', () => {
@@ -120,11 +122,14 @@ describe('ChatView safe input and recovery', () => {
     const { input, latest } = setup();
     fireEvent.change(input, { target: { value: 'Run the training graph' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    act(() => {
-      capture().callbacks.onTurnsCommitted([{ role: 'assistant', content: 'The host run was interrupted.' }]);
-      capture().callbacks.onFinished({ id: 'execution', mode: 'edit', status: 'failed', mutation: 'none',
-        mutationAttempted: false, sideEffectAttempted: true, hostRunId: 'host-execution',
-        appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] } });
+    const outcome: TurnResult = { id: 'execution', mode: 'edit', status: 'failed', mutation: 'none',
+      mutationAttempted: false, sideEffectAttempted: true, hostRunId: 'host-execution',
+      appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] },
+      turns: [{ role: 'assistant', content: 'The host run was interrupted.' }] };
+    await act(async () => {
+      capture().callbacks.onTurnsCommitted(outcome.turns);
+      capture().callbacks.onFinished(outcome);
+      capture.settle(outcome);
     });
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Continue from current graph' }));
@@ -139,10 +144,12 @@ describe('ChatView safe input and recovery', () => {
     const { input, latest } = setup();
     fireEvent.change(input, { target: { value: 'Describe this graph' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    act(() => {
+    await act(async () => {
       capture().callbacks.onTurnsCommitted([]);
       capture().callbacks.onError('HTTP 503: unavailable');
       capture().callbacks.onFinished();
+      capture.settle({ id: 'read', mode: 'edit', status: 'failed', mutation: 'none', mutationAttempted: false,
+        appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] }, turns: [] });
     });
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(2));

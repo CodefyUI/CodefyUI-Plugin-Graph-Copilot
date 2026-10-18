@@ -8,14 +8,19 @@ export interface PreviewSnapshot {
   scenario: ScenarioId;
   entry: 'source' | 'bundle';
   manual: boolean;
+  serverOwned: boolean;
+  lateInitialId: boolean;
+  unreadableRunHistory: boolean;
   graph: SampleGraph;
   revision: number;
   receipts: GraphReceipt[];
   requests: MockRequest[];
   pending: PendingResponse[];
+  runEventPolls: PendingResponse[];
   blocked: string[];
   executions: MockExecution[];
   executionPending: number;
+  activeRun: unknown;
   conversations: unknown[];
   widgets: string[];
 }

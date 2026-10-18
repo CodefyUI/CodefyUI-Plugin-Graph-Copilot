@@ -10,20 +10,22 @@
  *    notifyRunFinished fires once with the final status.
  * 5. Stop run -> POSTs /cancel; button becomes disabled "Stopping…", then
  *    re-enables if the cancel call fails instead of stranding it disabled.
- * 6. Dismiss (live) -> aborts the follower, clears the pointer, hides;
- *    never hits /cancel.
+ * 6. Dismiss (live) -> aborts the follower, retains the pointer, hides;
+ *    never hits /cancel. Unreadable history also retains the reservation.
+ * 7. Missing host ID -> explicit two-step host attestation releases only
+ *    the matching unidentified reservation, never via Dismiss.
  * Plus metricsSummary unit cases (integers, floats, duration formatting,
  * the 3-entry cap).
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { DEFAULT_SETTINGS } from '../state/settings';
 import { resetRunHistoryProbeForTests } from '../agent/runHistory';
 import type { RunRow } from '../agent/runHistory';
-import { readActiveRun, writeActiveRun } from '../agent/runPointer';
+import { readActiveRun, writeActiveRun, readUnidentifiedRun, writeUnidentifiedRun } from '../agent/runPointer';
 
 vi.mock('./notify', () => ({ notifyRunFinished: vi.fn() }));
 
@@ -214,7 +216,7 @@ describe('RunReattachBanner', () => {
     });
   });
 
-  it('clears the pointer when the host does not support run history (probe fails)', async () => {
+  it('retains the pointer when the host does not support run history', async () => {
     const { api, store } = makeApi(async (url) => {
       if (url.startsWith('/api/runs?limit=1')) return new Response('{"detail":"not found"}', { status: 404 });
       throw new Error(`unexpected url ${url}`);
@@ -225,8 +227,11 @@ describe('RunReattachBanner', () => {
       <RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />,
     );
 
-    await waitFor(() => expect(store.has('active_run')).toBe(false));
+    await screen.findByText('Run status unavailable');
+    expect(store.has('active_run')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(container.firstChild).toBeNull();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
   });
 
   it('clears the pointer when the followed run is deleted mid-follow (row: null)', async () => {
@@ -285,7 +290,7 @@ describe('RunReattachBanner', () => {
     expect(blankRender.getByText('No recorded metrics.')).toBeInTheDocument();
   });
 
-  it('Stop run posts /cancel and disables the button with "Stopping…"', async () => {
+  it('Stop run posts /cancel without claiming a terminal cancellation', async () => {
     const { api, fetchMock } = makeApi(async (url) => {
       if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
       if (url.includes('/cancel')) return json({ cancelled: true });
@@ -306,7 +311,8 @@ describe('RunReattachBanner', () => {
         expect.objectContaining({ method: 'POST' }),
       );
     });
-    expect(screen.getByText('Stopping…')).toBeDisabled();
+    expect(await screen.findByText('Cancellation requested…')).toBeDisabled();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
   });
 
   it('Stop run failure re-enables the button instead of stranding it disabled', async () => {
@@ -337,9 +343,134 @@ describe('RunReattachBanner', () => {
     expect(screen.getByText('Stopping…')).toBeDisabled();
 
     expect(await screen.findByText('Stop run')).not.toBeDisabled();
+    expect(screen.getByText('Cancellation could not be confirmed. The run may still be active.')).toBeInTheDocument();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
   });
 
-  it('Dismiss (live) clears the pointer and hides without hitting /cancel', async () => {
+  it.each(['probe', 'fetch'])('reconciles a successful unavailable Stop after a %s failure without remounting', async (failure) => {
+    let recovered = false;
+    const terminal = deferred<Response>();
+    const { api, fetchMock } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) {
+        return failure === 'probe' && !recovered ? json({ detail: 'unavailable' }, 503) : json({ runs: [], total: 0 });
+      }
+      if (url.endsWith('/cancel')) { recovered = true; return json({ cancelled: true }); }
+      if (url === '/api/runs/run-1') return recovered ? terminal.promise : json({ detail: 'unavailable' }, 503);
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run status unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+    expect(await screen.findByRole('button', { name: 'Cancellation requested…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Checking status…' })).toBeDisabled();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    expect(screen.queryByText('Run cancelled while you were away')).toBeNull();
+    await act(async () => terminal.resolve(json(runPayload({ status: 'cancelled', active: false }))));
+    expect(await screen.findByText('Run cancelled while you were away')).toBeInTheDocument();
+    expect(readActiveRun(api)).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1);
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it.each(['terminal', 'not found'])('Retry status reconciles authoritative %s evidence without cancelling or remounting', async (evidence) => {
+    let attempts = 0;
+    const { api, fetchMock, store } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url === '/api/runs/run-1') {
+        attempts++;
+        if (attempts === 1) return json({ detail: 'unavailable' }, 503);
+        return evidence === 'not found' ? json({ detail: 'not found' }, 404)
+          : json(runPayload({ status: 'succeeded', active: false }));
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run status unavailable');
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
+    await waitFor(() => expect(store.has('active_run')).toBe(false));
+    if (evidence === 'terminal') expect(screen.getByText('Run succeeded while you were away')).toBeInTheDocument();
+    else expect(screen.queryByLabelText('Background graph run')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(0);
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it('preserves a cancellation request on failed reconciliation, then retries into a single live follower', async () => {
+    let available = false;
+    const terminal = deferred<Response>();
+    const { api, fetchMock } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url.endsWith('/cancel')) return json({ cancelled: true });
+      if (url.includes('/events')) return terminal.promise;
+      if (url === '/api/runs/run-1') return available ? json(runPayload()) : json({ detail: 'unavailable' }, 503);
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run status unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/runs/run-1')).toHaveLength(2));
+    expect(screen.getByRole('button', { name: 'Cancellation requested…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Retry status' })).toBeEnabled();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    available = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
+    await screen.findByText('Run in progress (reattached)');
+    expect(screen.getByRole('button', { name: 'Cancellation requested…' })).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/events'))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1);
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale unavailable cancel callback after an explicit status retry', async () => {
+    let reads = 0;
+    const cancel = deferred<Response>();
+    const { api, fetchMock } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url.endsWith('/cancel')) return cancel.promise;
+      if (url.includes('/events')) return new Promise<Response>(() => {});
+      if (url === '/api/runs/run-1') return ++reads === 1 ? json({ detail: 'unavailable' }, 503) : json(runPayload());
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run status unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+    expect(screen.getByRole('button', { name: 'Stopping…' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
+    await screen.findByText('Run in progress (reattached)');
+    await act(async () => cancel.resolve(json({ cancelled: true })));
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Cancellation requested…' })).toBeNull();
+    expect(screen.getByText('Cancellation could not be confirmed. The run may still be active.')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/events'))).toHaveLength(1);
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+  });
+
+  it('ignores retried terminal evidence after Dismiss even when HTTP ignores abort', async () => {
+    let attempts = 0;
+    const terminal = deferred<Response>();
+    const { api } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url === '/api/runs/run-1') return ++attempts === 1 ? json({ detail: 'unavailable' }, 503) : terminal.promise;
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    const { container } = render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run status unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
+    await waitFor(() => expect(attempts).toBe(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await act(async () => terminal.resolve(json(runPayload({ status: 'succeeded', active: false }))));
+    expect(container.firstChild).toBeNull();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it('Dismiss (live) retains the pointer and hides without hitting /cancel', async () => {
     const { api, store, fetchMock } = makeApi(async (url) => {
       if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
       if (url.includes('/events')) return new Promise<Response>(() => {}); // long poll never resolves
@@ -356,8 +487,148 @@ describe('RunReattachBanner', () => {
     fireEvent.click(screen.getByText('Dismiss'));
 
     expect(container.firstChild).toBeNull();
-    expect(store.has('active_run')).toBe(false);
+    expect(store.has('active_run')).toBe(true);
     expect(fetchMock.mock.calls.some(([callUrl]) => String(callUrl).includes('/cancel'))).toBe(false);
+  });
+
+  it.each(['unauthorized', 'server error', 'offline', 'malformed probe', 'malformed run', 'mismatched run', 'unknown status', 'inconsistent terminal'])
+    ('retains the reservation on %s and still offers explicit Stop', async (failure) => {
+      const { api, fetchMock } = makeApi(async (url) => {
+        if (url.endsWith('/cancel')) return new Response('', { status: 503 });
+        if (url.startsWith('/api/runs?limit=1')) {
+          if (failure === 'unauthorized') return json({ detail: 'unauthorized' }, 401);
+          if (failure === 'server error') return json({ detail: 'unavailable' }, 503);
+          if (failure === 'offline') throw new TypeError('Offline');
+          if (failure === 'malformed probe') return json({ ok: true });
+          return json({ runs: [], total: 0 });
+        }
+        if (url === '/api/runs/run-1') {
+          if (failure === 'malformed run') return json({ status: 'succeeded' });
+          if (failure === 'mismatched run') return json({ ...runPayload(), id: 'other-run' });
+          if (failure === 'unknown status') return json(runPayload({ status: 'mystery', active: false }));
+          return json(runPayload({ status: 'succeeded', active: true }));
+        }
+        throw new Error(`unexpected url ${url}`);
+      });
+      writeActiveRun(api, POINTER);
+      render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+      await screen.findByText('Run status unavailable');
+      expect(readActiveRun(api)?.runId).toBe('run-1');
+      expect(notifyRunFinished).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+      await screen.findByText('Cancellation could not be confirmed. The run may still be active.');
+      expect(fetchMock).toHaveBeenCalledWith('/api/runs/run-1/cancel', { method: 'POST' });
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(readActiveRun(api)?.runId).toBe('run-1');
+    });
+
+  it.each(['unreadable', 'malformed', 'still live'])('never accepts %s final follower evidence as terminal', async (failure) => {
+    let reads = 0;
+    const { api } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url.includes('/events')) return json({ status: 'succeeded', events: [], cursor: 0 });
+      if (url === '/api/runs/run-1') {
+        reads++;
+        if (reads === 1) return json(runPayload());
+        if (failure === 'unreadable') return json({ detail: 'unavailable' }, 503);
+        if (failure === 'malformed') return json({ ...runPayload(), status: 'future_terminal', active: false });
+        return json(runPayload());
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run status unavailable');
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it('ignores a terminal follower response after Dismiss even when HTTP ignores abort', async () => {
+    const events = deferred<Response>();
+    const { api, fetchMock } = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url.includes('/events')) return events.promise;
+      if (url === '/api/runs/run-1') return json(runPayload());
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(api, POINTER);
+    const { container } = render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run in progress (reattached)');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await act(async () => events.resolve(json({ status: 'succeeded', events: [], cursor: 0 })));
+    expect(container.firstChild).toBeNull();
+    expect(readActiveRun(api)?.runId).toBe('run-1');
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+    // The legacy follower may finish its own loose wrap-up read even when the
+    // host ignores abort, but no new strict read or observer is started.
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/runs/run-1')).toHaveLength(2);
+    expect(fetchMock.mock.calls.at(-1)?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it('ignores old cancellation responses after Dismiss and an API scope change', async () => {
+    const cancel = deferred<Response>();
+    const old = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url.endsWith('/cancel')) return cancel.promise;
+      if (url.includes('/events')) return new Promise<Response>(() => {});
+      if (url === '/api/runs/run-1') return json(runPayload());
+      throw new Error(`unexpected url ${url}`);
+    });
+    const next = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url.includes('/events')) return new Promise<Response>(() => {});
+      if (url === '/api/runs/run-1') return json(runPayload());
+      throw new Error(`unexpected url ${url}`);
+    });
+    writeActiveRun(old.api, POINTER);
+    writeActiveRun(next.api, POINTER);
+    const view = render(<RunReattachBanner api={old.api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run in progress (reattached)');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    view.rerender(<RunReattachBanner api={next.api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    await screen.findByText('Run in progress (reattached)');
+    await act(async () => cancel.resolve(json({ cancelled: true })));
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled();
+    expect(screen.queryByText('Cancellation requested…')).toBeNull();
+    expect(readActiveRun(old.api)?.runId).toBe('run-1');
+    expect(readActiveRun(next.api)?.runId).toBe('run-1');
+  });
+
+  it('requires two-step host attestation to release an unidentified reservation, not Dismiss', () => {
+    const { api, fetchMock } = makeApi(async () => { throw new Error('unexpected request'); });
+    const pointer = { submissionId: 'submission-1', reason: 'Train', submittedAt: 100, timeoutMinutes: 5, device: 'cpu' };
+    writeUnidentifiedRun(api, pointer);
+    const first = render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    expect(screen.getByText('Submitted run identity unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop run' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(readUnidentifiedRun(api)).toEqual(pointer);
+    first.unmount();
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'I checked the host; no run is active' }));
+    expect(readUnidentifiedRun(api)).toEqual(pointer);
+    expect(screen.getByText('This only releases the local reservation. It does not stop a host run or verify its status.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep reservation' }));
+    expect(readUnidentifiedRun(api)).toEqual(pointer);
+    fireEvent.click(screen.getByRole('button', { name: 'I checked the host; no run is active' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Release reservation' }));
+    expect(readUnidentifiedRun(api)).toBeNull();
+    expect(screen.queryByText('Submitted run identity unavailable')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(notifyRunFinished).not.toHaveBeenCalled();
+  });
+
+  it('does not release a newer unidentified submission using an older attestation', () => {
+    const { api } = makeApi(async () => { throw new Error('unexpected request'); });
+    writeUnidentifiedRun(api, { submissionId: 'old', reason: 'Old', submittedAt: 100, timeoutMinutes: 5 });
+    render(<RunReattachBanner api={api} settings={DEFAULT_SETTINGS} onAskAgent={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'I checked the host; no run is active' }));
+    const replacement = { submissionId: 'new', reason: 'New', submittedAt: 200, timeoutMinutes: 5 };
+    writeUnidentifiedRun(api, replacement);
+    fireEvent.click(screen.getByRole('button', { name: 'Release reservation' }));
+    expect(readUnidentifiedRun(api)).toEqual(replacement);
+    expect(screen.getByRole('button', { name: 'I checked the host; no run is active' })).toBeInTheDocument();
   });
 
   it('unmount aborts the follower but keeps the pointer (next mount re-offers)', async () => {

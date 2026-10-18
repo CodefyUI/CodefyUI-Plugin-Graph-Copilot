@@ -70,7 +70,7 @@ sidebar_label: 圖編輯
 | Agent 狀態 | 意義 |
 | --- | --- |
 | `completed` | Agent 完成有上限的流程，無未解決工具錯誤；本身不證明 pipeline 執行成功。 |
-| `cancelled` | Turn 停止，含拒絕清空。UI 顯示 **Stopped**；先前效果仍保留。 |
+| `cancelled` | 瀏覽器 turn 停止，含拒絕清空。UI 顯示 **Stopped**；停止觀察已提交的宿主 run 時顯示 **Detached**。兩者都不撤銷先前效果。 |
 | `failed` | Request、串流、初始化或宿主錯誤結束 turn。復原前查看畫布與執行證據。 |
 | `incomplete` | 無法確立完成，例如上限耗盡、回執／驗證 unavailable 或 stale。 |
 
@@ -108,9 +108,9 @@ Verified portable study 可把 captured redacted GraphOps 套回 redacted baseli
 
 ## 保留位置與重新追蹤
 
-開啟 Settings／History／Experiment Lab 或關閉面板會停止**目前 Agent turn**，但聊天保持 mounted，保留該對話的草稿與待送附件。這是記憶體面板 session 便利性，不跨重整保存草稿。等結束後才切換／建立對話；晚到 callback 可儲存原對話，不能覆寫另一個活動聊天。
+開啟 Settings／History／Experiment Lab 或關閉面板會停止**瀏覽器 Agent turn**並拒絕未決核准，但聊天保持 mounted，保留該對話的草稿與待送附件。若已提交 server-owned 即時執行，被動離開會等 ID 保存後停止觀察，不取消宿主 run；舊版 socket-owned 執行則取消。明確 Stop 在兩種宿主都要求取消。這是記憶體面板 session 便利性，不跨重整保存草稿。等結束後才切換／建立對話；晚到 callback 可儲存原對話，不能覆寫另一個活動聊天。
 
-Server-owned 宿主的已提交執行可能跨重整或連線中斷繼續。Reattach 卡追蹤既有執行，不重新提交。**Detach／Dismiss 或隱藏既有 follower 只停止觀察；明確 Stop run 才要求取消。** 離開期間完成的卡片顯示紀錄指標，可填入 `get_run` 摘要提示；重新追蹤不接續瀏覽器 Agent 或整份研究。
+Server-owned 宿主的已提交執行可能跨重整或連線中斷繼續。原 owner 結束並保存 run ID 後，Reattach 卡追蹤既有執行，不重新提交。**Detach／Dismiss 或隱藏 follower 只停止觀察；明確 Stop run 才要求取消。** Dismiss 與無法讀取的執行紀錄不解除防止重複提交的 reservation。離開期間完成的卡片顯示紀錄指標，可填入 `get_run` 摘要提示；重新追蹤不接續瀏覽器 Agent 或整份研究。
 
 已儲存工具呼叫是脈絡，不是重播命令。Provider 歷史保留完整 assistant／tool-call／result 群組，排除孤立 legacy 結果；見[架構](./architecture.md)。
 

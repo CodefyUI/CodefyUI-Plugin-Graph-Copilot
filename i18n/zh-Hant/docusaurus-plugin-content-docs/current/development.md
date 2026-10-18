@@ -35,6 +35,8 @@ pnpm --dir ui preview:dev
 | Query | 行為 |
 | --- | --- |
 | `?scenario=edit` | 查詢 schema、套用一批圖操作、結構驗證 |
+| `?scenario=native-run&serverOwned=1` | 記憶體中的 server-owned 執行；關閉 observer 不停止宿主 fixture |
+| `&lateInitialId=1` | 第一個宿主 run ID 暫停，直到 **Release next simulated run event**；供關閉／重開競態測試 |
 | `&manual=1` | Mock 聊天／驗證回應暫停，直到你明確按 **Release next response**；適合檢查 Stop／導覽競態 |
 | `&bundle=1` | 載入現存的實際 `frontend/index.js`，而非 `ui/src/index.tsx`；不會重建 |
 
@@ -62,10 +64,11 @@ Agent 整合測試應使用真實 `runTurn` + `streamChat`，搭配可變動的�
 
 - Turn 前、串流／驗證／research／核准期間、`done` 後工具前、工具之間取消；Stop 後不再派送新畫布修改**或執行**；
 - 缺少／格式錯誤終止事件、indexed 回執缺漏／重複、部分修改、宿主修改在派送後拋錯；
-- Ask 對全部四個畫布／執行工具強制唯讀、singleton／快照綁定清空核准、拒絕不繞過、Settings／History／Lab 導覽或關閉取消；
+- Ask 對全部四個畫布／執行工具強制唯讀、singleton／快照綁定清空核准、拒絕不繞過、Settings／History／Lab 導覽或關閉時取消瀏覽器 turn；
 - 僅本次修改驗證／修復（含已套用 promotion）、成功回執 allowlist（不改無關節點／輸入、不用衝突 ref）、unavailable 與 invalid 區別、stale 快照及上限耗盡時 incomplete；
 - 只有 `!mutationAttempted && !sideEffectAttempted` 才 Retry，原始使用者要求保留一次；已嘗試／未知寫入或執行後不重播／重提交；完整 assistant／tool 歷史群組；
-- 新提交即時執行的原生取消／清理，對比既有 run follower abort／unmount 只停止觀察；未知 socket 失敗保留 run ID／pointer 供查詢，不證明取消；
+- 明確 Stop／timeout 原生取消，對比已提交 server-owned run 的 passive detach；晚到 ID、立即關閉重開、legacy socket ownership、等待 ID 期間 Stop 升級取消；
+- Follower abort／Dismiss 只停止觀察且保留 live reservation；無法讀取紀錄與未知 socket 失敗保留 run ID／pointer，不假稱取消或允許重複提交；
 - 研究核准／預算、確定性搜尋、promotion revision／fingerprint 衝突、schema-redacted evidence、canonical bundle 驗證、明確匯入不執行／套用，以及 storage 失敗不重跑；
 - Rich catalog／effort 協商、保留已選模型、快取／明確 Refresh，以及 custom endpoint 不自動 discovery；
 - 隱藏檢視時保留草稿／附件、對話 ID 防護、設定就緒與重複送出防護、IME、歷史鍵盤刪除、焦點還原、固定閱讀位置。

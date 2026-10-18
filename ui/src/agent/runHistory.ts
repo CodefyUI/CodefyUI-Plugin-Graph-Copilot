@@ -9,6 +9,7 @@
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { lossFromProgress, normalizeNodeStatus } from './wireOutputs';
 import { TERMINAL_NODE_STATUSES } from './runGraph';
+import { awaitWithSignal, throwIfAborted } from './toolGuards';
 
 type HttpApi = Pick<CodefyUIPluginAPI, 'http'>;
 
@@ -67,6 +68,22 @@ export async function probeRunHistory(api: HttpApi, signal?: AbortSignal): Promi
   } catch {
     return false;
   }
+}
+
+/** Fresh ownership probe for execution and pointer cleanup. Only a missing or
+ * unsupported endpoint means legacy ownership; authentication, transport and
+ * malformed responses are unknown, not evidence that a previous run stopped.
+ * Kept separate from the lenient cached read-only feature probe above. */
+export async function probeRunHistoryStrict(api: HttpApi, signal?: AbortSignal): Promise<boolean> {
+  throwIfAborted(signal);
+  const response = await awaitWithSignal(api.http.fetch('/api/runs?limit=1', { signal }), signal);
+  throwIfAborted(signal);
+  if (response.status === 404 || response.status === 405) return false;
+  if (!response.ok) throw new Error(`Run ownership is unavailable: HTTP ${response.status}`);
+  const payload = asRecord(await awaitWithSignal(response.json(), signal));
+  throwIfAborted(signal);
+  if (!payload || !Array.isArray(payload.runs)) throw new Error('Run ownership is unavailable: malformed run history.');
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +221,29 @@ export async function fetchRun(
   }
 
   return parseRunRow(json);
+}
+
+/** Safety-sensitive lookup: null means an authoritative run-specific 404 only.
+ * Unknown statuses, contradictory terminal rows, invalid JSON and mismatched
+ * identities cannot release a live-run reservation or announce completion. */
+export async function fetchRunStrict(
+  api: HttpApi,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<RunRow | null> {
+  throwIfAborted(signal);
+  const response = await awaitWithSignal(api.http.fetch(`/api/runs/${encodeURIComponent(runId)}`, { signal }), signal);
+  throwIfAborted(signal);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`fetch run failed: HTTP ${response.status}`);
+  const raw: unknown = await awaitWithSignal(response.json(), signal);
+  throwIfAborted(signal);
+  const row = parseRunRow(raw);
+  const terminal = row && ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(row.status);
+  if (!row || row.runId !== runId || (!ACTIVE_RUN_STATUSES.has(row.status) && !terminal) || (terminal && row.active)) {
+    throw new Error('fetch run failed: malformed or unknown run state.');
+  }
+  return row;
 }
 
 export async function fetchRunArtifacts(

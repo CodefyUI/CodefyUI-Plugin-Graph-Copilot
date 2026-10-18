@@ -107,7 +107,7 @@ export interface ChatWindowProps {
   onClose: () => void;
   open?: boolean;
   panelId?: string;
-  onStopReady?: (stop: () => void) => void;
+  onDetachReady?: (detach: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,19 +128,19 @@ export function ChatWindow({
   onClose,
   open = true,
   panelId = 'graph-copilot-panel',
-  onStopReady,
+  onDetachReady,
 }: ChatWindowProps) {
   const [view, setView] = useState<View>('chat');
   const [panelMode, setPanelMode] = useState<PanelMode>('compact');
   const [graphStats, setGraphStats] = useState<GraphStats>(() => readGraphStats(api));
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const stopRef = useRef<(() => void) | null>(null);
+  const detachRef = useRef<(() => void) | null>(null);
   const viewRef = useRef<HTMLElement>(null);
-  const registerStop = useCallback((stop: () => void) => {
-    stopRef.current = stop;
-    onStopReady?.(stop);
-  }, [onStopReady]);
+  const registerDetach = useCallback((detach: () => void) => {
+    detachRef.current = detach;
+    onDetachReady?.(detach);
+  }, [onDetachReady]);
   const handleBusy = useCallback((value: boolean) => {
     busyRef.current = value;
     setBusy(value);
@@ -173,11 +173,11 @@ export function ChatWindow({
   };
 
   const navigate = (next: View) => {
-    if (next !== 'chat') stopRef.current?.();
+    if (next !== 'chat') detachRef.current?.();
     setView(next);
   };
   const switchTo = (next: View) => navigate(view === next ? 'chat' : next);
-  const close = () => { stopRef.current?.(); onClose(); };
+  const close = () => { detachRef.current?.(); onClose(); };
 
   const model = settings.models[settings.provider] ?? '';
   const apiVersion = Number.isFinite(api.apiVersion) ? `API v${api.apiVersion}` : 'API legacy';
@@ -278,7 +278,7 @@ export function ChatWindow({
             onOpenHistory={() => navigate('history')}
             active={open && view === 'chat'}
             onBusyChange={handleBusy}
-            onStopReady={registerStop}
+            onDetachReady={registerDetach}
           />
         </div>
 

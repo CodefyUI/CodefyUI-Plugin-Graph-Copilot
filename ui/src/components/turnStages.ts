@@ -317,6 +317,7 @@ function describeRunGraph(args: Record<string, unknown>, result?: ChatTurn): Sta
   const parsed = parseJson(result.content);
   if (!parsed || typeof parsed.status !== 'string') return unknownResult(label, detail, 'Run outcome unknown');
   const runStatus = parsed.status;
+  if (runStatus === 'detached') return unknownResult(label, detail, 'Detached — host run may still be running');
   let status: StageStatus;
   switch (runStatus) {
     case 'complete': status = 'ok'; break;
@@ -395,7 +396,9 @@ export function describeStage(stage: ToolStage, active = false): StageDescriptio
     switch (result.toolOutcome) {
       case 'cancelled': return { label, summary: 'Stopped', status: 'cancelled', detail };
       case 'not_executed': return { label, summary: 'Not executed', status: 'not_executed', detail };
-      case 'unknown': return unknownResult(label, detail);
+      case 'unknown': return unknownResult(label, detail,
+        call.name === 'run_graph' && parseJson(result.content)?.status === 'detached'
+          ? 'Detached — host run may still be running' : 'Outcome unknown');
       case 'error': return { label, summary: typeof error === 'string' ? truncate(error, 120) : 'Tool failed', status: 'error', detail };
     }
     if (typeof error === 'string') return { label, summary: truncate(error, 120), status: 'error', detail };

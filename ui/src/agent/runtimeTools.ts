@@ -16,10 +16,13 @@ import {
   DEFAULT_RUN_TIMEOUT_MINUTES, MAX_RUN_TIMEOUT_MINUTES, fetchDefaultDevice, runLiveGraph,
 } from './runGraph';
 import {
-  fetchRun, fetchRunArtifacts, fetchRunList, isTerminalRunStatus, probeRunHistory,
+  fetchRun, fetchRunArtifacts, fetchRunList, fetchRunStrict, isTerminalRunStatus, probeRunHistory, probeRunHistoryStrict,
 } from './runHistory';
-import { clearActiveRun, readActiveRun, writeActiveRun } from './runPointer';
+import {
+  clearActiveRun, readActiveRunStrict, readUnidentifiedRunStrict, writeActiveRun, writeUnidentifiedRun,
+} from './runPointer';
 import { awaitWithSignal, comparisonSnapshot, isAbortError, throwIfAborted } from './toolGuards';
+import { isPassiveDetach } from './abortReasons';
 
 export const READ_ONLY_TOOLS = new Set([
   'get_current_graph', 'get_node_schemas', 'validate_graph', 'research', 'list_runs', 'get_run',
@@ -53,6 +56,7 @@ export class RuntimeToolExit extends Error {
 export interface RuntimeContext {
   api: CodefyUIPluginAPI;
   signal?: AbortSignal;
+  cancelSignal?: AbortSignal;
   callbacks: TurnCallbacks;
   budget: { remaining: number };
   validate(): Promise<CurrentGraphValidation>;
@@ -113,24 +117,45 @@ function declined(context: RuntimeContext, content: string, reason = 'execution_
 }
 
 async function liveRun(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
-  const { api, signal, callbacks } = context;
-  const args = call.arguments;
   if (liveRunInFlight) return error('A live graph run is already in progress. Wait for it to finish or cancel it before starting another.');
-  const previousPointer = readActiveRun(api);
+  // Reserve before pointer/probe/approval awaits, not just runner dispatch. A
+  // second turn must not clear or replace ownership while this one is pending.
+  liveRunInFlight = true;
+  try { return await approvedLiveRun(call, context); }
+  finally { liveRunInFlight = false; }
+}
+
+async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
+  const { api, signal, cancelSignal, callbacks } = context;
+  const assertActive = (): void => { throwIfAborted(signal); throwIfAborted(cancelSignal); };
+  assertActive();
+  const args = call.arguments;
+  let previousPointer;
+  try {
+    if (readUnidentifiedRunStrict(api)) return error('A previous host submission has no known run ID and may still be running. Inspect host runs, then explicitly release its reservation from the reattach card only after confirming no run is active. Do not retry execution.');
+    previousPointer = readActiveRunStrict(api);
+  } catch {
+    return error('Cannot safely read the stored host-run reservation. No execution was submitted; restore storage access and inspect host runs before starting another run.');
+  }
   if (previousPointer) {
-    const supported = await awaitWithSignal(probeRunHistory(api, signal), signal);
-    throwIfAborted(signal);
-    if (supported) {
-      let row;
-      try { row = await awaitWithSignal(fetchRun(api, previousPointer.runId, signal), signal); }
-      catch (err) { throwIfAborted(signal); if (isAbortError(err)) throw err; row = null; }
-      throwIfAborted(signal);
+    try {
+      if (!(await awaitWithSignal(probeRunHistoryStrict(api, signal), signal))) return error(
+        `Run ${previousPointer.runId} is still reserved. This host cannot currently inspect that run; unsupported history is not evidence that it stopped. Reattach or inspect the host before starting another run.`,
+      );
+      assertActive();
+      const row = await awaitWithSignal(fetchRunStrict(api, previousPointer.runId, signal), signal);
+      assertActive();
       if (row && !isTerminalRunStatus(row.status)) return error(
         `Run ${previousPointer.runId} is still ${row.status} on the host${previousPointer.reason ? ` (${previousPointer.reason})` : ''}. `
         + 'One run at a time: wait for it, or the user can stop it from the reattach card (reopen or reload the panel to see it).',
       );
+      // Only a run-specific missing/terminal response releases this identity.
+      clearActiveRun(api, previousPointer.runId);
+    } catch (err) {
+      assertActive();
+      if (isAbortError(err)) throw err;
+      return error(`Run ${previousPointer.runId} is still reserved because its host state could not be read. Reattach and inspect it before starting another run.`);
     }
-    clearActiveRun(api, previousPointer.runId);
   }
   const reason = typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim().slice(0, 300) : 'Run the current graph.';
   const rawTimeout = typeof args.timeout_minutes === 'number' && Number.isFinite(args.timeout_minutes) ? Math.round(args.timeout_minutes) : DEFAULT_RUN_TIMEOUT_MINUTES;
@@ -161,69 +186,103 @@ async function liveRun(call: WireToolCall, context: RuntimeContext): Promise<Run
   throwIfAborted(signal);
   if (approved !== true) declined(context, 'The run was not approved by the user.');
   if (graphSemanticFingerprint(api) !== fingerprint) declined(context, 'The graph changed while the run approval was open. Re-read, re-validate, and propose the run again.', 'execution_stale');
+  // Resolve ownership before dispatch. A transient unreadable history endpoint
+  // cannot downgrade a current host to socket-owned cancellation semantics.
+  let serverOwnedRuns: boolean;
+  try { serverOwnedRuns = await awaitWithSignal(probeRunHistoryStrict(api, signal), signal); }
+  catch (err) {
+    assertActive();
+    if (isAbortError(err)) throw err;
+    return error('Cannot safely determine host run ownership. No execution was submitted; inspect the host connection before requesting approval again.');
+  }
+  assertActive();
+  if (graphSemanticFingerprint(api) !== fingerprint) declined(context, 'The graph changed while checking host ownership; the previous approval is stale.', 'execution_stale');
   context.phase('tools');
-  throwIfAborted(signal);
+  assertActive();
   // Final read after the phase observer, immediately before approved dispatch.
   if (graphSemanticFingerprint(api) !== fingerprint) declined(context, 'The graph changed before execution; the previous approval is stale.', 'execution_stale');
-  if (liveRunInFlight) return error('A live graph run is already in progress. Wait for it or cancel it before starting another.');
-  throwIfAborted(signal);
-  liveRunInFlight = true;
+  assertActive();
+  const submittedAt = Date.now();
+  const unidentifiedPointer = {
+    submissionId: `submission-${submittedAt.toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    reason, submittedAt, timeoutMinutes, ...(device ? { device } : {}),
+  };
   context.dispatched();
+  let outcome;
   try {
-    let outcome;
-    try {
-      // Do not awaitWithSignal here: native cancellation has a cleanup handshake.
-      outcome = await runLiveGraph(api, {
-        signal, timeoutMs: timeoutMinutes * 60_000, ...(device ? { device } : {}),
-        approvedGraph: graph,
-        beforeExecute: () => {
-          throwIfAborted(signal);
-          if (graphSemanticFingerprint(api) !== fingerprint) declined(context, 'The graph changed during execution bootstrap or connection; re-read, re-validate, and request approval again.', 'execution_stale');
-        },
-        onProgress: (update) => { if (!signal?.aborted || update.phase === 'cancelling') observe(() => callbacks.onRunProgress?.(update)); },
-        onRunId: (id) => {
-          context.hostRunStarted(id);
-          try { writeActiveRun(api, { runId: id, reason, submittedAt: Date.now(), timeoutMinutes, ...(device ? { device } : {}) }); } catch { /* identity remains in authoritative summary */ }
-        },
-      });
-    } catch (err) {
-      if (err instanceof RuntimeToolExit) throw err;
-      context.record(JSON.stringify({ outcome: 'unknown', error: `Run failed after dispatch: ${String(err)}` }), 'unknown');
-      throw new RuntimeToolExit('failed', 'execution_unknown', 'The execution runner failed after dispatch. External effects may have occurred; do not retry.');
+    // Do not awaitWithSignal here: native cancellation has a cleanup handshake.
+    outcome = await runLiveGraph(api, {
+      signal, cancelSignal, serverOwnedRuns, timeoutMs: timeoutMinutes * 60_000, ...(device ? { device } : {}),
+      approvedGraph: graph,
+      beforeExecute: () => {
+        assertActive();
+        if (graphSemanticFingerprint(api) !== fingerprint) declined(context, 'The graph changed during execution bootstrap or connection; re-read, re-validate, and request approval again.', 'execution_stale');
+      },
+      onProgress: (update) => { if ((!signal?.aborted && !cancelSignal?.aborted) || update.phase === 'cancelling') observe(() => callbacks.onRunProgress?.(update)); },
+      onRunId: (id) => {
+        // Persist ownership before notifying observers, including after abort.
+        writeActiveRun(api, { runId: id, reason, submittedAt, timeoutMinutes, ...(device ? { device } : {}) });
+        context.hostRunStarted(id);
+      },
+    });
+  } catch (err) {
+    if (err instanceof RuntimeToolExit) throw err;
+    context.record(JSON.stringify({ outcome: 'unknown', error: `Run failed after dispatch: ${String(err)}` }), 'unknown');
+    throw new RuntimeToolExit('failed', 'execution_unknown', 'The execution runner failed after dispatch. External effects may have occurred; do not retry.');
+  }
+  if (outcome.runId) {
+    // Defensive for adapters that only return the identity in their receipt.
+    writeActiveRun(api, { runId: outcome.runId, reason, submittedAt, timeoutMinutes, ...(device ? { device } : {}) });
+    context.hostRunStarted(outcome.runId);
+  }
+  const { durationMs, textTail, media, ...rest } = outcome;
+  const refs = (media ?? []).map(({ data, ...ref }) => ({ ...ref, ...(data ? { inline_preview: true } : {}) }));
+  const receipt = {
+    ...rest, ...(device ? { device } : {}), duration_s: Math.round(durationMs / 1000),
+    ...(textTail ? { text_tail: textTail } : {}), ...(refs.length ? { media: refs } : {}),
+  };
+  if (outcome.status === 'detached') {
+    // Record ownership/evidence before the loop sees its aborted browser signal.
+    // Detach is unknown observation, not host completion or cancellation.
+    if (!outcome.runId && serverOwnedRuns && outcome.submitted === true) writeUnidentifiedRun(api, unidentifiedPointer);
+    context.record(JSON.stringify({
+      ...receipt, run_may_still_be_running: true,
+      ...(serverOwnedRuns && (outcome.submitted === true || outcome.runId) && !outcome.error ? { run_continues: true } : {}),
+    }), 'unknown');
+    throw new RuntimeToolExit('cancelled', 'execution_detached', outcome.runId
+      ? 'Stopped following the server-owned host run. Reattach to inspect it; no cancellation was requested.'
+      : 'Stopped following a submitted host run whose identity is unavailable. Inspect host runs before releasing its reservation; do not retry execution.');
+  }
+  const unconfirmedStop = (outcome.status === 'cancelled' || outcome.status === 'timeout') && outcome.cancelConfirmed !== true;
+  // A socket error is not authoritative terminal host evidence, including when
+  // the browser signal was aborted. Start unknown; strict REST may resolve it.
+  let mayStillRun = unconfirmedStop || (serverOwnedRuns && outcome.status === 'error' && outcome.terminalConfirmed !== true && (outcome.submitted === true || !!outcome.runId));
+  let terminal: ToolOutcome = mayStillRun ? 'unknown' : outcome.status === 'complete' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'error';
+  context.record(JSON.stringify({ ...receipt, ...(mayStillRun ? { run_may_still_be_running: true } : {}) }), terminal);
+  if (outcome.runId) {
+    if (outcome.status === 'error' && mayStillRun && serverOwnedRuns && !signal?.aborted && !cancelSignal?.aborted) {
+      try {
+        if (await awaitWithSignal(probeRunHistoryStrict(api, signal), signal)) {
+          const row = await awaitWithSignal(fetchRunStrict(api, outcome.runId, signal), signal);
+          mayStillRun = row !== null && !isTerminalRunStatus(row.status);
+        }
+      } catch { mayStillRun = true; /* unreadable is never a finish */ }
     }
-    if (outcome.runId) context.hostRunStarted(outcome.runId);
-    const { durationMs, textTail, media, ...rest } = outcome;
-    const refs = (media ?? []).map(({ data, ...ref }) => ({ ...ref, ...(data ? { inline_preview: true } : {}) }));
-    const receipt = {
-      ...rest, ...(device ? { device } : {}), duration_s: Math.round(durationMs / 1000),
-      ...(textTail ? { text_tail: textTail } : {}), ...(refs.length ? { media: refs } : {}),
-    };
-    const unconfirmedStop = (outcome.status === 'cancelled' || outcome.status === 'timeout') && outcome.cancelConfirmed !== true;
-    let terminal: ToolOutcome = unconfirmedStop ? 'unknown' : outcome.status === 'complete' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'error';
-    // Capture the terminal runner receipt before history checks or UI observers.
-    context.record(JSON.stringify({ ...receipt, ...(unconfirmedStop ? { run_may_still_be_running: true } : {}) }), terminal);
-    let mayStillRun = unconfirmedStop;
-    if (outcome.runId) {
-      if (outcome.status === 'error' && !signal?.aborted) {
-        try {
-          if (await awaitWithSignal(probeRunHistory(api, signal), signal)) {
-            const row = await awaitWithSignal(fetchRun(api, outcome.runId, signal), signal);
-            mayStillRun = row !== null && !isTerminalRunStatus(row.status);
-          }
-        } catch { mayStillRun = true; /* never invent a finish after unreadable host state */ }
-      }
-      if (!mayStillRun) { try { clearActiveRun(api, outcome.runId); } catch { /* best effort */ } }
-    }
-    if (mayStillRun) {
-      terminal = 'unknown';
-      context.record(JSON.stringify({ ...receipt, run_may_still_be_running: true }), terminal);
-      throw new RuntimeToolExit(signal?.aborted || outcome.status === 'cancelled' ? 'cancelled' : 'incomplete', 'execution_unknown', 'Cancellation or socket cleanup did not confirm host termination. The run may still be running; reattach and inspect its status before starting another.');
-    }
-    observe(() => callbacks.onRunFinished?.(outcome));
-    if (outcome.status === 'cancelled') throw new RuntimeToolExit('cancelled', 'execution_cancelled', 'The host run was cancelled. External effects are not rolled back.');
-    if (outcome.status !== 'complete') throw new RuntimeToolExit('incomplete', 'execution_failed', 'The host execution did not complete successfully. Inspect its terminal receipt; do not automatically rerun it.');
-    return json(receipt, terminal);
-  } finally { liveRunInFlight = false; }
+    if (!mayStillRun) clearActiveRun(api, outcome.runId);
+  } else if (mayStillRun && serverOwnedRuns && outcome.submitted === true) {
+    writeUnidentifiedRun(api, unidentifiedPointer);
+  }
+  terminal = mayStillRun ? 'unknown' : outcome.status === 'complete' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'error';
+  context.record(JSON.stringify({ ...receipt, ...(mayStillRun ? { run_may_still_be_running: true } : {}) }), terminal);
+  if (mayStillRun) {
+    throw new RuntimeToolExit(signal?.aborted || cancelSignal?.aborted || outcome.status === 'cancelled' ? 'cancelled' : 'incomplete', 'execution_unknown', 'Cancellation or socket cleanup did not confirm host termination. The run may still be running; reattach and inspect its status before starting another.');
+  }
+  // Real terminal evidence may arrive with the first ID during passive cleanup.
+  // Journal it, but never notify an inactive browser turn of a host finish.
+  if (!isPassiveDetach(signal) || cancelSignal?.aborted) observe(() => callbacks.onRunFinished?.(outcome));
+  if (outcome.status === 'cancelled') throw new RuntimeToolExit('cancelled', 'execution_cancelled', 'The host run was cancelled. External effects are not rolled back.');
+  if (outcome.status !== 'complete') throw new RuntimeToolExit('incomplete', 'execution_failed', 'The host execution did not complete successfully. Inspect its terminal receipt; do not automatically rerun it.');
+  return json(receipt, terminal);
 }
 
 async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSearch = false): Promise<RuntimeToolResult> {

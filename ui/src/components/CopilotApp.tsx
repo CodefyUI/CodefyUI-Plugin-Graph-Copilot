@@ -39,11 +39,11 @@ export function CopilotApp({ api }: CopilotAppProps) {
   const [opened, setOpened] = useState(false);
   const panelId = useId();
   const fabRef = useRef<HTMLButtonElement>(null);
-  const stopRef = useRef<(() => void) | null>(null);
+  const detachRef = useRef<(() => void) | null>(null);
   const authRevision = useRef(0);
-  const registerStop = useCallback((stop: () => void) => { stopRef.current = stop; }, []);
+  const registerDetach = useCallback((detach: () => void) => { detachRef.current = detach; }, []);
   const close = () => {
-    stopRef.current?.();
+    detachRef.current?.();
     setOpen(false);
     fabRef.current?.focus();
   };
@@ -208,7 +208,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
         <ChatWindow
           open={open}
           panelId={panelId}
-          onStopReady={registerStop}
+          onDetachReady={registerDetach}
           api={api}
           settings={settings}
           codexLoggedIn={codexLoggedIn}

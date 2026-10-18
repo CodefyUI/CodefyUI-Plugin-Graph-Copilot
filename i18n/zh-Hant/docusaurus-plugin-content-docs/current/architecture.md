@@ -90,7 +90,7 @@ Retry 要求**畫布修改與已核准執行 runner 都未派送**。它重用�
 
 Provider 脈絡有**軟性 20 則訊息預算**，以完整 assistant／tool-call／result 群組選取；最新群組可超限，不被拆開。Legacy 不完整群組盡可能留文字，孤立結果排除而不捏造回執，歷史 call ID 不能變成新派送。
 
-`useAgentRun` 把 callback／儲存綁定擷取的 turn／對話。Settings、History、Experiment Lab 或關閉已開啟面板時，聊天仍 mounted。離開聊天會同步停止**目前新提交 Agent turn**與待核准要求，包含原生即時執行取消／清理，保留 mounted session 草稿／附件。切換／新建對話等結束；晚到 callback 可儲存原對話，不覆寫另一個活動聊天。草稿不跨重整保存。既有 run reattach banner 只在聊天活動時 mounted；unmount 只 abort 追蹤，不取消宿主執行。
+`useAgentRun` 把 callback／儲存綁定擷取的 turn／對話。Settings、History、Experiment Lab 或關閉已開啟面板時，聊天仍 mounted。離開聊天會同步停止**瀏覽器 Agent turn**與待核准要求，保留 mounted session 草稿／附件。已提交的 server-owned 即時執行在取得 ID 後停止觀察而不取消；舊版 socket-owned 執行仍取消。分開的 observation／explicit-cancel signal，讓 Stop 即使在 passive detach 等待 ID 時也能要求取消。切換／新建對話等結束；晚到 callback 可儲存原對話，不覆寫另一個活動聊天。草稿不跨重整保存。Reattach banner 只在聊天活動且原 turn 已結束時 mounted，避免漏掉晚到 ID 或同時有兩個 owner 追蹤；unmount 只停止觀察，不取消宿主執行。
 
 Enter／Send 共用 readiness、busy 與附件防護；同步 latch 防重複啟動，IME 組字不提交。起始／run-summary 提示只填 composer 供審查。錯誤持續可見、捲動提供 **Jump to latest**、面板 non-modal／受視窗限制、關閉還原焦點並尊重 reduced motion。樣式使用宿主 tokens／fallback，不是新 theme API 契約。
 
@@ -125,11 +125,13 @@ Edit 下 run／train／evaluate 要求可執行**即時畫布圖**並帶真實�
 
 ### 執行紀錄與重新追蹤
 
-CodefyUI 1.3.0 的 run 為 socket-owned；新版 server-owned run 可跨 socket 關閉／重整繼續。明確取消在清理前送 `{action: "cancel"}`。宿主提供 live run ID 後，外掛儲存 `active_run` 指標；未知連線錯誤保留證據，不假定停止。
+切換工作台頁面、關閉面板或 unmount 會停止瀏覽器 Agent 並拒絕未決核准。若已提交至 server-owned-run 宿主，這種被動離開只中斷觀察，不送出 `cancel`。Runner 最多等待五秒取得晚到的宿主 run ID，並保存 `active_run` 指標。重新開啟 Chat 會在原 owner 結束後依指標追蹤，不重新提交圖。若 ID 始終未到達，外掛保留獨立的「身分未確認提交」reservation 並請使用者檢查宿主；解除限制需明確確認宿主沒有活動執行，不能只 dismiss 警告。Detached execution 記錄為仍在執行或未知，不會假稱成功完成或已確認取消。
 
-提供 `/api/runs` 的宿主讓 `list_runs`／`get_run` 讀編輯器啟動的執行。Reattach 卡以 cursor／long polling 追蹤 `GET /api/runs/{id}/events`，沿用 `wireOutputs` 正規化器，顯示狀態／loss、人手 **Stop run**（`POST /api/runs/{id}/cancel`），或離開期間完成的 `final_metrics`。Detach／Dismiss 只停止追蹤。摘要提示只填 composer，不自動送出；仍有活動追蹤 run 時會阻止另一即時提交。
+Composer 的 **Stop** 與 timeout 仍要求取消並等待原生清理證據。時間上限屬於連線中的瀏覽器 runner，不是耐久的宿主 deadline：detach 會清除本機 timer，因此離開追蹤後需透過宿主或 reattach 卡停止執行。CodefyUI 1.3.0 的 run 為 socket-owned，因此被動離開保留舊版取消行為。Server-owned host run 可跨 socket 關閉或頁面重整繼續，但瀏覽器 Agent 與 study coordinator 不會持續執行；重整後恢復追蹤的前提是 run ID 已保存。
 
-介面會 feature-detect；沒有 `/api/runs` 回報 unavailable。Settings → Notifications（預設開啟）在取得瀏覽器權限後，可通知隱藏分頁追蹤執行完成。Reattach 是宿主 run recovery，不是 durable study 協調。
+提供 `/api/runs` 的宿主讓 `list_runs`／`get_run` 讀編輯器啟動的執行。Reattach 卡以 cursor／long polling 追蹤 `GET /api/runs/{id}/events`，沿用 `wireOutputs` 正規化器，顯示狀態／loss、人手 **Stop run**（`POST /api/runs/{id}/cancel`），或離開期間完成的 `final_metrics`。Dismiss 只隱藏卡片並停止追蹤，不清除活動執行的 reservation。摘要提示只填 composer，不自動送出。
+
+活動中或狀態未確認的追蹤 run 都會阻止另一即時提交。未知連線錯誤、授權失敗與無法讀取的紀錄保留 pointer，不假定執行已停止；只有權威終態或執行不存在的證據才允許清除。介面會 feature-detect；沒有 `/api/runs` 回報 unavailable。Settings → Notifications（預設開啟）在取得瀏覽器權限後，可通知隱藏分頁追蹤執行完成；detach 不發送完成通知。Reattach 是宿主 run recovery，不是 durable study 協調。
 
 ## CodefyUI 契約邊界
 

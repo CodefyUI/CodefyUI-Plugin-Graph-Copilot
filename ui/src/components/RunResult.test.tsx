@@ -85,6 +85,17 @@ describe('RunResult', () => {
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
   });
 
+  it('labels a passively detached execution without claiming host cancellation or completion', () => {
+    const { container } = render(<RunResult summary={summary({ status: 'cancelled', reason: 'execution_detached',
+      sideEffectAttempted: true, hostRunId: 'host-run' })} />);
+    expect(screen.getByText('Detached')).toBeInTheDocument();
+    expect(screen.getByText(/host run may still be running.*local timeout monitoring has stopped/i)).toBeInTheDocument();
+    expect(container.querySelector('.gcp-run-result-title')).toHaveTextContent(/^Detached$/);
+    expect(screen.queryByText('Stopped')).toBeNull();
+    expect(screen.queryByText('Completed')).toBeNull();
+    expect(screen.queryByText(/stopping chat/i)).toBeNull();
+  });
+
   it('does not imply chat Stop rolls back execution or study side effects', () => {
     render(<RunResult summary={summary({ status: 'cancelled', sideEffectAttempted: true })} />);
     expect(screen.getByText(/stopping chat does not undo host execution or study changes/i)).toBeInTheDocument();

@@ -1,7 +1,7 @@
 import type { GraphOp } from '../src/types/codefyui';
 import type { WireToolCall } from '../src/llm/client';
 
-export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history';
+export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history';
 
 export interface ChatReply {
   text: string;
@@ -109,6 +109,19 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: 'native-run-reservation', label: 'Detached host run blocks a second execution (simulated)', mode: 'edit', validation: 'actual',
+    prompt: 'Run my current sample graph on CPU after I approve.',
+    replies: [
+      { text: 'I’ll validate the current sample graph before proposing a run.', tools: [tool('mock-run-validate', 'validate_graph')] },
+      { text: 'I’ll run the current graph only after your approval.', tools: [tool('mock-run', 'run_graph', { reason: 'Execute the sample graph using the in-memory mock runner.', timeout_minutes: 1, device: 'cpu' })] },
+      // After the first owner detaches, a second user turn must exercise the
+      // real live-run guard, not merely receive a harmless scripted answer.
+      { text: 'I’ll recheck the graph before proposing another execution.', tools: [tool('mock-reservation-validate', 'validate_graph')] },
+      { text: 'This second proposal must be refused while the earlier host run is live or unconfirmed.', tools: [tool('mock-reservation-run', 'run_graph', { reason: 'Attempt a second run while the earlier run is reserved.', timeout_minutes: 1, device: 'cpu' })] },
+      { text: 'The earlier host run remains reserved. No second execution was submitted.' },
+    ],
+  },
+  {
     id: 'ask-run', label: 'Ask rejects a native run tool', mode: 'ask', validation: 'actual',
     prompt: 'Explain the graph, but do not run or edit it.',
     replies: [{ text: 'This scripted model attempts an unauthorized run so the real Ask guard can refuse it.', tools: [tool('mock-ask-run', 'run_graph', { reason: 'Must be refused in Ask mode.', device: 'cpu' })] }],
@@ -146,6 +159,10 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
 ];
+
+export function isNativeRunScenario(scenario: Scenario): boolean {
+  return scenario.id === 'native-run' || scenario.id === 'native-run-reservation';
+}
 
 export function scenarioById(value: string | null): Scenario {
   return SCENARIOS.find((scenario) => scenario.id === value) ?? SCENARIOS[1];

@@ -227,6 +227,8 @@ export interface RunTurnOpts {
   attachments?: Attachment[];
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
+  /** Explicit host Stop, independent of passive browser-observation teardown. */
+  cancelSignal?: AbortSignal;
   runId?: string;
   mode?: AgentMode;
   confirmClearGraph?: (request: ClearGraphRequest, signal?: AbortSignal) => Promise<boolean>;
@@ -574,7 +576,7 @@ export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
     if (isRuntimeTool(call.name)) {
       let promotionCaptured = false;
       const result = await executeRuntimeTool(call, {
-        api, signal, callbacks, budget: experimentBudget, phase,
+        api, signal, cancelSignal: opts.cancelSignal, callbacks, budget: experimentBudget, phase,
         validate: () => validateCurrentGraph(api, signal),
         dispatched: () => { summary.sideEffectAttempted = true; recordTool(slot, JSON.stringify({ outcome: 'unknown', error: 'The approved runner was dispatched; external effects are not yet known.' }), 'unknown', false); },
         hostRunStarted: (id) => {
@@ -866,15 +868,21 @@ export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
     }
   } catch (error) {
     partial();
-    if (signal?.aborted || isAbortError(error)) {
-      summary.status = 'cancelled';
-      summary.reason = 'aborted';
-      summary.message = summary.sideEffectAttempted ? 'Stopped. Execution and storage side effects may remain; inspect the host run before continuing.' : summary.mutationAttempted ? 'Stopped. Applied or unknown changes are not rolled back.' : 'Stopped before any graph mutation or execution was dispatched.';
-    } else if (error instanceof RunExit || error instanceof RuntimeToolExit) {
+    if (error instanceof RuntimeToolExit) {
+      // Native runner receipts (especially passive detach/unknown Stop) were
+      // already journaled; an aborted browser signal cannot erase their reason.
       summary.status = error.status;
       summary.reason = error.reason;
       summary.message = error.message;
-      if (error instanceof RunExit && error.reportError) observe(() => callbacks.onError(safeText(error.reportError!)));
+    } else if (signal?.aborted || isAbortError(error)) {
+      summary.status = 'cancelled';
+      summary.reason = 'aborted';
+      summary.message = summary.sideEffectAttempted ? 'Stopped. Execution and storage side effects may remain; inspect the host run before continuing.' : summary.mutationAttempted ? 'Stopped. Applied or unknown changes are not rolled back.' : 'Stopped before any graph mutation or execution was dispatched.';
+    } else if (error instanceof RunExit) {
+      summary.status = error.status;
+      summary.reason = error.reason;
+      summary.message = error.message;
+      if (error.reportError) observe(() => callbacks.onError(safeText(error.reportError!)));
     } else {
       summary.status = 'failed';
       summary.reason = 'run_error';

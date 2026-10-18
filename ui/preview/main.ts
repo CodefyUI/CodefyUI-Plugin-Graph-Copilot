@@ -5,7 +5,7 @@ import { createMockHttp } from './http';
 import { createMockExecution } from './execution';
 import { seededConversations } from './history';
 import { LIGHT_HOST_TOKENS } from './hostTokens';
-import { scenarioById, SCENARIOS } from './scenarios';
+import { isNativeRunScenario, scenarioById, SCENARIOS } from './scenarios';
 import type { PreviewSnapshot } from './types';
 
 const params = new URLSearchParams(window.location.search);
@@ -13,6 +13,12 @@ const scenario = scenarioById(params.get('scenario'));
 const manual = params.get('manual') === '1';
 const bundle = params.get('bundle') === '1';
 const lightTokens = params.get('tokens') === 'light';
+// Run lifetime controls are opt-in and restricted to native execution fixtures;
+// adding the same query to Ask/Edit never opens another host/network route.
+const nativeRun = isNativeRunScenario(scenario);
+const serverOwned = nativeRun && params.get('serverOwned') === '1';
+const lateInitialId = serverOwned && params.get('lateInitialId') === '1';
+const unreadableRunHistory = serverOwned && params.get('runHistory') === 'unreadable';
 if (lightTokens) {
   for (const [key, value] of Object.entries(LIGHT_HOST_TOKENS)) document.documentElement.style.setProperty(key, value);
 }
@@ -33,14 +39,16 @@ const byId = <T extends HTMLElement>(id: string): T => {
 };
 
 const graph = createSampleGraph(render);
-const execution = createMockExecution(scenario.id === 'native-run', window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason));
-const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows);
+const execution = createMockExecution(nativeRun, window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason), { serverOwned, lateInitialId });
+const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory });
 
 function snapshot(): PreviewSnapshot {
   const graphState = graph.inspect();
   return {
     ready, scenario: scenario.id, entry: bundle ? 'bundle' : 'source', manual,
+    serverOwned, lateInitialId, unreadableRunHistory,
     ...graphState, ...http.inspect(), ...execution.inspect(),
+    activeRun: JSON.parse(memory.get('active_run') ?? 'null') as unknown,
     conversations: JSON.parse(memory.get('conversations') ?? '[]') as unknown[],
     widgets: [...widgets.keys()],
   };
@@ -70,7 +78,7 @@ function render(): void {
   byId<HTMLButtonElement>('release-response').disabled = state.pending.length === 0;
   byId<HTMLButtonElement>('release-execution').disabled = state.executionPending === 0;
   byId('execution-receipts').textContent = JSON.stringify(state.executions, null, 2);
-  byId('network-state').textContent = `${state.requests.length} mock requests. ${state.pending.length} pending. ${state.requests.filter((request) => request.status === 'aborted').length} aborted. ${state.blocked.length} blocked.`;
+  byId('network-state').textContent = `${state.requests.length} mock requests. ${state.pending.length} pending. ${state.runEventPolls.length} run event polls. ${state.requests.filter((request) => request.status === 'aborted').length} aborted. ${state.blocked.length} blocked.`;
   byId('fixture-state').textContent = ready ? 'Fixture ready.' : 'Loading plugin…';
 }
 

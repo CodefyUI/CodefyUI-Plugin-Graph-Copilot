@@ -25,6 +25,8 @@ vi.mock('../state/attachments', async (importOriginal) => {
 
 import { runTurn } from '../agent/loop';
 import type { RunTurnOpts } from '../agent/loop';
+import type { TurnResult } from '../agent/types';
+import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { readFileAsAttachment } from '../state/attachments';
 import { ChatView } from './ChatView';
 
@@ -86,6 +88,25 @@ describe('ChatView interactions', () => {
     const stopBtn = await screen.findByRole('button', { name: /stop generation/i });
     fireEvent.click(stopBtn);
     expect(capturedSignal?.aborted).toBe(true);
+    expect(capturedSignal?.reason).not.toBe(PASSIVE_DETACH_REASON);
+  });
+
+  it('aborts an in-flight turn with the passive-detach reason on unmount', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
+      capturedSignal = opts.signal;
+      return new Promise<TurnResult>(() => {});
+    });
+    const view = renderChatView(makeFakeApi());
+    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    await userEvent.type(textarea, 'run it');
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+    await screen.findByRole('button', { name: /stop generation/i });
+
+    view.unmount();
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(capturedSignal?.reason).toBe(PASSIVE_DETACH_REASON);
   });
 
   it('shows the drop overlay on drag enter and clears it on drag leave', () => {

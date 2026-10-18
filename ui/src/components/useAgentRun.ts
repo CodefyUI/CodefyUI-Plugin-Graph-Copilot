@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runTurn, type ExperimentApprovalRequest, type RunApprovalRequest } from '../agent/loop';
+import { isPassiveDetach, PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { formatRunStatusLine } from '../agent/runGraph';
 import { appendLossPoint } from './RunSparkline';
 import { notifyRunFinished } from './notify';
@@ -21,6 +22,8 @@ interface Request {
 interface ActiveRun {
   id: string;
   abort: AbortController;
+  /** Explicit Stop can still cancel a host submit after passive browser detach. */
+  cancel: AbortController;
   conversation: Conversation;
   committed: boolean;
   mutationPossible: boolean;
@@ -60,21 +63,28 @@ export function useAgentRun(options: Options) {
   const [runLossSeries, setRunLossSeries] = useState<number[]>([]);
 
   const stop = useCallback(() => {
-    runRef.current?.abort.abort();
+    const run = runRef.current;
+    run?.cancel.abort();
+    run?.abort.abort();
+    pendingDecision.current?.(false);
+  }, []);
+
+  const detach = useCallback(() => {
+    runRef.current?.abort.abort(PASSIVE_DETACH_REASON);
     pendingDecision.current?.(false);
   }, []);
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; stop(); };
-  }, [stop]);
+    return () => { mounted.current = false; detach(); };
+  }, [detach]);
 
   useEffect(() => {
-    if (!options.active) stop();
-  }, [options.active, stop]);
+    if (!options.active) detach();
+  }, [options.active, detach]);
 
   useEffect(() => {
-    stop();
+    detach();
     generation.current = null;
     lastRequest.current = null;
     setError(null);
@@ -86,7 +96,7 @@ export function useAgentRun(options: Options) {
     setRunApproval(null);
     setRunStatusLine(null);
     setRunLossSeries([]);
-  }, [options.conversation.id, stop]);
+  }, [options.conversation.id, detach]);
 
   const decide = useCallback((approve: boolean) => pendingDecision.current?.(approve), []);
 
@@ -116,7 +126,8 @@ export function useAgentRun(options: Options) {
     if (reasoningEffort) conversation.reasoningEffort = reasoningEffort;
     else delete conversation.reasoningEffort;
     const run: ActiveRun = {
-      id, abort: new AbortController(), conversation, committed: false, mutationPossible: false, sideEffectPossible: false, settled: false,
+      id, abort: new AbortController(), cancel: new AbortController(), conversation,
+      committed: false, mutationPossible: false, sideEffectPossible: false, settled: false,
     };
     // Synchronous latch: two submissions in one event cannot create two runs.
     runRef.current = run;
@@ -145,21 +156,24 @@ export function useAgentRun(options: Options) {
       if (isCurrent()) { setLiveTurns([]); setStreamingText(''); }
     };
     const finish = (result?: RunSummary) => {
-      if (result && isCurrent()) setSummary(result);
       if (run.settled) return;
       run.settled = true;
+      if (result && isCurrent()) setSummary(result);
       pendingDecision.current?.(false);
-      if (runRef.current === run) {
-        runRef.current = null;
-        if (mounted.current) {
-          setBusy(false);
-          setConfirmation(null);
-          setExperimentApproval(null);
-          setRunApproval(null);
-          setRunStatusLine(null);
-          setRunLossSeries([]);
-          latest.current.onBusyChange?.(false);
-        }
+    };
+    // Keep the synchronous owner latch until the executor has actually returned.
+    // A late host ID/pointer must be persisted before a reattach follower mounts.
+    const release = () => {
+      if (runRef.current !== run) return;
+      runRef.current = null;
+      if (mounted.current) {
+        setBusy(false);
+        setConfirmation(null);
+        setExperimentApproval(null);
+        setRunApproval(null);
+        setRunStatusLine(null);
+        setRunLossSeries([]);
+        latest.current.onBusyChange?.(false);
       }
     };
 
@@ -194,7 +208,7 @@ export function useAgentRun(options: Options) {
       const result = await runTurn({
         api: current.api, settings: current.settings, history: request.history,
         userText: request.text, attachments: request.attachments.length ? request.attachments : undefined,
-        runId: id, mode: request.mode, signal: run.abort.signal,
+        runId: id, mode: request.mode, signal: run.abort.signal, cancelSignal: run.cancel.signal,
         confirmClearGraph: (value, signal) => requestDecision(() => setConfirmation(value), signal),
         callbacks: {
           onTextDelta: (text) => {
@@ -226,7 +240,7 @@ export function useAgentRun(options: Options) {
             setRunLossSeries((previous) => update.phase === 'connecting' ? [] : appendLossPoint(previous, update));
           },
           onRunFinished: (outcome) => {
-            if (!isCurrent() || run.settled || (outcome.runId && notifiedRuns.has(outcome.runId))) return;
+            if (!isCurrent() || run.settled || run.abort.signal.aborted || (outcome.runId && notifiedRuns.has(outcome.runId))) return;
             if (outcome.runId) notifiedRuns.add(outcome.runId);
             const detail = [
               ...Object.entries(outcome.metrics).slice(0, 2)
@@ -244,18 +258,25 @@ export function useAgentRun(options: Options) {
       if (result && !run.committed) commit(result.turns);
       finish(result);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const detached = isPassiveDetach(run.abort.signal) && !run.cancel.signal.aborted;
+      const message = detached
+        ? run.sideEffectPossible
+          ? 'Stopped observing. A host action may still be running; inspect host runs before repeating it.'
+          : 'The browser agent stopped when the view became inactive.'
+        : cause instanceof Error ? cause.message : String(cause);
       const fallback: RunSummary = {
-        id, mode: request.mode, status: run.abort.signal.aborted ? 'cancelled' : 'failed', message,
-        reason: 'unexpected_error', mutation: run.mutationPossible ? 'unknown' : 'none',
+        id, mode: request.mode, status: detached ? 'incomplete' : run.abort.signal.aborted ? 'cancelled' : 'failed', message,
+        reason: detached ? run.sideEffectPossible ? 'execution_detached' : 'passive_detach' : 'unexpected_error',
+        mutation: run.mutationPossible ? 'unknown' : 'none',
         mutationAttempted: run.mutationPossible, sideEffectAttempted: run.sideEffectPossible, hostRunId: run.hostRunId,
         appliedOps: 0, failedOps: 0,
         validation: { status: 'not_run', errors: [] },
       };
-      if (isCurrent()) setError(message);
+      if (isCurrent() && !run.settled && !detached) setError(message);
       finish(fallback);
     } finally {
       finish();
+      release();
     }
   }, []);
 
@@ -266,7 +287,7 @@ export function useAgentRun(options: Options) {
   return {
     busy, streamingText, liveTurns, phase, summary, error, confirmation,
     experimentApproval, runApproval, runStatusLine, runLossSeries,
-    start, stop, decide, canRetry,
+    start, stop, detach, decide, canRetry,
     retry: () => {
       const request = lastRequest.current;
       if (request && canRetry) return start(request.text, request.attachments, request.mode, true);

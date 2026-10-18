@@ -127,6 +127,14 @@ describe('formatDuration', () => {
 });
 
 describe('describeStage', () => {
+  it.each([undefined, 'unknown'] as const)('labels detached run receipts honestly with local outcome %s', (toolOutcome) => {
+    const stage = describeStage({ call: { id: 'execute', name: 'run_graph', arguments: {} },
+      result: { role: 'tool', tool_call_id: 'execute', content: '{"status":"detached","runId":"host-run"}', toolOutcome } });
+    expect(stage.status).toBe('unknown');
+    expect(stage.summary).toBe('Detached — host run may still be running');
+    expect(stage.summary).not.toMatch(/completed|cancelled|stopped/i);
+  });
+
   it.each(['apply_graph_operations', 'validate_graph', 'get_current_graph', 'get_node_schemas', 'research', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run', 'mystery_tool'])('treats an old missing %s receipt as interrupted, not running', (name) => {
     const stage = { call: { id: 'old', name, arguments: {} } };
     expect(describeStage(stage).status).toBe('interrupted');

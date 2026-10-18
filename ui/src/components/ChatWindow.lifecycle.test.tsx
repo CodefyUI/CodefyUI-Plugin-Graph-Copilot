@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { RunTurnOpts } from '../agent/loop';
 import type { TurnResult } from '../agent/types';
+import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { CopilotApp } from './CopilotApp';
 import { newConversation } from '../state/conversations';
 
@@ -75,13 +76,14 @@ describe('panel navigation owns running work', () => {
     expect(input).toHaveFocus();
   });
 
-  it('stops before opening History and blocks conversation switching until the run settles', async () => {
+  it('detaches before opening History and blocks conversation switching until the browser owner settles', async () => {
     const control = controlled();
     const { input } = setup();
     fireEvent.change(input, { target: { value: 'Request' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
-    expect(control.opts().signal?.aborted).toBe(true);
+    expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(control.opts().cancelSignal?.aborted).toBe(false);
     const newButton = screen.getByRole('button', { name: /New conversation/i });
     expect(newButton).toBeDisabled();
     const resume = screen.getByRole('button', { name: 'Resume conversation: Earlier conversation' });
@@ -92,13 +94,51 @@ describe('panel navigation owns running work', () => {
     expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
   });
 
-  it.each(['Close panel', 'Settings', 'Experiments lab', 'Active model — open settings', 'Graph Copilot'])('stops immediately when using %s', async (name) => {
+  it.each(['Close panel', 'Settings', 'Experiments lab', 'Active model — open settings', 'Graph Copilot'])('detaches immediately when using %s', async (name) => {
     const control = controlled();
     const { input } = setup();
     fireEvent.change(input, { target: { value: 'Request' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     fireEvent.click(screen.getByRole('button', { name }));
-    expect(control.opts().signal?.aborted).toBe(true);
+    expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(control.opts().cancelSignal?.aborted).toBe(false);
     await act(async () => { control.settle(); });
+  });
+
+  it.each(['Close panel', 'Settings', 'Conversation history', 'Graph Copilot'])('rejects pending run approval on passive exit through %s', async (name) => {
+    const control = controlled();
+    const { input, unmount } = setup();
+    fireEvent.change(input, { target: { value: 'Run the graph' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    let decision!: Promise<boolean>;
+    act(() => {
+      decision = control.opts().callbacks.onRunApproval!({ reason: 'Train', nodeCount: 1, edgeCount: 0,
+        nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu' });
+    });
+    expect(screen.getByRole('dialog', { name: 'Run the current graph?' })).toBeVisible();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name }));
+      await expect(decision).resolves.toBe(false);
+    });
+    expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(control.opts().cancelSignal?.aborted).toBe(false);
+    unmount();
+    expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(control.opts().cancelSignal?.aborted).toBe(false);
+    await act(async () => control.settle());
+  });
+
+  it('reopen during a detached pending submit still exposes an explicit Stop signal', async () => {
+    const control = controlled();
+    const { input, fab } = setup();
+    fireEvent.change(input, { target: { value: 'Run the graph' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.click(fab);
+    fireEvent.click(fab);
+    expect(screen.getByRole('textbox', { name: 'Message input' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop generation' }));
+    expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(control.opts().cancelSignal?.aborted).toBe(true);
+    await act(async () => control.settle());
   });
 });

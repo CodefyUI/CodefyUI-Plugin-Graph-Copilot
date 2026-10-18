@@ -1,27 +1,22 @@
-/**
- * RunReattachBanner — offers to reattach to a graph run left behind by a
- * reload (#22). runPointer's pointer survives the reload; this banner
- * probes whether the host still knows about that run, follows it to
- * completion if it is still live, and reports the outcome either way.
- *
- * Purely a reload-recovery path: the in-tab live experience during an
- * active chat turn (composer sparkline, loop.ts's own pointer lifecycle) is
- * a separate concern. This banner only acts on a pointer left by a *past*
- * session — never one the current turn just wrote.
- */
-
+/** Recovery observer for a host run after its browser owner has settled. */
 import React, { useEffect, useRef, useState } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import {
   cancelRunById,
-  fetchRun,
+  fetchRunStrict,
   followRun,
   isTerminalRunStatus,
-  probeRunHistory,
+  probeRunHistoryStrict,
 } from '../agent/runHistory';
 import type { RunRow } from '../agent/runHistory';
-import { clearActiveRun, readActiveRun } from '../agent/runPointer';
+import {
+  clearActiveRun,
+  clearUnidentifiedRun,
+  readActiveRun,
+  readUnidentifiedRun,
+  type UnidentifiedRunPointer,
+} from '../agent/runPointer';
 import { RunSparkline, SPARKLINE_MAX_POINTS } from './RunSparkline';
 import { notifyRunFinished } from './notify';
 
@@ -34,6 +29,8 @@ export interface RunReattachBannerProps {
 
 type BannerState =
   | { kind: 'hidden' }
+  | { kind: 'unidentified'; pointer: UnidentifiedRunPointer; confirmingRelease: boolean }
+  | { kind: 'unavailable'; runId: string; reason: string }
   | {
       kind: 'live';
       runId: string;
@@ -44,10 +41,9 @@ type BannerState =
     }
   | { kind: 'finished'; runId: string; reason: string; row: RunRow };
 
-// ---------------------------------------------------------------------------
-// metricsSummary — up to 3 final metrics + a short duration, one line
-// ---------------------------------------------------------------------------
+type StopState = 'idle' | 'pending' | 'requested' | 'uncertain';
 
+/** Up to three final metrics and a short duration. */
 export function metricsSummary(row: RunRow): string {
   const parts: string[] = [];
   for (const [name, value] of Object.entries(row.finalMetrics).slice(0, 3)) {
@@ -59,69 +55,86 @@ export function metricsSummary(row: RunRow): string {
   return parts.join(' · ');
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBannerProps): React.JSX.Element | null {
   const [state, setState] = useState<BannerState>({ kind: 'hidden' });
-  const [stopping, setStopping] = useState(false);
+  const [stopping, setStopping] = useState<StopState>('idle');
+  const [observationGeneration, setObservationGeneration] = useState(0);
+  const [checking, setChecking] = useState(false);
+  const stopScopeRef = useRef<{ api: CodefyUIPluginAPI; runId: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   useEffect(() => {
-    const pointer = readActiveRun(api);
-    if (!pointer) {
-      setState({ kind: 'hidden' });
-      return;
-    }
-
     const controller = new AbortController();
     abortRef.current = controller;
+    const isCurrent = () => abortRef.current === controller && !controller.signal.aborted;
+    const pointer = readActiveRun(api);
+    if (!pointer) {
+      stopScopeRef.current = null;
+      setStopping('idle');
+      setChecking(false);
+      const unidentified = readUnidentifiedRun(api);
+      setState(unidentified
+        ? { kind: 'unidentified', pointer: unidentified, confirmingRelease: false }
+        : { kind: 'hidden' });
+      return () => controller.abort();
+    }
+    const sameStopScope = stopScopeRef.current?.api === api && stopScopeRef.current.runId === pointer.runId;
+    stopScopeRef.current = { api, runId: pointer.runId };
+    if (!sameStopScope) setStopping('idle');
+    setChecking(true);
+    setState((previous) => sameStopScope && previous.kind === 'unavailable' && previous.runId === pointer.runId
+      ? previous : { kind: 'hidden' });
+    const unavailable = () => {
+      if (!isCurrent()) return;
+      setChecking(false);
+      setState({ kind: 'unavailable', runId: pointer.runId, reason: pointer.reason });
+    };
+    const finish = (row: RunRow, notify: boolean) => {
+      if (!isCurrent()) return;
+      clearActiveRun(api, pointer.runId);
+      setState({ kind: 'finished', runId: pointer.runId, reason: pointer.reason, row });
+      setStopping('idle');
+      setChecking(false);
+      // Invalidate progress and pending cancellation callbacks for this observer.
+      controller.abort();
+      if (notify) notifyRunFinished(settingsRef.current, {
+        runId: pointer.runId, status: row.status, detail: metricsSummary(row),
+      });
+    };
 
-    (async () => {
+    void (async () => {
       try {
-        const available = await probeRunHistory(api, controller.signal);
-        if (controller.signal.aborted) return;
-        if (!available) {
-          clearActiveRun(api, pointer.runId);
-          setState({ kind: 'hidden' });
-          return;
-        }
+        const available = await probeRunHistoryStrict(api, controller.signal);
+        if (!isCurrent()) return;
+        // An unsupported/unreadable history surface is not evidence this run ended.
+        if (!available) { unavailable(); return; }
 
-        const row = await fetchRun(api, pointer.runId, controller.signal);
-        if (controller.signal.aborted) return;
+        const row = await fetchRunStrict(api, pointer.runId, controller.signal);
+        if (!isCurrent()) return;
         if (!row) {
           clearActiveRun(api, pointer.runId);
           setState({ kind: 'hidden' });
+          setChecking(false);
+          controller.abort();
           return;
         }
+        if (isTerminalRunStatus(row.status)) { finish(row, false); return; }
 
-        if (isTerminalRunStatus(row.status)) {
-          setState({ kind: 'finished', runId: pointer.runId, reason: pointer.reason, row });
-          return;
-        }
-
+        setChecking(false);
         setState({
-          kind: 'live',
-          runId: pointer.runId,
-          reason: pointer.reason,
-          statusText: row.status || 'running',
-          lossSeries: [],
-          connectionLost: false,
+          kind: 'live', runId: pointer.runId, reason: pointer.reason,
+          statusText: row.status, lossSeries: [], connectionLost: false,
         });
-
         const outcome = await followRun(api, {
           runId: pointer.runId,
-          // Resume at the row's last cursor: replaying a long run's whole
-          // event log would hammer the host for state the row already
-          // summarizes.
           fromCursor: row.lastCursor ?? 0,
           signal: controller.signal,
           onUpdate: (update) => {
+            if (!isCurrent()) return;
             setState((prev) => {
-              if (prev.kind !== 'live') return prev;
+              if (prev.kind !== 'live' || prev.runId !== pointer.runId) return prev;
               const lossSeries = update.lossPoint !== undefined
                 ? [...prev.lossSeries, update.lossPoint].slice(-SPARKLINE_MAX_POINTS)
                 : prev.lossSeries;
@@ -129,106 +142,154 @@ export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBann
               if (update.nodeId && update.nodeStatus) parts.push(`${update.nodeId} ${update.nodeStatus}`);
               if (update.lossPoint !== undefined) parts.push(`loss ${update.lossPoint.toFixed(4)}`);
               if (update.completedNodes > 0) parts.push(`${update.completedNodes} nodes done`);
-              return {
-                ...prev,
-                lossSeries,
-                statusText: parts.join(' · '),
-                connectionLost: update.connectionLost,
-              };
+              return { ...prev, lossSeries, statusText: parts.join(' · '), connectionLost: update.connectionLost };
             });
           },
         });
-
-        if (outcome.aborted) return;
-        if (!outcome.row) {
+        if (!isCurrent() || outcome.aborted) return;
+        // followRun's compatibility API can return null for an unreadable final
+        // row, or a loosely parsed row. Require authoritative evidence here.
+        const finalRow = await fetchRunStrict(api, pointer.runId, controller.signal);
+        if (!isCurrent()) return;
+        if (!finalRow) {
           clearActiveRun(api, pointer.runId);
           setState({ kind: 'hidden' });
-          return;
+          setChecking(false);
+          controller.abort();
+        } else if (isTerminalRunStatus(finalRow.status)) {
+          finish(finalRow, true);
+        } else {
+          unavailable();
         }
-
-        setState({ kind: 'finished', runId: pointer.runId, reason: pointer.reason, row: outcome.row });
-        notifyRunFinished(settingsRef.current, {
-          runId: pointer.runId,
-          status: outcome.row.status,
-          detail: metricsSummary(outcome.row),
-        });
       } catch {
-        // Network hiccup on the initial probe/fetch: give up quietly rather
-        // than crash the host panel. The pointer is left in place so the
-        // next mount tries again.
-        if (!controller.signal.aborted) setState({ kind: 'hidden' });
+        unavailable();
       }
     })();
 
-    return () => {
-      controller.abort();
-    };
-  }, [api]);
+    return () => controller.abort();
+  }, [api, observationGeneration]);
+
+  const retryStatus = () => {
+    if (state.kind !== 'unavailable' || checking) return;
+    // Invalidate old reads/cancel callbacks immediately, before the next effect.
+    abortRef.current?.abort();
+    setStopping((previous) => previous === 'pending' ? 'uncertain' : previous);
+    setChecking(true);
+    setObservationGeneration((previous) => previous + 1);
+  };
 
   const handleStop = () => {
-    if (state.kind !== 'live') return;
-    setStopping(true);
+    if ((state.kind !== 'live' && state.kind !== 'unavailable') || checking || stopping === 'pending' || stopping === 'requested') return;
+    const controller = abortRef.current;
+    if (!controller || controller.signal.aborted) return;
+    setStopping('pending');
     void cancelRunById(api, state.runId).then((ok) => {
-      if (!ok) setStopping(false);
+      if (abortRef.current !== controller || controller.signal.aborted) return;
+      // A successful cancel request is not a terminal execution receipt.
+      setStopping(ok ? 'requested' : 'uncertain');
+      if (ok && state.kind === 'unavailable') {
+        controller.abort();
+        setChecking(true);
+        setObservationGeneration((previous) => previous + 1);
+      }
     });
   };
 
   const handleDismiss = () => {
-    if (state.kind === 'hidden') return;
-    if (state.kind === 'live') abortRef.current?.abort();
-    clearActiveRun(api, state.runId);
+    abortRef.current?.abort();
+    // Hiding this observer must not release a live/unknown dispatch reservation.
     setState({ kind: 'hidden' });
+    setStopping('idle');
+    setChecking(false);
   };
 
   const handleAskAgent = () => {
     if (state.kind !== 'finished') return;
     onAskAgent(`Summarize run ${state.runId} with get_run and report its metrics exactly.`);
-    clearActiveRun(api, state.runId);
-    setState({ kind: 'hidden' });
+    handleDismiss();
+  };
+
+  const handleRelease = () => {
+    if (state.kind !== 'unidentified') return;
+    if (!state.confirmingRelease) {
+      setState({ ...state, confirmingRelease: true });
+      return;
+    }
+    if (clearUnidentifiedRun(api, state.pointer.submissionId)) {
+      handleDismiss();
+    } else {
+      // The user's attestation never applies to a newer submission.
+      const pointer = readUnidentifiedRun(api);
+      setState(pointer ? { kind: 'unidentified', pointer, confirmingRelease: false } : { kind: 'hidden' });
+    }
   };
 
   if (state.kind === 'hidden') return null;
+  const observing = state.kind === 'live' || state.kind === 'unavailable';
+  const reason = state.kind === 'unidentified' ? state.pointer.reason : state.reason;
 
   return (
     <div className="gcp-reattach" role="status" aria-label="Background graph run">
       <div className="gcp-reattach-body">
         <div className="gcp-reattach-title">
-          {state.kind === 'live'
-            ? 'Run in progress (reattached)'
+          {state.kind === 'live' ? 'Run in progress (reattached)'
+            : state.kind === 'unavailable' ? 'Run status unavailable'
+            : state.kind === 'unidentified' ? 'Submitted run identity unavailable'
             : `Run ${state.row.status} while you were away`}
         </div>
         <div className="gcp-reattach-detail">
           {state.kind === 'live'
             ? `${state.connectionLost ? 'Connection lost — retrying… · ' : ''}${state.statusText}`
-            : (metricsSummary(state.row) || state.row.error || 'No recorded metrics.')}
-          {state.reason ? <span className="gcp-reattach-reason"> — {state.reason}</span> : null}
+            : state.kind === 'unavailable'
+              ? 'Run status could not be confirmed. The run may still be active.'
+              : state.kind === 'unidentified'
+                ? 'The host submission may still be running. Inspect host runs before starting another.'
+                : (metricsSummary(state.row) || state.row.error || 'No recorded metrics.')}
+          {reason ? <span className="gcp-reattach-reason"> — {reason}</span> : null}
         </div>
-        {state.kind === 'live' && state.lossSeries.length >= 2 && (
-          <RunSparkline series={state.lossSeries} />
+        {(observing || state.kind === 'unidentified') && (
+          <div className="gcp-reattach-detail">Local timeout monitoring is no longer active.</div>
+        )}
+        {observing && stopping === 'uncertain' && (
+          <div className="gcp-reattach-detail">Cancellation could not be confirmed. The run may still be active.</div>
+        )}
+        {state.kind === 'live' && state.lossSeries.length >= 2 && <RunSparkline series={state.lossSeries} />}
+        {state.kind === 'unidentified' && state.confirmingRelease && (
+          <div className="gcp-reattach-detail">
+            This only releases the local reservation. It does not stop a host run or verify its status.
+          </div>
         )}
       </div>
       <div className="gcp-reattach-actions">
-        {state.kind === 'live' && (
-          <button
-            className="gcp-reattach-btn gcp-reattach-stop"
-            disabled={stopping}
-            onClick={handleStop}
-          >
-            {stopping ? 'Stopping…' : 'Stop run'}
+        {observing && (
+          <button className="gcp-reattach-btn gcp-reattach-stop"
+            disabled={checking || stopping === 'pending' || stopping === 'requested'} onClick={handleStop}>
+            {stopping === 'pending' ? 'Stopping…' : stopping === 'requested' ? 'Cancellation requested…' : 'Stop run'}
+          </button>
+        )}
+        {state.kind === 'unavailable' && (
+          <button className="gcp-reattach-btn" onClick={retryStatus} disabled={checking}>
+            {checking ? 'Checking status…' : 'Retry status'}
           </button>
         )}
         {state.kind === 'finished' && (
-          <button className="gcp-reattach-btn" onClick={handleAskAgent}>
-            Ask the agent to summarize
-          </button>
+          <button className="gcp-reattach-btn" onClick={handleAskAgent}>Ask the agent to summarize</button>
         )}
-        <button
-          className="gcp-reattach-btn gcp-reattach-dismiss"
-          onClick={handleDismiss}
-          {...(state.kind === 'live'
-            ? { title: 'Stop watching. The run keeps running on the host.' }
-            : {})}
-        >
+        {state.kind === 'unidentified' && (
+          <>
+            <button className="gcp-reattach-btn" onClick={handleRelease}>
+              {state.confirmingRelease ? 'Release reservation' : 'I checked the host; no run is active'}
+            </button>
+            {state.confirmingRelease && (
+              <button className="gcp-reattach-btn" onClick={() => setState({ ...state, confirmingRelease: false })}>
+                Keep reservation
+              </button>
+            )}
+          </>
+        )}
+        <button className="gcp-reattach-btn gcp-reattach-dismiss" onClick={handleDismiss}
+          {...(observing || state.kind === 'unidentified'
+            ? { title: 'Stop watching. Any host run keeps running.' } : {})}>
           Dismiss
         </button>
       </div>

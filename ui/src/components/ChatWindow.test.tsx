@@ -9,18 +9,18 @@ import type { Conversation } from '../state/conversations';
 // Stub child views so these tests focus on ChatWindow's workbench and lifecycle.
 // Each child is covered by its own suite.
 const chatViewCalls = vi.hoisted(() => vi.fn());
-const stopRun = vi.hoisted(() => vi.fn());
+const detachRun = vi.hoisted(() => vi.fn());
 vi.mock('./ChatView', () => ({
   ChatView: (props: {
     onOpenSettings: () => void;
     onOpenHistory: () => void;
     onSettingsChange: (s: Settings) => void;
-    onStopReady: (stop: () => void) => void;
+    onDetachReady: (detach: () => void) => void;
     onBusyChange: (busy: boolean) => void;
     active: boolean;
   }) => {
     chatViewCalls(props);
-    React.useLayoutEffect(() => { props.onStopReady(stopRun); }, [props.onStopReady]);
+    React.useLayoutEffect(() => { props.onDetachReady(detachRun); }, [props.onDetachReady]);
     return (
       <div data-testid="chatview" data-active={props.active}>
         <button onClick={props.onOpenSettings}>chatview-open-settings</button>
@@ -212,22 +212,22 @@ describe('ChatWindow', () => {
     expect(screen.getByTestId('chatview')).toBeTruthy();
   });
 
-  it('forwards effort settings changes and synchronous stop registration', () => {
-    const props = renderWindow({ onStopReady: vi.fn() });
+  it('forwards effort settings changes and passive detach registration', () => {
+    const props = renderWindow({ onDetachReady: vi.fn() });
     const chatProps = chatViewCalls.mock.calls.at(-1)![0];
     expect(chatProps.onSettingsChange).toBe(props.onSettingsChange);
     expect(chatProps.active).toBe(true);
-    expect(props.onStopReady).toHaveBeenCalledWith(stopRun);
+    expect(props.onDetachReady).toHaveBeenCalledWith(detachRun);
   });
 
   it.each(['Settings', 'Conversation history', 'Experiments lab', 'Active model — open settings', 'Close panel'])
-    ('synchronously stops work when leaving chat using %s', (name) => {
+    ('synchronously detaches work when leaving chat using %s', (name) => {
       renderWindow();
       fireEvent.click(screen.getByRole('button', { name }));
-      expect(stopRun).toHaveBeenCalledTimes(1);
+      expect(detachRun).toHaveBeenCalledTimes(1);
     });
 
-  it('blocks History mutations until the stopped run settles', () => {
+  it('blocks History mutations until the detached browser owner settles', () => {
     const props = renderWindow();
     fireEvent.click(screen.getByText('chatview-start-run'));
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
@@ -278,11 +278,11 @@ describe('ChatWindow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Experiments lab' }));
     const content = screen.getByRole('main');
     expect(content).toHaveFocus();
-    stopRun.mockClear();
+    detachRun.mockClear();
     fireEvent.keyDown(content, { key: 'Escape', isComposing: true });
     expect(props.onClose).not.toHaveBeenCalled();
     fireEvent.keyDown(content, { key: 'Escape' });
-    expect(stopRun).toHaveBeenCalledTimes(1);
+    expect(detachRun).toHaveBeenCalledTimes(1);
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 

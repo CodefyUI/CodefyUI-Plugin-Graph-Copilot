@@ -35,6 +35,8 @@ Open **http://127.0.0.1:4179/?scenario=edit**. This development-only harness cal
 | Query | Behavior |
 | --- | --- |
 | `?scenario=edit` | Schema lookup, a graph-operation batch, and structural validation |
+| `?scenario=native-run&serverOwned=1` | In-memory server-owned execution; closing the observer does not stop the host fixture |
+| `&lateInitialId=1` | Hold the first host run ID until **Release next simulated run event**, for close/reopen races |
 | `&manual=1` | Hold mock chat/validation responses until you explicitly use **Release next response**; useful for Stop/navigation races |
 | `&bundle=1` | Load the actual existing `frontend/index.js` instead of `ui/src/index.tsx`; no rebuild is performed |
 
@@ -62,10 +64,11 @@ Regression cases should cover:
 
 - cancellation before a turn, during streaming/validation/research/approval, after `done` but before tools, and between tools; no new canvas **or execution** dispatch after Stop;
 - missing/malformed terminal events, indexed receipt gaps/duplicates, partial changes, and a host mutation throwing after dispatch;
-- executor-enforced Ask read-only for all four canvas/execution tools, singleton/snapshot-bound clear approval, refusal without bypass, and cancellation on Settings/History/Lab navigation or close;
+- executor-enforced Ask read-only for all four canvas/execution tools, singleton/snapshot-bound clear approval, refusal without bypass, and browser-turn cancellation on Settings/History/Lab navigation or close;
 - current-turn-only validation/repair (including applied promotion), successful-receipt allowlists (no unrelated node/input changes or colliding refs), unavailable versus invalid validation, stale snapshots, and incomplete results when limits are exhausted;
 - retry with the original user request once only when `!mutationAttempted && !sideEffectAttempted`; no replay/resubmission after attempted or unknown writes/execution; complete assistant/tool history groups;
-- native cancellation/cleanup for newly submitted live runs versus observation-only abort/unmount of an existing-run follower; unknown socket failures retaining run IDs/pointers for inspection, not proving cancellation;
+- explicit Stop/timeout native cancellation versus passive detach of submitted server-owned runs; late IDs, immediate close/reopen, legacy socket ownership, and Stop escalation while waiting for an ID;
+- observation-only follower abort/Dismiss retaining live reservations; unreadable history and unknown socket failures preserving run IDs/pointers instead of proving cancellation or authorizing a duplicate submission;
 - study approval/budgets, deterministic search plans, promotion revision/fingerprint conflicts, schema-redacted evidence, canonical bundle verification, explicit import with no execution/application, and storage failure without reruns;
 - rich catalog/effort negotiation, saved-model preservation, cache/explicit Refresh behavior, and no automatic discovery calls to custom endpoints;
 - draft/attachment preservation while views are hidden, conversation identity guards, readiness and duplicate-send guards, IME, keyboard history deletion, focus restoration, and pinned scrolling.

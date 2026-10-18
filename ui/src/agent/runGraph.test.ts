@@ -6,7 +6,9 @@ import {
   fetchDefaultDevice,
   formatRunStatusLine,
   runLiveGraph,
+  type RunLiveGraphOptions,
 } from './runGraph';
+import { PASSIVE_DETACH_REASON } from './abortReasons';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -107,6 +109,12 @@ async function flushMicrotasks(times = 6): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
+function runOptions(
+  overrides: Partial<RunLiveGraphOptions> = {},
+): RunLiveGraphOptions {
+  return { timeoutMs: 60_000, serverOwnedRuns: false, ...overrides };
+}
+
 beforeEach(() => {
   sentPayloads = [];
   MockWebSocket.instances = [];
@@ -162,10 +170,9 @@ describe('runLiveGraph', () => {
     };
 
     const updates: string[] = [];
-    const outcome = await runLiveGraph(fakeApi(), {
-      timeoutMs: 60_000,
+    const outcome = await runLiveGraph(fakeApi(), runOptions({
       onProgress: (update) => updates.push(update.phase),
-    });
+    }));
 
     expect(outcome.status).toBe('complete');
     expect(outcome.runId).toBe('run-9');
@@ -203,10 +210,10 @@ describe('runLiveGraph', () => {
     });
     const stale = new Error('The approved graph changed before execution.');
     socketBehavior = (socket) => queueMicrotask(() => socket.emit({ type: 'execution_complete' }));
-    const pending = runLiveGraph(api, {
-      timeoutMs: 60_000, device: 'cpu', approvedGraph: approved,
+    const pending = runLiveGraph(api, runOptions({
+      device: 'cpu', approvedGraph: approved,
       beforeExecute: () => { if (JSON.stringify(live) !== JSON.stringify(approved)) throw stale; },
-    } as Parameters<typeof runLiveGraph>[1]);
+    }));
     // Attach the rejection expectation before releasing deferred auth.
     const rejected = expect(pending).rejects.toBe(stale);
     await bootstrapEntered;
@@ -222,10 +229,10 @@ describe('runLiveGraph', () => {
     const approved = structuredClone(GRAPH);
     socketBehavior = (socket) => queueMicrotask(() => socket.emit({ type: 'execution_complete' }));
     let checks = 0;
-    await runLiveGraph(api, {
-      timeoutMs: 60_000, device: 'cpu', approvedGraph: approved,
+    await runLiveGraph(api, runOptions({
+      device: 'cpu', approvedGraph: approved,
       beforeExecute: () => { checks++; approved.nodes[1].data!.params = { dangerous: true }; },
-    } as Parameters<typeof runLiveGraph>[1]);
+    }));
     expect(checks).toBe(2);
     expect((sentPayloads[0].nodes as SerializedGraph['nodes'])[1].data?.params).toEqual({});
   });
@@ -244,10 +251,9 @@ describe('runLiveGraph', () => {
     };
 
     const seen: string[] = [];
-    const outcome = await runLiveGraph(fakeApi(), {
-      timeoutMs: 60_000,
+    const outcome = await runLiveGraph(fakeApi(), runOptions({
       onRunId: (id) => seen.push(id),
-    });
+    }));
 
     expect(outcome.status).toBe('complete');
     expect(seen).toEqual(['r1']);
@@ -258,7 +264,7 @@ describe('runLiveGraph', () => {
       queueMicrotask(() => socket.emit({ type: 'execution_complete' }));
     };
     const api = fakeApi('cuda');
-    await runLiveGraph(api, { timeoutMs: 60_000, device: 'cpu' });
+    await runLiveGraph(api, runOptions({ device: 'cpu' }));
     expect(sentPayloads[0].device).toBe('cpu');
     const urls = (api.http.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(urls).not.toContain('/api/system/devices');
@@ -268,7 +274,7 @@ describe('runLiveGraph', () => {
     socketBehavior = (socket) => {
       queueMicrotask(() => socket.emit({ type: 'execution_complete' }));
     };
-    await runLiveGraph(fakeApi(null), { timeoutMs: 60_000 });
+    await runLiveGraph(fakeApi(null), runOptions());
     expect('device' in sentPayloads[0]).toBe(false);
   });
 
@@ -287,7 +293,7 @@ describe('runLiveGraph', () => {
       });
     };
 
-    const outcome = await runLiveGraph(fakeApi(), { timeoutMs: 60_000 });
+    const outcome = await runLiveGraph(fakeApi(), runOptions());
     expect(outcome.status).toBe('complete');
     expect(outcome.outputs['TrainingLoop.metrics']).toBe(0.9);
     expect(outcome.finalProgress['TrainingLoop.loss']).toBe(1.25);
@@ -304,7 +310,7 @@ describe('runLiveGraph', () => {
       });
     };
 
-    const outcome = await runLiveGraph(fakeApi(), { timeoutMs: 60_000 });
+    const outcome = await runLiveGraph(fakeApi(), runOptions());
     expect(outcome.status).toBe('error');
     expect(outcome.error).toBe('run failed with [REDACTED]');
     expect(outcome.nodeErrors.TrainingLoop).toBe('CUDA exploded near [REDACTED]');
@@ -316,7 +322,7 @@ describe('runLiveGraph', () => {
         socket.emit({ type: 'error', rejected: true, error: 'another run is active' });
       });
     };
-    const outcome = await runLiveGraph(fakeApi(), { timeoutMs: 60_000 });
+    const outcome = await runLiveGraph(fakeApi(), runOptions());
     expect(outcome.status).toBe('error');
     expect(outcome.error).toContain('another run is active');
   });
@@ -340,10 +346,9 @@ describe('runLiveGraph', () => {
     };
 
     const controller = new AbortController();
-    const pending = runLiveGraph(fakeApi(), {
+    const pending = runLiveGraph(fakeApi(), runOptions({
       signal: controller.signal,
-      timeoutMs: 60_000,
-    });
+    }));
     // Flush until the execute payload is on the wire so the abort exercises
     // the running-run cancel path, not the pre-submit fast path; a few more
     // ticks let the execution_start frame deliver the run id.
@@ -362,13 +367,212 @@ describe('runLiveGraph', () => {
     expect(socketRef!.readyState).toBe(MockWebSocket.CLOSED);
   });
 
+  it('passively detaches a known server-owned run without sending cancel', async () => {
+    socketBehavior = (socket, payload) => {
+      if (payload.action === 'execute') {
+        queueMicrotask(() => socket.emit({ type: 'execution_start', run_id: 'run-detach' }));
+      } else if (payload.action === 'cancel') {
+        queueMicrotask(() => socket.emit({
+          type: 'execution_stopped', reason: 'cancelled', run_id: 'run-detach',
+        }));
+      }
+    };
+    const controller = new AbortController();
+    const pending = runLiveGraph(fakeApi(), runOptions({
+      signal: controller.signal,
+      serverOwnedRuns: true,
+    }));
+    for (let i = 0; i < 40 && !sentPayloads.some((p) => p.action === 'execute'); i++) {
+      await Promise.resolve();
+    }
+    await flushMicrotasks(4);
+    controller.abort(PASSIVE_DETACH_REASON);
+
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ status: 'detached', runId: 'run-detach' });
+    expect(sentPayloads.some((p) => p.action === 'cancel')).toBe(false);
+    expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.CLOSED);
+  });
+
+  it('waits for a run id before completing a passive detach', async () => {
+    let socketRef: MockWebSocket | null = null;
+    socketBehavior = (socket, payload) => {
+      if (payload.action === 'execute') socketRef = socket;
+    };
+    const seen: string[] = [];
+    const controller = new AbortController();
+    let settled = false;
+    const pending = runLiveGraph(fakeApi(), runOptions({
+      signal: controller.signal,
+      serverOwnedRuns: true,
+      onRunId: (id) => seen.push(id),
+    })).then((value) => { settled = true; return value; });
+    for (let i = 0; i < 40 && socketRef === null; i++) await Promise.resolve();
+
+    controller.abort(PASSIVE_DETACH_REASON);
+    await flushMicrotasks(2);
+    expect(settled).toBe(false);
+
+    socketRef!.emit({ type: 'attached', run_id: 'run-late', cursor: 0, status: 'running' });
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ status: 'detached', runId: 'run-late' });
+    expect(seen).toEqual(['run-late']);
+    expect(sentPayloads.some((p) => p.action === 'cancel')).toBe(false);
+  });
+
+  it.each(['execution_complete', 'execution_stopped', 'execution_error'] as const)('honors terminal %s carrying the first late ID during passive cleanup', async (type) => {
+    let socketRef: MockWebSocket | undefined;
+    socketBehavior = (socket, payload) => { if (payload.action === 'execute') socketRef = socket; };
+    const controller = new AbortController();
+    const onRunId = vi.fn();
+    const pending = runLiveGraph(fakeApi(), runOptions({ signal: controller.signal, serverOwnedRuns: true, onRunId }));
+    for (let i = 0; i < 80 && !socketRef; i++) await Promise.resolve();
+    expect(socketRef).toBeDefined();
+    controller.abort(PASSIVE_DETACH_REASON);
+    socketRef!.emit({ type, run_id: 'terminal-late' });
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ status: type === 'execution_complete' ? 'complete' : type === 'execution_stopped' ? 'cancelled' : 'error', runId: 'terminal-late', submitted: true, terminalConfirmed: true });
+    if (type === 'execution_stopped') expect(outcome.cancelConfirmed).toBe(true);
+    expect(onRunId).toHaveBeenCalledExactlyOnceWith('terminal-late');
+    expect(sentPayloads.filter((payload) => payload.action === 'cancel')).toEqual([]);
+  });
+
+  it('bounds passive late-ID waiting without cancelling or inventing a host identity', async () => {
+    vi.useFakeTimers();
+    let socketRef: MockWebSocket | undefined;
+    socketBehavior = (socket, payload) => { if (payload.action === 'execute') socketRef = socket; };
+    const controller = new AbortController();
+    let settled = false;
+    const pending = runLiveGraph(fakeApi(), runOptions({ signal: controller.signal, serverOwnedRuns: true }))
+      .then((outcome) => { settled = true; return outcome; });
+    for (let i = 0; i < 80 && !socketRef; i++) await Promise.resolve();
+    expect(socketRef).toBeDefined();
+    controller.abort(PASSIVE_DETACH_REASON);
+    controller.abort(); // AbortSignal.reason is immutable; repeated cleanup is passive.
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ status: 'detached', submitted: true });
+    expect(outcome.runId).toBeUndefined();
+    expect(outcome.error).toContain('run ID was not received');
+    expect(sentPayloads.filter((payload) => payload.action === 'cancel')).toEqual([]);
+    expect(socketRef!.readyState).toBe(MockWebSocket.CLOSED);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('explicit Stop escalates passive late-ID cleanup using the independent cancel signal', async () => {
+    vi.useFakeTimers();
+    let socketRef: MockWebSocket | undefined;
+    socketBehavior = (socket, payload) => { if (payload.action === 'execute') socketRef = socket; };
+    const controller = new AbortController();
+    const cancelController = new AbortController();
+    let settled = false;
+    const onRunId = vi.fn();
+    const pending = runLiveGraph(fakeApi(), runOptions({ signal: controller.signal, cancelSignal: cancelController.signal, serverOwnedRuns: true, onRunId }))
+      .then((outcome) => { settled = true; return outcome; });
+    for (let i = 0; i < 80 && !socketRef; i++) await Promise.resolve();
+    expect(socketRef).toBeDefined();
+    controller.abort(PASSIVE_DETACH_REASON);
+    cancelController.abort();
+    expect(controller.signal.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(sentPayloads.filter((payload) => payload.action === 'cancel')).toEqual([{ action: 'cancel' }]);
+    socketRef!.emit({ type: 'attached', run_id: 'escalated-late', status: 'running' });
+    await flushMicrotasks();
+    expect(settled).toBe(false);
+    socketRef!.emit({ type: 'execution_stopped', run_id: 'escalated-late', reason: 'cancelled' });
+    expect(await pending).toMatchObject({ status: 'cancelled', runId: 'escalated-late', submitted: true, cancelConfirmed: true });
+    expect(onRunId).toHaveBeenCalledExactlyOnceWith('escalated-late');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps the configured timeout as explicit cancellation during passive identity waiting', async () => {
+    vi.useFakeTimers();
+    let socketRef: MockWebSocket | undefined;
+    socketBehavior = (socket, payload) => { if (payload.action === 'execute') socketRef = socket; };
+    const controller = new AbortController();
+    const pending = runLiveGraph(fakeApi(), runOptions({ signal: controller.signal, serverOwnedRuns: true, timeoutMs: 1_000 }));
+    for (let i = 0; i < 80 && !socketRef; i++) await Promise.resolve();
+    expect(socketRef).toBeDefined();
+    controller.abort(PASSIVE_DETACH_REASON);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sentPayloads.filter((payload) => payload.action === 'cancel')).toEqual([{ action: 'cancel' }]);
+    socketRef!.emit({ type: 'execution_stopped', run_id: 'timeout-late' });
+    expect(await pending).toMatchObject({ status: 'timeout', runId: 'timeout-late', cancelConfirmed: true });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps legacy passive aborts as cancellation', async () => {
+    socketBehavior = (socket, payload) => {
+      if (payload.action === 'execute') {
+        queueMicrotask(() => socket.emit({ type: 'execution_start', run_id: 'legacy-run' }));
+      } else if (payload.action === 'cancel') {
+        queueMicrotask(() => socket.emit({
+          type: 'execution_stopped', reason: 'cancelled', run_id: 'legacy-run',
+        }));
+      }
+    };
+    const controller = new AbortController();
+    const pending = runLiveGraph(fakeApi(), runOptions({
+      signal: controller.signal,
+      serverOwnedRuns: false,
+    }));
+    for (let i = 0; i < 40 && !sentPayloads.some((p) => p.action === 'execute'); i++) {
+      await Promise.resolve();
+    }
+    await flushMicrotasks(4);
+    controller.abort(PASSIVE_DETACH_REASON);
+
+    await expect(pending).resolves.toMatchObject({ status: 'cancelled' });
+    expect(sentPayloads.some((p) => p.action === 'cancel')).toBe(true);
+  });
+
+  it('keeps explicit aborts as cancellation on a server-owned host', async () => {
+    socketBehavior = (socket, payload) => {
+      if (payload.action === 'execute') {
+        queueMicrotask(() => socket.emit({ type: 'execution_start', run_id: 'current-run' }));
+      } else if (payload.action === 'cancel') {
+        queueMicrotask(() => socket.emit({
+          type: 'execution_stopped', reason: 'cancelled', run_id: 'current-run',
+        }));
+      }
+    };
+    const controller = new AbortController();
+    const pending = runLiveGraph(fakeApi(), runOptions({
+      signal: controller.signal,
+      serverOwnedRuns: true,
+    }));
+    for (let i = 0; i < 40 && !sentPayloads.some((p) => p.action === 'execute'); i++) {
+      await Promise.resolve();
+    }
+    await flushMicrotasks(4);
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({ status: 'cancelled' });
+    expect(sentPayloads.some((p) => p.action === 'cancel')).toBe(true);
+  });
+
+  it('treats passive teardown before submission as local cancellation on a current host', async () => {
+    socketBehavior = () => {};
+    const controller = new AbortController();
+    const pending = runLiveGraph(fakeApi(), runOptions({
+      signal: controller.signal,
+      serverOwnedRuns: true,
+    }));
+    controller.abort(PASSIVE_DETACH_REASON);
+
+    const outcome = await pending;
+    expect(outcome.status).toBe('cancelled');
+    expect(sentPayloads.some((p) => p.action === 'execute')).toBe(false);
+    expect(sentPayloads.some((p) => p.action === 'cancel')).toBe(false);
+  });
+
   it('aborting before the run is submitted finishes immediately as cancelled', async () => {
     socketBehavior = () => {};
     const controller = new AbortController();
-    const pending = runLiveGraph(fakeApi(), {
+    const pending = runLiveGraph(fakeApi(), runOptions({
       signal: controller.signal,
-      timeoutMs: 60_000,
-    });
+    }));
     controller.abort(); // before token/connect complete
     const outcome = await pending;
     expect(outcome.status).toBe('cancelled');
@@ -386,7 +590,7 @@ describe('runLiveGraph', () => {
       // cancel is swallowed — host never answers.
     };
 
-    const pending = runLiveGraph(fakeApi(), { timeoutMs: 10_000 });
+    const pending = runLiveGraph(fakeApi(), runOptions({ timeoutMs: 10_000 }));
     await flushMicrotasks();
     await vi.advanceTimersByTimeAsync(10_000); // fire the run timeout -> cancel
     expect(sentPayloads.some((p) => p.action === 'cancel')).toBe(true);
@@ -406,7 +610,7 @@ describe('runLiveGraph', () => {
       }
     };
     const controller = new AbortController();
-    const pending = runLiveGraph(fakeApi(), { signal: controller.signal, timeoutMs: 60_000 });
+    const pending = runLiveGraph(fakeApi(), runOptions({ signal: controller.signal }));
     // Bootstrap now has guarded awaits; synchronize on real mocked dispatch,
     // not a fixed microtask count, to exercise socket-owned close cancellation.
     for (let i = 0; i < 80 && !sentPayloads.some((payload) => payload.action === 'execute'); i++) await Promise.resolve();

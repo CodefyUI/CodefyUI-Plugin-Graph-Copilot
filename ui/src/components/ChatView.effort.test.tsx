@@ -22,6 +22,7 @@ vi.mock('../state/conversations', async (importOriginal) => {
 
 import { runTurn } from '../agent/loop';
 import type { RunTurnOpts, TurnCallbacks } from '../agent/loop';
+import type { TurnResult } from '../agent/types';
 import { ChatView } from './ChatView';
 
 const CAPABLE_SETTINGS: Settings = {
@@ -173,16 +174,17 @@ describe('ChatView live run bar', () => {
 
   async function startRun() {
     let cbs: TurnCallbacks | null = null;
+    let resolve!: (result: TurnResult) => void;
     vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
       cbs = opts.callbacks;
-      return new Promise(() => {});
+      return new Promise<TurnResult>((done) => { resolve = done; });
     });
     render(<Harness />);
     const textarea = screen.getByRole('textbox', { name: /message input/i });
     await userEvent.type(textarea, 'build it');
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
     await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
-    return cbs!;
+    return Object.assign(cbs!, { settle: (result: TurnResult) => resolve(result) });
   }
 
   it('narrates thinking, writing, and tool phases with a step counter', async () => {
@@ -211,9 +213,12 @@ describe('ChatView live run bar', () => {
 
   it('disappears when the run finishes and the hint returns', async () => {
     const cbs = await startRun();
-    act(() => {
+    await act(async () => {
       cbs.onTurnsCommitted([{ role: 'assistant', content: 'done' }]);
       cbs.onFinished();
+      cbs.settle({ id: 'finished', mode: 'edit', status: 'completed', mutation: 'none', mutationAttempted: false,
+        appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] },
+        turns: [{ role: 'assistant', content: 'done' }] });
     });
     expect(screen.queryByRole('status', { name: /agent activity/i })).toBeNull();
   });

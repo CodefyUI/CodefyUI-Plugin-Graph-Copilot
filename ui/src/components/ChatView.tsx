@@ -152,7 +152,8 @@ export interface ChatViewProps {
   onOpenHistory: () => void;
   active?: boolean;
   onBusyChange?: (busy: boolean) => void;
-  onStopReady?: (stop: () => void) => void;
+  /** Passive view exits stop the browser agent without cancelling host work. */
+  onDetachReady?: (detach: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ export function ChatView({
   onOpenHistory,
   active = true,
   onBusyChange,
-  onStopReady,
+  onDetachReady,
 }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<AgentMode>(conversation.mode ?? 'edit');
@@ -181,7 +182,7 @@ export function ChatView({
   const [showLatest, setShowLatest] = useState(false);
   const run = useAgentRun({ api, settings, conversation, onConversationChange, active, onBusyChange });
   const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, runStatusLine, runLossSeries } = run;
-  useEffect(() => { onStopReady?.(run.stop); }, [onStopReady, run.stop]);
+  useEffect(() => { onDetachReady?.(run.detach); }, [onDetachReady, run.detach]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true); // stick to bottom unless the user scrolls up
@@ -460,9 +461,9 @@ export function ChatView({
       </div>
       <span className="gcp-sr-only" role="status" aria-live="polite">
         {busy ? run.phase === 'awaiting_confirmation' ? 'Waiting for your confirmation' : 'Assistant working' :
-          run.summary ? `Run ${run.summary.status}` : ''}
+          run.summary ? run.summary.reason === 'execution_detached' ? 'Detached from host run' : `Run ${run.summary.status}` : ''}
       </span>
-      {active && <RunReattachBanner
+      {active && !busy && <RunReattachBanner
         api={api}
         settings={settings}
         onAskAgent={(text) => {
@@ -679,8 +680,8 @@ export function ChatView({
               </div>
               <div className="gcp-experiment-approval-warning">
                 This executes your live graph with real side effects — file writes, network
-                calls, GPU time. Progress streams into this panel. Stop requests cancellation;
-                completed side effects are not undone.
+                calls, GPU time. Stop requests cancellation; completed side effects are not undone.
+                Closing or navigating away leaves server-owned runs running and stops local timeout monitoring.
               </div>
             </div>
             <div className="gcp-experiment-approval-actions">

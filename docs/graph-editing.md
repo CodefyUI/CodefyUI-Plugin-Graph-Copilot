@@ -70,7 +70,7 @@ The **agent-turn result**, **structural validation**, and **host execution outco
 | Agent status | Meaning |
 | --- | --- |
 | `completed` | The agent finished its bounded workflow without unresolved tool errors. This alone does not prove pipeline execution success. |
-| `cancelled` | The turn stopped, including a declined clear. The UI labels this **Stopped**; earlier effects remain. |
+| `cancelled` | The browser turn stopped, including a declined clear. The UI labels this **Stopped**, or **Detached** when observation of a submitted host run ended; neither label rolls back earlier effects. |
 | `failed` | A request, stream, initialization, or host error ended the turn. Check both canvas and execution evidence before recovering. |
 | `incomplete` | Completion could not be established, for example because limits were exhausted or receipts/validation were unavailable or stale. |
 
@@ -108,9 +108,9 @@ A verified portable study can derive downloadable graph JSON by reapplying captu
 
 ## Keeping your place and reattaching
 
-Opening Settings, History, or Experiment Lab, or closing the panel, stops the **current agent turn** while keeping chat mounted and preserving that conversation's draft and staged attachments. This is an in-memory panel-session convenience, not draft persistence across reload. Wait for settlement before switching or starting a conversation. Late callbacks can save their original conversation but cannot overwrite another active chat.
+Opening Settings, History, or Experiment Lab, or closing the panel, stops the **browser agent turn** and rejects pending approvals while keeping chat mounted and preserving that conversation's draft and staged attachments. If a server-owned live run was already submitted, passive exit waits for its ID and detaches observation without cancelling the host run. Legacy socket-owned execution is cancelled; explicit Stop still requests cancellation on either host. This is an in-memory panel-session convenience, not draft persistence across reload. Wait for settlement before switching or starting a conversation. Late callbacks can save their original conversation but cannot overwrite another active chat.
 
-On a server-owned-run host, a previously submitted live run may survive reload or a connection loss. Its reattach card can follow the existing run without submitting it again. **Detach/dismiss or hiding that existing-run follower stops observation, not the host run; only explicit Stop run requests cancellation.** A finished-while-away card shows recorded metrics and can fill a prompt asking `get_run` for a summary. Reattachment is not resuming the browser agent or an entire study.
+On a server-owned-run host, a previously submitted live run may survive reload or a connection loss. Its reattach card can follow the existing run without submitting it again, once the original owner has settled and saved the run ID. **Detach/dismiss or hiding the follower stops observation, not the host run; only explicit Stop run requests cancellation.** Dismiss and unreadable run history do not release the reservation that prevents duplicate live submissions. A finished-while-away card shows recorded metrics and can fill a prompt asking `get_run` for a summary. Reattachment is not resuming the browser agent or an entire study.
 
 Stored tool calls are context, not commands to replay. The provider history window keeps complete assistant/tool-call/result groups together and excludes orphaned legacy results; see [Architecture](./architecture.md).
 

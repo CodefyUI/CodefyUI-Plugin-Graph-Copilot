@@ -22,6 +22,7 @@ vi.mock('../state/conversations', async (importOriginal) => {
 
 import { runTurn } from '../agent/loop';
 import type { RunTurnOpts, TurnCallbacks } from '../agent/loop';
+import type { TurnResult } from '../agent/types';
 import { ChatView } from './ChatView';
 
 const READY_SETTINGS: Settings = {
@@ -73,9 +74,10 @@ function renderChatView(over: Partial<React.ComponentProps<typeof ChatView>> = {
 /** Send a message and capture the live callbacks; the run stays in flight. */
 async function startRun(text = 'build it') {
   let cbs: TurnCallbacks | null = null;
+  let resolve!: (result: TurnResult) => void;
   vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
     cbs = opts.callbacks;
-    return new Promise(() => {}); // resolved manually via callbacks
+    return new Promise<TurnResult>((done) => { resolve = done; });
   });
 
   const utils = renderChatView();
@@ -83,7 +85,7 @@ async function startRun(text = 'build it') {
   await userEvent.type(textarea, text);
   fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
   await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
-  return { ...utils, cbs: cbs! };
+  return { ...utils, cbs: cbs!, settle: (result: TurnResult) => resolve(result) };
 }
 
 const APPLY_CALL = {
@@ -163,12 +165,14 @@ describe('ChatView staged streaming', () => {
   });
 
   it('shows a standalone error row whose Retry resends the same message', async () => {
-    const { container, cbs } = await startRun('retry me');
+    const { container, cbs, settle } = await startRun('retry me');
 
-    act(() => {
+    await act(async () => {
       cbs.onTurnsCommitted([]);
       cbs.onError('HTTP 500: upstream exploded');
       cbs.onFinished();
+      settle({ id: 'failed', mode: 'edit', status: 'failed', mutation: 'none', mutationAttempted: false,
+        appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] }, turns: [] });
     });
 
     expect(container.querySelector('.gcp-error-row')).toBeTruthy();
