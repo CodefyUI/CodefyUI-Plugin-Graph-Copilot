@@ -145,8 +145,7 @@ for (const size of [
       const details = approval(page).getByRole('region', { name: 'Execution approval details', exact: true });
       const stop = approval(page).getByRole('button', { name: 'Stop generation', exact: true });
       const fixedContent = [
-        approval(page).getByText('Execution approval', { exact: true }),
-        approval(page).getByText('Run the current graph?', { exact: true }),
+        approval(page).getByRole('heading', { name: 'Run the current graph?', exact: true }),
         stop,
         approval(page).getByRole('button', { name: 'Cancel', exact: true }),
         approval(page).getByRole('button', { name: 'Run graph', exact: true }),

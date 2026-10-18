@@ -128,8 +128,10 @@ function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) 
             <AlertIcon />
           )}
         </span>
-        <span className="gcp-stage-label">{d.label}</span>
-        {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
+        <span className="gcp-stage-copy">
+          <span className="gcp-stage-label">{d.label}</span>
+          {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
+        </span>
         {typeof durationMs === 'number' && (
           <span className="gcp-stage-time">{formatDuration(durationMs)}</span>
         )}
@@ -189,6 +191,7 @@ export function MessageBubble({
 
   return (
     <div className={`gcp-msg-row ${isUser ? 'user' : 'assistant'}${isStep ? ' step' : ''}`}>
+      {isUser && <span className="gcp-message-author">You</span>}
       {/* Attachments (above the text, for user turns) */}
       {attachments.length > 0 && (
         <div className="gcp-bubble-attachments">

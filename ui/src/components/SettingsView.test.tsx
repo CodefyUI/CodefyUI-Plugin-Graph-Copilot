@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
@@ -117,6 +117,109 @@ describe('SettingsView', () => {
   // -------------------------------------------------------------------------
   // Provider select
   // -------------------------------------------------------------------------
+
+  it('groups connection prerequisites before model and keeps behavior last', () => {
+    const { container } = renderSettings();
+    expect(screen.getByRole('heading', { level: 2, name: 'Settings' })).toBeInTheDocument();
+    const sections = Array.from(container.querySelectorAll('section.gcp-settings-section'));
+    expect(sections.map((section) => section.querySelector('h3')?.textContent)).toEqual(['Connection', 'Model', 'Behavior']);
+    const connection = screen.getByRole('region', { name: 'Connection' });
+    expect(within(connection).getByRole('combobox', { name: /select llm provider/i })).toBeInTheDocument();
+    expect(within(connection).getByLabelText('OpenAI API key')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Model' })).getByRole('combobox', { name: 'Model ID' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Behavior' })).getByRole('checkbox')).toBeInTheDocument();
+  });
+
+  it('associates credential labels with controls and explains blur-save and local privacy', () => {
+    const { container } = renderSettings();
+    const key = screen.getByLabelText('OpenAI API key');
+    expect(key.id).toBeTruthy();
+    expect(container.querySelector(`label[for="${key.id}"]`)).toHaveTextContent('OpenAI API key');
+    expect(key).toHaveAccessibleDescription(/Saved when you leave this field.*not encrypted.*trusted endpoint/i);
+    expect(screen.getByText('Saved when you leave this field.')).toBeVisible();
+    expect(screen.getByText(/keys are stored/i)).toHaveTextContent(/localStorage.*not encrypted by Graph Copilot/i);
+  });
+
+  it.each(['openai', 'openrouter', 'anthropic'] as const)('disables Refresh for missing %s authentication with a prerequisite hint', (provider) => {
+    renderSettings({ settings: makeSettings({ provider, apiKeys: { [provider]: '   ' } }) });
+    const refresh = screen.getByRole('button', { name: /load available models/i });
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAccessibleDescription('Enter an API key above to refresh available models.');
+    fireEvent.click(refresh);
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('disables Refresh for missing custom base URL, not its optional key or model', () => {
+    const { unmount } = renderSettings({ settings: makeSettings({ provider: 'custom', models: {}, apiKeys: {}, customBaseUrl: ' ' }) });
+    const refresh = screen.getByRole('button', { name: /load available models/i });
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAccessibleDescription(/Enter a base URL above.*API key is optional/i);
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+    unmount();
+    renderSettings({ settings: makeSettings({ provider: 'custom', models: {}, apiKeys: {}, customBaseUrl: 'https://local.example/v1' }) });
+    expect(screen.getByRole('button', { name: /load available models/i })).toBeEnabled();
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('allows authenticated Refresh even when no model has been selected', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValueOnce({ models: [], capabilities: { reasoningEffort: false, richModelCatalog: false } });
+    renderSettings({ settings: makeSettings({ apiKeys: { openai: 'sk-ready' }, models: { openai: '' } }) });
+    const refresh = screen.getByRole('button', { name: /load available models/i });
+    await waitFor(() => expect(refresh).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: 'Model ID' })).toHaveAttribute('aria-invalid', 'true');
+    expect(refresh).toHaveAccessibleDescription(/Refresh loads available models/i);
+    expect(fetchModelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('reveals and hides the same unsaved key draft without claiming it was saved', () => {
+    const { onChange } = renderSettings({ settings: makeSettings({ apiKeys: {} }) });
+    const key = screen.getByLabelText('OpenAI API key');
+    fireEvent.change(key, { target: { value: 'sk-unsaved' } });
+    expect(key).toHaveAttribute('type', 'password');
+    fireEvent.click(screen.getByRole('button', { name: 'Show key' }));
+    expect(key).toHaveAttribute('type', 'text');
+    expect(key).toHaveValue('sk-unsaved');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide key' }));
+    expect(key).toHaveAttribute('type', 'password');
+    expect(key).toHaveValue('sk-unsaved');
+    expect(onChange).not.toHaveBeenCalled();
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('asks for sign-in before enabling Codex model refresh', () => {
+    renderSettings({ settings: makeSettings({ provider: 'openai-codex' }) });
+    const refresh = screen.getByRole('button', { name: /load available models/i });
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAccessibleDescription('Sign in above to refresh available models.');
+    expect(screen.getByRole('group', { name: 'ChatGPT Codex sign-in' })).toBeInTheDocument();
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('editing a draft key enables Refresh but does not save or fetch on each keystroke', () => {
+    const { onChange } = renderSettings({ settings: makeSettings({ apiKeys: {} }) });
+    const key = screen.getByLabelText('OpenAI API key');
+    expect(screen.getByRole('button', { name: /load available models/i })).toBeDisabled();
+    fireEvent.change(key, { target: { value: 'sk-draft' } });
+    expect(screen.getByRole('button', { name: /load available models/i })).toBeEnabled();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+    fireEvent.blur(key);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ apiKeys: { openai: 'sk-draft' } }));
+  });
+
+  it('commits a key draft before Escape bubbles to a closing shell, except during IME composition', () => {
+    const { onChange } = renderSettings({ settings: makeSettings({ apiKeys: {} }) });
+    const key = screen.getByLabelText('OpenAI API key');
+    fireEvent.change(key, { target: { value: 'sk-draft' } });
+    fireEvent.keyDown(key, { key: 'Escape', isComposing: true });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(key, { key: 'Escape' });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ apiKeys: { openai: 'sk-draft' } }));
+    fireEvent.blur(key);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(fetchModelCatalog).not.toHaveBeenCalled();
+  });
 
   it('renders all provider options', () => {
     renderSettings();

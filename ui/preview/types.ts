@@ -22,6 +22,7 @@ export interface PreviewSnapshot {
   executionPending: number;
   activeRun: unknown;
   conversations: unknown[];
+  experimentSessions: unknown[];
   widgets: string[];
 }
 

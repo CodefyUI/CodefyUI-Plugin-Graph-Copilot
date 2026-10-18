@@ -146,7 +146,14 @@ describe('SettingsView flows', () => {
       : changed === 'key' ? { ...initial, apiKeys: { custom: 'second' } }
       : { ...initial, customBaseUrl: 'http://second/v1' };
     rerenderSettings(next);
-    expect(screen.getByRole('button', { name: /load available models/i })).not.toBeDisabled();
+    if (changed === 'provider') {
+      // Switching to Anthropic released the old request, but no key exists for
+      // this provider. Its Refresh prerequisite is independently enforced.
+      expect(screen.getByRole('button', { name: /load available models/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /load available models/i })).toHaveAccessibleDescription(/enter an api key above/i);
+    } else {
+      expect(screen.getByRole('button', { name: /load available models/i })).not.toBeDisabled();
+    }
     expect(modelValues()).not.toContain('stale-model');
     rerenderSettings(initial);
     fireEvent.click(screen.getByRole('button', { name: /load available models/i }));

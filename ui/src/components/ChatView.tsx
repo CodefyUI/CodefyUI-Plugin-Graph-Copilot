@@ -15,6 +15,9 @@ import { MessageBubble } from './MessageBubble';
 import { describeStage, groupTurns } from './turnStages';
 import { RunReattachBanner } from './RunReattachBanner';
 import { maybeRequestNotificationPermission } from './notify';
+import { ConfirmDialog } from './ConfirmDialog';
+import { GraphMark } from './GraphMark';
+import type { GraphStats } from './ChatWindow';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -96,22 +99,6 @@ function ErrorIcon() {
   );
 }
 
-function BoltIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function CheckMiniIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Staged attachment (local, pre-send) state
 // ---------------------------------------------------------------------------
@@ -130,11 +117,24 @@ interface Staged {
 // Welcome suggestions — one-click starters that also demo the staged display
 // ---------------------------------------------------------------------------
 
-const SUGGESTIONS = [
-  'Build a small CNN image classifier',
-  'Explain what my current graph does',
-  'Improve my current graph',
-];
+interface Starter { label: string; description: string; prompt: string }
+
+function starters(mode: AgentMode, graph?: GraphStats): Starter[] {
+  if (mode === 'ask') return [
+    { label: 'Explain this graph', description: 'Trace the data and connections', prompt: 'Explain what my current graph does without changing it.' },
+    { label: 'Check the structure', description: 'Find issues without making changes', prompt: 'Validate the current graph and explain any issues. Do not change or run it.' },
+    { label: 'Explore an approach', description: 'Think through a pipeline together', prompt: 'Help me plan a machine learning pipeline. Ask what I want to build before suggesting nodes.' },
+  ];
+  if (graph?.available && graph.nodes === 0) return [
+    { label: 'Build an image classifier', description: 'Draft a small CNN pipeline', prompt: 'Build a small CNN image classifier' },
+    { label: 'Start with my data', description: 'Plan the inputs before building', prompt: 'Help me build a graph around my data. Ask about my data and goal before making changes.' },
+  ];
+  return [
+    { label: 'Explain this graph', description: 'Understand what is on the canvas', prompt: 'Explain what my current graph does' },
+    { label: 'Improve this graph', description: 'Review before making changes', prompt: 'Review my current graph and suggest a focused improvement. Explain the change before applying it.' },
+    { label: 'Plan a comparison', description: 'Turn a question into an experiment', prompt: 'Help me plan a comparison of graph parameters. First inspect the graph and ask which metric matters; do not execute yet.' },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // ChatView props
@@ -154,6 +154,8 @@ export interface ChatViewProps {
   onBusyChange?: (busy: boolean) => void;
   /** Passive view exits stop the browser agent without cancelling host work. */
   onDetachReady?: (detach: () => void) => void;
+  graphContext?: GraphStats;
+  prefill?: { id: number; text: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,10 +174,11 @@ export function ChatView({
   active = true,
   onBusyChange,
   onDetachReady,
+  graphContext,
+  prefill,
 }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<AgentMode>(conversation.mode ?? 'edit');
-  const [effortOpen, setEffortOpen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [staged, setStaged] = useState<Staged[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -203,18 +206,22 @@ export function ChatView({
     setInput('');
     setStaged([]);
     setMode(conversation.mode ?? 'edit');
-    setEffortOpen(false);
     pinnedRef.current = true;
     setShowLatest(false);
   }, [conversation.id]);
 
   useEffect(() => {
-    if (!active) setEffortOpen(false);
     if (active && !busy) {
       if (ready) textareaRef.current?.focus();
       else setupRef.current?.focus();
     }
   }, [active, conversation.id, ready, busy]);
+
+  useEffect(() => {
+    if (!prefill) return;
+    setInput((draft) => draft.trim() ? `${draft}\n\n${prefill.text}` : prefill.text);
+    textareaRef.current?.focus();
+  }, [prefill]);
 
   // Elapsed-seconds ticker while a run is in flight
   useEffect(() => {
@@ -240,7 +247,9 @@ export function ChatView({
 
   useEffect(() => {
     const el = listRef.current;
-    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+    if (!el || !pinnedRef.current) return;
+    const empty = conversation.messages.length === 0 && liveTurns.length === 0 && !busy;
+    el.scrollTop = empty ? 0 : el.scrollHeight;
   }, [conversation.messages, liveTurns, streamingText, staged.length, busy]);
 
   // Auto-resize textarea
@@ -422,7 +431,6 @@ export function ChatView({
     : [];
   const selectedEffort = settings.reasoningEfforts?.[provider] ?? '';
   const chooseEffort = (effort: ReasoningEffort | '') => {
-    setEffortOpen(false);
     onSettingsChange?.(withReasoningEffort(settings, provider, effort));
   };
 
@@ -444,6 +452,7 @@ export function ChatView({
         <div className="gcp-mode-switch" role="radiogroup" aria-label="Agent mode">
           {(['ask', 'edit'] as const).map((value) => (
             <button key={value} role="radio" aria-checked={mode === value} tabIndex={mode === value ? 0 : -1}
+              title={value === 'ask' ? 'Read-only guidance; no graph changes or execution' : 'Can change the current graph; execution requires approval'}
               disabled={busy} onClick={() => setMode(value)} onKeyDown={(event) => {
                 if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
                   event.preventDefault();
@@ -457,7 +466,13 @@ export function ChatView({
             </button>
           ))}
         </div>
-        <span>{mode === 'ask' ? 'Read-only guidance' : 'Can change the current graph'}</span>
+        <div className="gcp-graph-context" aria-label="Current graph context">
+          <GraphMark size={18} />
+          {graphContext?.available ? (
+            <span><strong>{graphContext.nodes}</strong> nodes <span className="gcp-context-secondary">/ {graphContext.edges} edges</span></span>
+          ) : <span>Graph unavailable</span>}
+        </div>
+        <span className="gcp-sr-only">{mode === 'ask' ? 'Read-only guidance' : 'Can change the current graph'}</span>
       </div>
       <span className="gcp-sr-only" role="status" aria-live="polite">
         {busy ? run.phase === 'awaiting_confirmation' ? 'Waiting for your confirmation' : 'Assistant working' :
@@ -483,20 +498,22 @@ export function ChatView({
       >
         {isEmpty && (
           <div className="gcp-welcome">
-            <div className="gcp-welcome-mark" aria-hidden="true">✦</div>
-            <div className="gcp-welcome-title">Build graphs by conversation</div>
-            <div className="gcp-welcome-sub">
-              Describe the pipeline you want, ask for parameter changes, or attach an image,
-              PDF, or code file for context.
+            <div className="gcp-welcome-intro">
+              <h2 className="gcp-welcome-title">{mode === 'ask' ? 'Understand this graph' : 'What should change?'}</h2>
+              <p className="gcp-welcome-sub">
+                {mode === 'ask' ? 'Read the graph, inspect results, and explore ideas. Your canvas stays unchanged.'
+                  : 'Describe the next step. Review the changes, then run when you are ready.'}
+              </p>
             </div>
             {ready && (
               <div className="gcp-welcome-suggestions" aria-label="Suggested prompts">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} className="gcp-suggestion" onClick={() => {
-                    setInput(s);
+                {starters(mode, graphContext).map((starter) => (
+                  <button key={starter.label} className="gcp-suggestion" aria-label={starter.label} onClick={() => {
+                    setInput(starter.prompt);
                     textareaRef.current?.focus();
                   }}>
-                    {s}
+                    <span className="gcp-suggestion-socket" aria-hidden="true" />
+                    <span><strong>{starter.label}</strong><small>{starter.description}</small></span>
                   </button>
                 ))}
               </div>
@@ -531,7 +548,7 @@ export function ChatView({
         {/* Waiting on the model (no visible activity yet) */}
         {showThinking && (
           <div className="gcp-thinking" aria-label="Waiting for the assistant">
-            <span className="gcp-thinking-orb" aria-hidden="true">✦</span>
+            <span className="gcp-thinking-orb" aria-hidden="true"><GraphMark size={20} /></span>
             <span className="gcp-thinking-text">{run.phase === 'validating' ? 'Checking structure' : 'Thinking'}</span>
             {elapsed >= 3 && <span className="gcp-thinking-time" aria-hidden="true">{elapsed}s</span>}
           </div>
@@ -566,14 +583,13 @@ export function ChatView({
       {showLatest && <button className="gcp-jump-latest" onClick={repin}>Jump to latest</button>}
 
       {run.confirmation && (
-        <div className="gcp-confirmation" role="group" aria-label="Confirm clearing the graph">
-          <strong>Clear the current graph?</strong>
-          <p>This removes {run.confirmation.nodeCount} nodes and {run.confirmation.edgeCount} edges. Changes are not automatically undone.</p>
-          <div className="gcp-confirmation-actions">
-            <button className="gcp-secondary-btn" onClick={() => run.decide(false)} autoFocus>Keep graph</button>
+        <ConfirmDialog title="Clear the current graph?" active={active} onCancel={() => run.decide(false)}
+          actions={<>
+            <button className="gcp-secondary-btn" onClick={() => run.decide(false)} data-autofocus>Keep graph</button>
             <button className="gcp-danger-btn" onClick={() => run.decide(true)}>Clear graph</button>
-          </div>
-        </div>
+          </>}>
+          <p>This removes {run.confirmation.nodeCount} nodes and {run.confirmation.edgeCount} edges. Changes are not automatically undone.</p>
+        </ConfirmDialog>
       )}
 
       {/* Drop hint overlay */}
@@ -586,28 +602,15 @@ export function ChatView({
         </div>
       )}
 
-      {/* Click-outside catcher for the effort menu */}
-      {effortOpen && (
-        <button
-          className="gcp-menu-backdrop"
-          aria-label="Close menu"
-          onClick={() => setEffortOpen(false)}
-        />
-      )}
-
       {experimentApproval && (
-        <div className="gcp-experiment-approval-backdrop">
-          <div
-            className="gcp-experiment-approval"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="gcp-experiment-approval-title"
-          >
-            <div className="gcp-experiment-approval-kicker">Execution approval</div>
-            <div id="gcp-experiment-approval-title" className="gcp-experiment-approval-title">
-              Run {experimentApproval.executionCount} graph execution{experimentApproval.executionCount === 1 ? '' : 's'}?
-            </div>
-            <div className="gcp-experiment-approval-body" role="region" aria-label="Execution approval details" tabIndex={0}>
+        <ConfirmDialog
+          title={`Run ${experimentApproval.executionCount} graph execution${experimentApproval.executionCount === 1 ? '' : 's'}?`}
+          active={active} onCancel={() => handleExperimentDecision(false)} detailsLabel="Execution approval details"
+          actions={<>
+            <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop"><StopIcon /></button>
+            <button className="gcp-approval-secondary" onClick={() => handleExperimentDecision(false)} data-autofocus>Cancel</button>
+            <button className="gcp-approval-primary" onClick={() => handleExperimentDecision(true)}>Approve and run</button>
+          </>}>
               <div className="gcp-experiment-approval-hypothesis">
                 {experimentApproval.hypothesis}
               </div>
@@ -636,35 +639,17 @@ export function ChatView({
               <div className="gcp-experiment-approval-warning">
                 Candidate edits stay off-canvas, but nodes may write files, call networks, use GPU time, or incur API costs.
               </div>
-            </div>
-            <div className="gcp-experiment-approval-actions">
-              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
-                <StopIcon />
-              </button>
-              <button className="gcp-approval-secondary" onClick={() => handleExperimentDecision(false)} autoFocus>
-                Cancel
-              </button>
-              <button className="gcp-approval-primary" onClick={() => handleExperimentDecision(true)}>
-                Approve and run
-              </button>
-            </div>
-          </div>
-        </div>
+        </ConfirmDialog>
       )}
 
       {runApproval && (
-        <div className="gcp-experiment-approval-backdrop">
-          <div
-            className="gcp-experiment-approval"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="gcp-run-approval-title"
-          >
-            <div className="gcp-experiment-approval-kicker">Execution approval</div>
-            <div id="gcp-run-approval-title" className="gcp-experiment-approval-title">
-              Run the current graph?
-            </div>
-            <div className="gcp-experiment-approval-body" role="region" aria-label="Execution approval details" tabIndex={0}>
+        <ConfirmDialog title="Run the current graph?" active={active}
+          onCancel={() => handleRunDecision(false)} detailsLabel="Execution approval details"
+          actions={<>
+            <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop"><StopIcon /></button>
+            <button className="gcp-approval-secondary" onClick={() => handleRunDecision(false)} data-autofocus>Cancel</button>
+            <button className="gcp-approval-primary" onClick={() => handleRunDecision(true)}>Run graph</button>
+          </>}>
               <div className="gcp-experiment-approval-hypothesis">
                 {runApproval.reason}
               </div>
@@ -683,19 +668,16 @@ export function ChatView({
                 calls, GPU time. Stop requests cancellation; completed side effects are not undone.
                 Closing or navigating away leaves server-owned runs running and stops local timeout monitoring.
               </div>
-            </div>
-            <div className="gcp-experiment-approval-actions">
-              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
-                <StopIcon />
-              </button>
-              <button className="gcp-approval-secondary" onClick={() => handleRunDecision(false)} autoFocus>
-                Cancel
-              </button>
-              <button className="gcp-approval-primary" onClick={() => handleRunDecision(true)}>
-                Run graph
-              </button>
-            </div>
-          </div>
+        </ConfirmDialog>
+      )}
+
+      {busy && (
+        <div className="gcp-runbar" role="status" aria-label="Agent activity" aria-live="off">
+          <span className="gcp-runbar-pulse" aria-hidden="true" />
+          <span className="gcp-runbar-phase">{runPhase}</span>
+          {runLossSeries.length >= 2 && <RunSparkline series={runLossSeries} />}
+          {liveStepCount > 0 && <span className="gcp-runbar-step">step {liveStepCount}</span>}
+          {elapsed >= 1 && <span className="gcp-runbar-time">{elapsed}s</span>}
         </div>
       )}
 
@@ -791,110 +773,30 @@ export function ChatView({
           )}
         </div>
 
-        {/* Composer bar: model + effort identity on the left, live run
-            status (or the keyboard hint) on the right. */}
         <div className="gcp-composer-bar">
           <div className="gcp-composer-context">
-            {effortOptions.length > 0 ? (
-              <div
-                className="gcp-effort"
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setEffortOpen(false);
-                }}
-              >
-                <button
-                  className={`gcp-context-chip${effortOpen ? ' open' : ''}`}
-                  onClick={() => setEffortOpen((v) => !v)}
-                  aria-haspopup="menu"
-                  aria-expanded={effortOpen}
-                  aria-label="Model and reasoning effort"
-                  title="Adjust reasoning effort"
-                >
-                  <BoltIcon />
-                  <span className="gcp-context-chip-model">{modelId || 'model'}</span>
-                  <span className="gcp-context-chip-effort">
-                    {selectedEffort || catalogEntry?.defaultReasoningEffort || 'auto'}
-                  </span>
-                </button>
-                {effortOpen && (
-                  <div className="gcp-effort-menu" role="menu" aria-label="Reasoning effort">
-                    <div className="gcp-effort-menu-title">Reasoning effort</div>
-                    {effortOptions.map((option) => (
-                      <button
-                        key={option.effort}
-                        role="menuitemradio"
-                        aria-checked={selectedEffort === option.effort}
-                        className={`gcp-effort-item${selectedEffort === option.effort ? ' selected' : ''}`}
-                        onClick={() => chooseEffort(option.effort)}
-                      >
-                        <span className="gcp-effort-item-name">{option.effort}</span>
-                        {option.description && (
-                          <span className="gcp-effort-item-desc">{option.description}</span>
-                        )}
-                        <span className="gcp-effort-item-check" aria-hidden="true">
-                          {selectedEffort === option.effort && <CheckMiniIcon />}
-                        </span>
-                      </button>
-                    ))}
-                    <button
-                      role="menuitemradio"
-                      aria-checked={selectedEffort === ''}
-                      className={`gcp-effort-item${selectedEffort === '' ? ' selected' : ''}`}
-                      onClick={() => chooseEffort('')}
-                    >
-                      <span className="gcp-effort-item-name">
-                        model default
-                        {catalogEntry?.defaultReasoningEffort
-                          ? ` (${catalogEntry.defaultReasoningEffort})`
-                          : ''}
-                      </span>
-                      <span className="gcp-effort-item-check" aria-hidden="true">
-                        {selectedEffort === '' && <CheckMiniIcon />}
-                      </span>
-                    </button>
-                    <div className="gcp-effort-menu-divider" role="separator" />
-                    <button
-                      role="menuitem"
-                      className="gcp-effort-item"
-                      onClick={() => {
-                        setEffortOpen(false);
-                        onOpenSettings();
-                      }}
-                    >
-                      <span className="gcp-effort-item-name">Change model…</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <button
-                className="gcp-context-chip"
-                onClick={onOpenSettings}
-                aria-label="Model settings"
-                title={`Provider: ${provider} — open settings`}
-              >
-                <span className="gcp-context-chip-model">{modelId || 'set up model'}</span>
-              </button>
+            <button className="gcp-context-chip" onClick={onOpenSettings} aria-label="Model settings"
+              title={`${modelId || 'No model selected'} — ${ready ? 'Configured' : 'Setup required'}; open settings`}>
+              <span className="gcp-context-chip-model">{modelId || 'Choose a model'}</span>
+              <span className="gcp-configured">{ready ? 'Configured' : 'Setup required'}</span>
+            </button>
+            {effortOptions.length > 0 && (
+              <label className="gcp-effort-control">
+                <span>Reasoning</span>
+                <select aria-label="Reasoning effort" value={selectedEffort} disabled={busy}
+                  onChange={(event) => chooseEffort(event.target.value as ReasoningEffort | '')}
+                  onKeyDown={(event) => { if (event.key === 'Escape') event.stopPropagation(); }}>
+                  <option value="">Model default{catalogEntry?.defaultReasoningEffort ? ` (${catalogEntry.defaultReasoningEffort})` : ''}</option>
+                  {effortOptions.map((option) => <option key={option.effort} value={option.effort} title={option.description}>{option.effort}</option>)}
+                </select>
+              </label>
             )}
           </div>
-
-          {busy ? (
-            <div className="gcp-runbar" role="status" aria-label="Agent activity" aria-live="off">
-              <span className="gcp-runbar-pulse" aria-hidden="true" />
-              <span className="gcp-runbar-phase">{runPhase}…</span>
-              {runLossSeries.length >= 2 && <RunSparkline series={runLossSeries} />}
-              {liveStepCount > 0 && (
-                <span className="gcp-runbar-step">step {liveStepCount}</span>
-              )}
-              {elapsed >= 1 && <span className="gcp-runbar-time">{elapsed}s</span>}
-            </div>
-          ) : (
-            <div className="gcp-composer-hint" aria-hidden="true">
-              {anyLoading ? 'Wait for attachments to finish reading'
-                : anyFailed ? 'Remove unreadable attachments before sending'
-                : 'Enter ↵ send · Shift+Enter newline'}
-            </div>
-          )}
+          {!busy && <div className="gcp-composer-hint" aria-hidden="true">
+            {anyLoading ? 'Reading attachments'
+              : anyFailed ? 'Remove unreadable attachments'
+              : 'Enter to send'}
+          </div>}
         </div>
 
         {/* Provider-not-ready overlay */}
@@ -907,8 +809,7 @@ export function ChatView({
               onClick={onOpenSettings}
               aria-label="Open settings to configure a provider"
             >
-              Settings
-            </button>
+              Set up a provider            </button>
           </div>
         )}
       </div>

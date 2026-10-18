@@ -3,6 +3,15 @@ import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Conversation } from '../state/conversations';
 import { listConversations, deleteConversation } from '../state/conversations';
 
+function DeleteIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function relativeTime(ts: number): string {
   const sec = Math.floor((Date.now() - ts) / 1000);
   if (sec < 60) return 'just now';
@@ -85,14 +94,21 @@ export function HistoryView({ api, activeId, onResume, onNew, disabled = false }
         cancelDelete(true);
       }
     }}>
+      <div className="gcp-view-heading">
+        <h2>Conversations</h2>
+        <p>Saved in this browser only. Deleting a conversation does not undo graph changes or stop host runs.</p>
+      </div>
       <div className="gcp-history-top">
         <button ref={newButtonRef} type="button" className="gcp-new-btn" aria-label="Start new conversation" disabled={disabled}
           onClick={() => { if (!disabled) { setPendingDelete(null); onNew(); } }}>
-          + New chat
+          New conversation
         </button>
       </div>
       {conversations.length === 0 ? (
-        <div className="gcp-history-empty">No conversations yet</div>
+        <div className="gcp-history-empty">
+          <p>No conversations yet</p>
+          <p>Start a new conversation to ask about or edit the current graph.</p>
+        </div>
       ) : (
         <div className="gcp-history-list" ref={listRef} onClick={(e) => {
           if (e.target === e.currentTarget) cancelDelete();
@@ -106,7 +122,7 @@ export function HistoryView({ api, activeId, onResume, onNew, disabled = false }
                   aria-label={`Resume conversation: ${title}`} aria-current={conv.id === activeId ? 'true' : undefined}
                   onClick={() => handleResume(conv.id)}>
                   <span className="gcp-history-info">
-                    <span className="gcp-history-title">{title}</span>
+                    <span className="gcp-history-title" title={title}>{title}</span>
                     <span className="gcp-history-meta">
                       {relativeTime(conv.updatedAt)} · {conv.provider}/{conv.model || '—'}
                       {conv.reasoningEffort ? ` · ${conv.reasoningEffort} effort` : ''}
@@ -119,7 +135,7 @@ export function HistoryView({ api, activeId, onResume, onNew, disabled = false }
                   aria-describedby={confirming ? confirmationId : undefined}
                   aria-label={`${confirming ? 'Confirm delete' : 'Delete'} "${conv.title || 'untitled'}"`}
                   title={confirming ? 'Delete conversation' : 'Delete'}>
-                  {confirming ? 'Delete' : '✕'}
+                  {confirming ? 'Delete' : <DeleteIcon />}
                 </button>
                 {confirming && (
                   <button type="button" className="gcp-history-cancel" disabled={disabled}

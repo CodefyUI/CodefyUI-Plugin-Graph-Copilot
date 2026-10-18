@@ -44,7 +44,7 @@ for (const size of sizes) {
       await readyPreview(page, 'scenario=clear');
       await openCopilot(page);
       await send(page, 'Clear my graph and start over.');
-      await expect(page.getByRole('group', { name: 'Confirm clearing the graph' })).toBeVisible();
+      await expect(page.getByRole('dialog', { name: 'Clear the current graph?', exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Keep graph', exact: true })).toBeFocused();
       expect((await snapshot(page)).receipts).toEqual([]);
       await capture(page, testInfo, `${size.name}-clear-confirmation`);

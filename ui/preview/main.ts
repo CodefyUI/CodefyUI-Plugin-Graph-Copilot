@@ -4,6 +4,7 @@ import { createSampleGraph } from './graph';
 import { createMockHttp } from './http';
 import { createMockExecution } from './execution';
 import { seededConversations } from './history';
+import { seededLabEvidence } from './lab';
 import { LIGHT_HOST_TOKENS } from './hostTokens';
 import { isNativeRunScenario, scenarioById, SCENARIOS } from './scenarios';
 import type { PreviewSnapshot } from './types';
@@ -25,10 +26,11 @@ if (lightTokens) {
 const memory = new Map<string, string>([['settings', JSON.stringify({
   provider: 'openai',
   models: { openai: 'mock-graph-model' },
-  apiKeys: { openai: 'mock-key-not-a-real-credential' },
+  apiKeys: scenario.id === 'setup-required' ? {} : { openai: 'mock-key-not-a-real-credential' },
   customBaseUrl: '',
 })]]);
 if (scenario.id === 'seed') memory.set('conversations', JSON.stringify(seededConversations()));
+if (scenario.id === 'lab-evidence') memory.set('experiment-sessions-v1', JSON.stringify(seededLabEvidence()));
 const widgets = new Map<string, HTMLElement>();
 let ready = false;
 
@@ -38,7 +40,7 @@ const byId = <T extends HTMLElement>(id: string): T => {
   return element as T;
 };
 
-const graph = createSampleGraph(render);
+const graph = scenario.id === 'empty-graph' ? createSampleGraph(render, { nodes: [], edges: [] }) : createSampleGraph(render);
 const execution = createMockExecution(nativeRun, window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason), { serverOwned, lateInitialId });
 const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory });
 
@@ -50,6 +52,7 @@ function snapshot(): PreviewSnapshot {
     ...graphState, ...http.inspect(), ...execution.inspect(),
     activeRun: JSON.parse(memory.get('active_run') ?? 'null') as unknown,
     conversations: JSON.parse(memory.get('conversations') ?? '[]') as unknown[],
+    experimentSessions: JSON.parse(memory.get('experiment-sessions-v1') ?? '[]') as unknown[],
     widgets: [...widgets.keys()],
   };
 }
@@ -100,7 +103,9 @@ const api: CodefyUIPluginAPI = {
       toast.hidden = false;
     },
   },
-  graph,
+  graph: scenario.id === 'unavailable-context'
+    ? { ...graph, getGraph() { throw new Error('Mock graph context unavailable'); } }
+    : graph,
   http: { fetch: http.fetch },
   storage: {
     get: (key) => memory.get(key) ?? null,
@@ -154,6 +159,10 @@ byId('scenario-form').addEventListener('submit', (event) => {
 });
 byId('release-response').addEventListener('click', () => { http.releaseNext(); });
 byId('release-execution').addEventListener('click', () => { execution.releaseNext(); });
+const canvasOptions = document.querySelector<HTMLButtonElement>('[aria-label="Mock canvas options"]')!;
+canvasOptions.addEventListener('click', () => {
+  canvasOptions.setAttribute('aria-pressed', String(canvasOptions.getAttribute('aria-pressed') !== 'true'));
+});
 render();
 
 // Import the real plugin boundary, not individual components or a look-alike.

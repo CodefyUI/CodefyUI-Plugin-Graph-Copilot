@@ -72,6 +72,29 @@ describe('HistoryView', () => {
     vi.clearAllMocks();
   });
 
+  it('explains browser-local history and its limits without adding decorative glyphs', () => {
+    const { container } = render(<HistoryView api={makeFakeApiWithConvs([])} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    expect(screen.getByRole('heading', { level: 2, name: 'Conversations' })).toBeInTheDocument();
+    expect(screen.getByText(/saved in this browser only/i)).toHaveTextContent(/does not undo graph changes or stop host runs/i);
+    expect(screen.getByText('Start a new conversation to ask about or edit the current graph.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new conversation' })).toBeEnabled();
+    expect(container.textContent).not.toMatch(/[✦✕]/);
+  });
+
+  it('keeps long titles and exact model identities intact for wrapping', () => {
+    const title = 'Investigate a long-running classifier with a detailed validation and training history';
+    const model = 'organization/research-model-with-exact-revision-2026-10-18-and-long-context';
+    const conv = makeConv({ title, model, reasoningEffort: 'max' });
+    render(<HistoryView api={makeFakeApiWithConvs([conv])} activeId="" onResume={vi.fn()} onNew={vi.fn()} />);
+    const resume = screen.getByRole('button', { name: `Resume conversation: ${title}` });
+    expect(resume.querySelector('.gcp-history-title')).toHaveTextContent(title);
+    expect(resume.querySelector('.gcp-history-meta')).toHaveTextContent(`openai/${model}`);
+    expect(resume.querySelector('.gcp-history-meta')).toHaveTextContent('max effort');
+    const remove = screen.getByRole('button', { name: `Delete "${title}"` });
+    expect(remove.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    expect(remove.textContent).toBe('');
+  });
+
   it('renders each conversation title', () => {
     const convs = [
       makeConv({ title: 'First chat', updatedAt: 1000 }),

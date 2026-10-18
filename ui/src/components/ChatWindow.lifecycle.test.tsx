@@ -57,17 +57,31 @@ describe('panel navigation owns running work', () => {
     expect(fab).toHaveFocus();
   });
 
-  it('preserves the draft through Settings, History and close, returning keyboard focus', () => {
+  it('adds a Lab comparison to the existing draft without dispatching or losing it', async () => {
+    const { input } = setup();
+    fireEvent.change(input, { target: { value: 'Keep my dataset constraints.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Experiments lab' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Plan a comparison' }));
+    const composer = screen.getByRole('textbox', { name: 'Message input' });
+    expect(composer).toHaveValue('Keep my dataset constraints.\n\nCompare three learning-rate variants, maximize validation accuracy, and run each three times.');
+    expect(composer).toHaveFocus();
+    expect(runTurn).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
+    expect((composer as HTMLTextAreaElement).value.match(/Compare three/g)).toHaveLength(1);
+  });
+
+  it('preserves the draft through Settings, History and close, returning keyboard focus', async () => {
     const { input, fab } = setup();
     expect(input).toHaveFocus();
     expect(fab).toHaveAttribute('aria-expanded', 'true');
     fireEvent.change(input, { target: { value: 'Keep this draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })));
     expect(screen.getByRole('combobox', { name: 'Select LLM provider' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
     expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('Keep this draft');
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: /Graph Copilot agent workbench/i })).toBeNull();
     expect(fab).toHaveFocus();
@@ -84,17 +98,20 @@ describe('panel navigation owns running work', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
     expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
     expect(control.opts().cancelSignal?.aborted).toBe(false);
-    const newButton = screen.getByRole('button', { name: /New conversation/i });
+    const newButton = screen.getByRole('button', { name: 'Start new conversation' });
+    const shellNew = screen.getByRole('button', { name: 'New conversation' });
     expect(newButton).toBeDisabled();
+    expect(shellNew).toBeDisabled();
     const resume = screen.getByRole('button', { name: 'Resume conversation: Earlier conversation' });
     expect(resume).toBeDisabled();
     await act(async () => { control.settle(); });
     await waitFor(() => expect(newButton).toBeEnabled());
+    expect(shellNew).toBeEnabled();
     fireEvent.click(resume);
     expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
   });
 
-  it.each(['Close panel', 'Settings', 'Experiments lab', 'Active model — open settings', 'Graph Copilot'])('detaches immediately when using %s', async (name) => {
+  it.each(['Close panel', 'Settings', 'Experiments lab', 'Model settings', 'Graph Copilot'])('detaches immediately when using %s', async (name) => {
     const control = controlled();
     const { input } = setup();
     fireEvent.change(input, { target: { value: 'Request' } });

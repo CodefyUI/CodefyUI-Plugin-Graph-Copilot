@@ -82,7 +82,7 @@ for (const navigation of ['Settings', 'Conversation history', 'Close panel', 'FA
     } else await page.getByRole('button', { name: navigation, exact: true }).click();
     await detached(page);
     if (navigation === 'Close panel' || navigation === 'FAB') await openCopilot(page);
-    else await page.getByRole('button', { name: navigation, exact: true }).click();
+    else await page.getByRole('button', { name: 'Agent chat', exact: true }).click();
     await following(page);
     await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toHaveCount(0);
     expect((await snapshot(page)).requests.filter((request) => request.url === '/api/auth/bootstrap')).toHaveLength(1);

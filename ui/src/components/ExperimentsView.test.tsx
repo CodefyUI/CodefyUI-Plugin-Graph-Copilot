@@ -347,26 +347,178 @@ describe('ExperimentsView', () => {
     expect(screen.getByRole('heading', { name: /experiment lab/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /no experiment studies yet/i })).toBeInTheDocument();
     expect(screen.getByText(/compare three learning-rate variants/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Plan a comparison' })).not.toBeInTheDocument();
   });
 
-  it('renders the objective, winner, ranked candidates, warnings, and paper ideas', () => {
+  it('offers a comparison draft only when a review callback is supplied', () => {
+    const { api, applyOperations, fetch } = makeApi();
+    const onStartStudy = vi.fn();
+    render(<ExperimentsView api={api} onStartStudy={onStartStudy} />);
+
+    expect(onStartStudy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Plan a comparison' }));
+
+    expect(onStartStudy).toHaveBeenCalledOnce();
+    expect(onStartStudy).toHaveBeenCalledWith(
+      'Compare three learning-rate variants, maximize validation accuracy, and run each three times.',
+    );
+    expect(screen.getByText(/opens a draft in Chat for review/i)).toBeInTheDocument();
+    expect(api.storage.set).not.toHaveBeenCalled();
+    expect(applyOperations).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('renders the objective, observed result, candidate evidence, warnings, and paper ideas', () => {
     const { api } = makeApi([makeSession()]);
     render(<ExperimentsView api={api} />);
 
     expect(screen.getByRole('heading', { name: /study objective/i })).toBeInTheDocument();
-    expect(screen.getByText(/maximize accuracy\.accuracy/i)).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /winning candidate/i })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Study objective' })).getByText(/maximize accuracy\.accuracy/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /observed result/i })).toBeInTheDocument();
     expect(screen.getAllByText('LR 0.001').length).toBeGreaterThan(0);
-    expect(screen.getByRole('heading', { name: /candidate leaderboard/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /candidate evidence/i })).toBeInTheDocument();
 
     const rows = screen.getAllByRole('row');
     expect(within(rows[1]).getByText('LR 0.001')).toBeInTheDocument();
-    expect(within(rows[1]).getByText('Winner')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Best observed')).toBeInTheDocument();
     expect(screen.getByText(/held-out validation/i)).toBeInTheDocument();
     expect(screen.getByText(/95% CI \[0\.89, 0\.93\]/i)).toBeInTheDocument();
-    expect(screen.getByText(/improvement \+0\.08.*g \+1\.25/i)).toBeInTheDocument();
+    expect(screen.getByText(/improvement \+0\.08 vs baseline; Hedges g \+1\.25/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /learning-rate stability across graph depth/i })).toBeInTheDocument();
     expect(screen.getByText(/repeat across five seeds/i)).toBeInTheDocument();
+  });
+
+  it('uses one semantic candidate table with retained headers and compact layout labels', () => {
+    const { api } = makeApi([makeSession()]);
+    render(<ExperimentsView api={api} />);
+
+    const tables = screen.getAllByRole('table');
+    expect(tables).toHaveLength(1);
+    const table = screen.getByRole('table', { name: 'Candidate evidence' });
+    expect(table).toHaveAccessibleDescription(/descriptive, not a hypothesis test/i);
+    const headers = within(table).getAllByRole('columnheader');
+    expect(headers.map((header) => header.textContent)).toEqual([
+      'Candidate', 'Mean', 'Variation', 'Runs', 'Runtime', 'Graph',
+    ]);
+    headers.forEach((header) => expect(header).toHaveAttribute('scope', 'col'));
+    const rows = within(table).getAllByRole('row').slice(1);
+    rows.forEach((row) => {
+      const candidate = within(row).getByRole('rowheader');
+      expect(candidate).toHaveAttribute('scope', 'row');
+      expect(candidate).toHaveAttribute('data-label', 'Candidate');
+      expect(within(row).getAllByRole('cell').map((cell) => cell.getAttribute('data-label'))).toEqual([
+        'Mean', 'Variation', 'Runs', 'Runtime', 'Graph',
+      ]);
+      expect(within(row).getByText('Completed')).toBeInTheDocument();
+      expect(within(row).getByText('3/3 objective values')).toBeInTheDocument();
+      expect(within(row).getByText('Per-run records unavailable')).toBeInTheDocument();
+    });
+    expect(within(table).getByRole('rowheader', { name: 'LR 0.001' })).toBeInTheDocument();
+    expect(within(table).getByRole('rowheader', { name: 'LR 0.01' })).toBeInTheDocument();
+  });
+
+  it('discloses every recorded operation and error without truncating candidate evidence', () => {
+    const session = makeSession();
+    const operations = [
+      'set trainer: learning_rate, very_long_parameter_name_that_must_remain_available',
+      'connect trainer.predictions -> validation_accuracy.predictions',
+    ];
+    const errors = [
+      'Run 1 failed: validation accuracy was unavailable after execution; inspect the objective output.',
+      'Run 2 failed: expected Accuracy.accuracy but the output contained loss only; no score was inferred.',
+    ];
+    session.status = 'partial';
+    session.variants[0] = {
+      ...session.variants[0],
+      status: 'failed',
+      mean: undefined,
+      stddev: undefined,
+      metricValues: [],
+      operationSummary: operations,
+      errors,
+      runs: [
+        { repetition: 1, status: 'failed', durationMs: 700, observedMetrics: {}, error: errors[0] },
+        { repetition: 2, status: 'failed', durationMs: 800, observedMetrics: {}, error: errors[1] },
+      ],
+    };
+    const { api } = makeApi([session]);
+    render(<ExperimentsView api={api} />);
+
+    const row = screen.getByRole('rowheader', { name: 'LR 0.01' }).closest('tr')!;
+    expect(within(row).getByText('Failed')).toBeInTheDocument();
+    const operationSummary = within(row).getByText('Operation summaries (2)', { selector: 'summary' });
+    const errorSummary = within(row).getByText('Errors (2)', { selector: 'summary' });
+    const operationDisclosure = operationSummary.closest('details')!;
+    const errorDisclosure = errorSummary.closest('details')!;
+    expect(operationDisclosure).not.toHaveAttribute('open');
+    expect(errorDisclosure).not.toHaveAttribute('open');
+
+    fireEvent.click(operationSummary);
+    fireEvent.click(errorSummary);
+
+    expect(operationDisclosure).toHaveAttribute('open');
+    expect(errorDisclosure).toHaveAttribute('open');
+    expect(within(operationDisclosure).getAllByRole('listitem').map((item) => item.textContent)).toEqual(operations);
+    expect(within(errorDisclosure).getAllByRole('listitem').map((item) => item.textContent)).toEqual(errors);
+    expect(within(row).getByText('0/3 objective values')).toBeInTheDocument();
+    expect(within(row).getByText('0/2 recorded runs completed')).toBeInTheDocument();
+    expect(within(row).getAllByRole('cell')[0]).toHaveTextContent('—');
+  });
+
+  it('distinguishes an unchanged candidate from an unavailable operation record', () => {
+    const session = makeSession();
+    session.variants[0].operationSummary = [];
+    const { api } = makeApi([session]);
+    render(<ExperimentsView api={api} />);
+
+    const unchanged = screen.getByRole('rowheader', { name: 'LR 0.01' }).closest('tr')!;
+    const legacy = screen.getByRole('rowheader', { name: 'LR 0.001' }).closest('tr')!;
+    expect(within(unchanged).getByText('No graph changes recorded.')).toBeInTheDocument();
+    expect(within(legacy).getByText('Operation summaries unavailable.')).toBeInTheDocument();
+    expect(screen.queryByText('Operation summaries (0)')).not.toBeInTheDocument();
+    expect(screen.queryByText('Errors (0)')).not.toBeInTheDocument();
+  });
+
+  it('preserves a recorded tie and its caveats without inventing a winner', () => {
+    const session = makeSession({
+      winnerId: undefined,
+      winnerLabel: undefined,
+      insights: {
+        summary: ['No unique winner: LR 0.01, LR 0.001 tied at 0.910000.'],
+        warnings: ['Automatic promotion was skipped because the top observed means were tied.'],
+        paperIdeas: [],
+      },
+    });
+    session.variants[0] = { ...session.variants[0], mean: 0.91, metricValues: [0.91, 0.91, 0.91] };
+    const { api } = makeApi([session]);
+    render(<ExperimentsView api={api} />);
+
+    expect(screen.getByText('No unique winner recorded')).toBeInTheDocument();
+    expect(screen.getByText(/no unique winner:.*tied at 0\.910000/i)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/top observed means were tied/i);
+    expect(screen.queryByText('Best observed')).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /rank/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('rowheader')).toHaveLength(2);
+  });
+
+  it('keeps scientific-scale means, signed comparisons, and descriptive intervals legible', () => {
+    const session = makeSession();
+    session.variants[1] = {
+      ...session.variants[1],
+      mean: 0.00001234567,
+      stddev: 0.0000001234567,
+      confidenceInterval95: { level: 0.95, lower: 0.00001, upper: 0.00002 },
+      baselineComparison: { baselineId: 'fast', meanDelta: -0.000002, objectiveImprovement: -0.000002, hedgesG: -1.234567 },
+    };
+    const { api } = makeApi([session]);
+    render(<ExperimentsView api={api} />);
+
+    const row = screen.getByRole('rowheader', { name: 'LR 0.001' }).closest('tr')!;
+    expect(within(row).getByText('1.235e-5')).toBeInTheDocument();
+    expect(within(row).getByText('± 1.235e-7')).toBeInTheDocument();
+    expect(within(row).getByText('95% CI [1.000e-5, 2.000e-5]')).toBeInTheDocument();
+    expect(within(row).getByText('Improvement -2.000e-6 vs baseline; Hedges g -1.23457')).toBeInTheDocument();
+    expect(screen.getByText(/repetitions are not necessarily independent seeds/i)).toBeInTheDocument();
   });
 
   it('shows the deterministic optimizer plan separately from graph execution seeds', () => {
@@ -418,7 +570,7 @@ describe('ExperimentsView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /runtime can be minimized/i }));
     expect(screen.getByRole('heading', { name: /runtime can be minimized/i })).toBeInTheDocument();
-    expect(screen.getByText(/minimize system\.runtime_ms/i)).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Study objective' })).getByText(/minimize system\.runtime_ms/i)).toBeInTheDocument();
     expect(screen.getByText('Cached inputs')).toBeInTheDocument();
   });
 
@@ -444,6 +596,11 @@ describe('ExperimentsView', () => {
     const dialog = screen.getByRole('dialog', { name: /import portable study/i });
     expect(within(dialog).getByText(bundle.payload.id)).toBeInTheDocument();
     expect(within(dialog).getByText(bundle.integrity.contentSha256)).toBeInTheDocument();
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog).toHaveAttribute('open');
+    expect(cancel).toHaveAttribute('data-autofocus', 'true');
+    expect(cancel).toHaveFocus();
     expect(within(dialog).getByText(/does not authenticate the author or evidence source/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/does not execute, replay, apply, or open any graph/i)).toBeInTheDocument();
     expect(api.storage.set).not.toHaveBeenCalled();
@@ -472,6 +629,117 @@ describe('ExperimentsView', () => {
       hypothesis: bundle.payload.spec.hypothesis,
     }));
     expect(loadExperimentSessions(api)[0].insights.warnings.join(' ')).toContain('read-only');
+    expect(applyOperations).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['Cancel button', 'native cancel'] as const)('dismisses an import preview with %s without any write', async (dismissal) => {
+    const bundle = await makePortableBundle();
+    const { api, applyOperations, fetch } = makeApi();
+    render(<ExperimentsView api={api} />);
+    await choosePortableFile(bundle);
+    const dialog = screen.getByRole('dialog', { name: 'Import portable study?' });
+
+    if (dismissal === 'Cancel button') {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    } else {
+      fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    }
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.storage.set).not.toHaveBeenCalled();
+    expect(api.storage.remove).not.toHaveBeenCalled();
+    expect(applyOperations).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the latest selected import file when asynchronous file reads finish out of order', async () => {
+    const older = await makePortableBundle({ id: 'older-preview', hypothesis: 'An older selection' });
+    const latest = await makePortableBundle({ id: 'latest-preview', hypothesis: 'The latest selection' });
+    const olderText = await encodeStudyBundle(older);
+    const latestText = await encodeStudyBundle(latest);
+    const { api } = makeApi();
+    let finishOlder!: (value: string) => void;
+    const pendingOlder = new Promise<string>((resolve) => { finishOlder = resolve; });
+    render(<ExperimentsView api={api} />);
+    const input = screen.getByLabelText(/choose portable study file/i);
+
+    fireEvent.change(input, { target: { files: [{ text: () => pendingOlder }] } });
+    fireEvent.change(input, { target: { files: [{ text: async () => latestText }] } });
+    const dialog = await screen.findByRole('dialog', { name: 'Import portable study?' });
+    expect(within(dialog).getByText('latest-preview')).toBeInTheDocument();
+
+    await act(async () => {
+      finishOlder(olderText);
+      await pendingOlder;
+    });
+
+    expect(within(screen.getByRole('dialog')).getByText('latest-preview')).toBeInTheDocument();
+    expect(screen.queryByText('older-preview')).not.toBeInTheDocument();
+    expect(api.storage.set).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale read failure after a newer import preview has been cancelled', async () => {
+    const latest = await makePortableBundle({ id: 'latest-preview' });
+    const latestText = await encodeStudyBundle(latest);
+    const { api } = makeApi();
+    let failOlder!: (reason: Error) => void;
+    const pendingOlder = new Promise<string>((_resolve, reject) => { failOlder = reject; });
+    render(<ExperimentsView api={api} />);
+    const input = screen.getByLabelText(/choose portable study file/i);
+
+    fireEvent.change(input, { target: { files: [{ text: () => pendingOlder }] } });
+    fireEvent.change(input, { target: { files: [{ text: async () => latestText }] } });
+    const dialog = await screen.findByRole('dialog', { name: 'Import portable study?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await act(async () => {
+      failOlder(new Error('stale file read failed'));
+      await pendingOlder.catch(() => undefined);
+    });
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(api.storage.set).not.toHaveBeenCalled();
+  });
+
+  it('prevents dismissal, replacement, or a second commit while an import is saving', async () => {
+    const bundle = await makePortableBundle();
+    const replacement = await makePortableBundle({ id: 'replacement-preview' });
+    const replacementText = await encodeStudyBundle(replacement);
+    const { api, applyOperations, fetch } = makeApi();
+    let releaseLock!: () => void;
+    const lockGate = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const requestLock = vi.fn(async (
+      _name: string,
+      _options: { mode: 'exclusive' },
+      callback: () => Promise<unknown>,
+    ) => {
+      await lockGate;
+      return callback();
+    });
+    vi.stubGlobal('navigator', { locks: { request: requestLock } });
+    render(<ExperimentsView api={api} />);
+    await choosePortableFile(bundle);
+    const dialog = screen.getByRole('dialog', { name: 'Import portable study?' });
+    const importButton = within(dialog).getByRole('button', { name: 'Import read-only' });
+    fireEvent.click(importButton);
+
+    await waitFor(() => expect(requestLock).toHaveBeenCalledOnce());
+    expect(importButton).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    fireEvent.click(importButton);
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    fireEvent.change(screen.getByLabelText(/choose portable study file/i), {
+      target: { files: [{ text: async () => replacementText }] },
+    });
+
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expect(within(dialog).getByText(bundle.payload.id)).toBeInTheDocument();
+    expect(screen.queryByText('replacement-preview')).not.toBeInTheDocument();
+    expect(api.storage.set).not.toHaveBeenCalled();
+    await act(async () => { releaseLock(); });
+    expect(await screen.findByText(/no graph was executed or applied/i)).toBeInTheDocument();
+    expect(loadExperimentSessions(api).map((session) => session.id)).toEqual([bundle.payload.id]);
     expect(applyOperations).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
