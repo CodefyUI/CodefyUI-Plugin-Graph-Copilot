@@ -1,9 +1,8 @@
 /**
  * ChatView — composer model/effort quick control and the live run bar.
  *
- * The effort chip lets the user adjust reasoning strength without opening
- * Settings; the run bar narrates what the agent is doing while a multi-round
- * run is in flight.
+ * The native effort select lets the user adjust reasoning strength without
+ * opening Settings; the run bar narrates a multi-round run in flight.
  */
 import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -89,63 +88,72 @@ function Harness({
 describe('ChatView effort quick control', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows the model and the selected effort in the composer chip', () => {
+  it('shows model settings separately from the selected native reasoning effort', () => {
     render(<Harness />);
-    const chip = screen.getByRole('button', { name: /model and reasoning effort/i });
-    expect(chip.textContent).toContain('gpt-5.6-sol');
-    expect(chip.textContent).toContain('high');
+    const model = screen.getByRole('button', { name: 'Model settings' });
+    expect(model).toHaveTextContent('gpt-5.6-sol');
+    expect(model).toHaveTextContent('Configured');
+    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toHaveValue('high');
   });
 
-  it('changes the effort from the quick menu and stamps the confirmed model', async () => {
+  it('changes the native effort select and stamps the confirmed model', () => {
     const captured: Settings[] = [];
     render(<Harness onSettings={(s) => captured.push(s)} />);
 
-    await userEvent.click(screen.getByRole('button', { name: /model and reasoning effort/i }));
-    await userEvent.click(screen.getByRole('menuitemradio', { name: 'max' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'max' } });
 
     expect(captured).toHaveLength(1);
     expect(captured[0].reasoningEfforts?.openai).toBe('max');
+    expect(captured[0].providerCapabilities?.openai?.reasoningModel).toBe('gpt-5.6-sol');
     expect(activeReasoningEffort(captured[0])).toBe('max');
-    // Menu closed; chip reflects the new choice.
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(screen.getByRole('button', { name: /model and reasoning effort/i }).textContent)
-      .toContain('max');
+    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toHaveValue('max');
+    expect(screen.getByRole('button', { name: 'Model settings' })).toHaveTextContent('gpt-5.6-sol');
   });
 
-  it('offers the model default and clears the explicit effort', async () => {
+  it('offers the model default and clears the explicit effort', () => {
     const captured: Settings[] = [];
     render(<Harness onSettings={(s) => captured.push(s)} />);
 
-    await userEvent.click(screen.getByRole('button', { name: /model and reasoning effort/i }));
-    await userEvent.click(screen.getByRole('menuitemradio', { name: /model default \(medium\)/i }));
+    const effort = screen.getByRole('combobox', { name: 'Reasoning effort' });
+    expect(screen.getByRole('option', { name: 'Model default (medium)' })).toHaveValue('');
+    fireEvent.change(effort, { target: { value: '' } });
 
     expect(captured[0].reasoningEfforts?.openai).toBeUndefined();
     expect(activeReasoningEffort(captured[0])).toBeUndefined();
+    expect(effort).toHaveValue('');
   });
 
-  it('links to full settings for changing the model', async () => {
+  it('links to full settings for changing the model without changing the effort', async () => {
     const onOpenSettings = vi.fn();
-    render(<Harness onOpenSettings={onOpenSettings} />);
+    const onSettings = vi.fn();
+    render(<Harness onOpenSettings={onOpenSettings} onSettings={onSettings} />);
 
-    await userEvent.click(screen.getByRole('button', { name: /model and reasoning effort/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /change model/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Model settings' }));
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('menu')).toBeNull();
+    expect(onSettings).not.toHaveBeenCalled();
+    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toHaveValue('high');
   });
 
-  it('closes the menu from the backdrop and with Escape', async () => {
-    render(<Harness />);
-    const chip = screen.getByRole('button', { name: /model and reasoning effort/i });
+  it('keeps Escape on the native effort select from reaching a closing shell', () => {
+    const shellKeyDown = vi.fn();
+    const onSettings = vi.fn();
+    render(<div onKeyDown={shellKeyDown}><Harness onSettings={onSettings} /></div>);
+    const effort = screen.getByRole('combobox', { name: 'Reasoning effort' });
+    effort.focus();
+    fireEvent.keyDown(effort, { key: 'Escape' });
+    expect(shellKeyDown).not.toHaveBeenCalled();
+    expect(effort).toHaveFocus();
+    expect(effort).toHaveValue('high');
+    expect(onSettings).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Model settings' }), { key: 'Escape' });
+    expect(shellKeyDown).toHaveBeenCalledTimes(1);
+  });
 
-    await userEvent.click(chip);
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /close menu/i }));
-    expect(screen.queryByRole('menu')).toBeNull();
-
-    await userEvent.click(chip);
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
+  it('does not expose an effort control without a settings-change callback', () => {
+    render(<Harness withSettingsChange={false} />);
+    expect(screen.queryByRole('combobox', { name: 'Reasoning effort' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Model settings' })).toBeInTheDocument();
   });
 
   it('falls back to a plain settings chip before capability negotiation', async () => {
@@ -164,6 +172,7 @@ describe('ChatView effort quick control', () => {
 
     const chip = screen.getByRole('button', { name: /model settings/i });
     expect(chip.textContent).toContain('gpt-5.6-sol');
+    expect(screen.queryByRole('combobox', { name: 'Reasoning effort' })).toBeNull();
     await userEvent.click(chip);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });

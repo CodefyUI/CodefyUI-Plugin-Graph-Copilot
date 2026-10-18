@@ -1,7 +1,7 @@
 import type { GraphOp } from '../src/types/codefyui';
 import type { WireToolCall } from '../src/llm/client';
 
-export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history';
+export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history' | 'setup-required' | 'empty-graph' | 'unavailable-context' | 'lab-evidence';
 
 export interface ChatReply {
   text: string;
@@ -40,6 +40,26 @@ const editReplies = (operations: GraphOp[] = EDIT_OPERATIONS): ChatReply[] => [
 ];
 
 export const SCENARIOS: Scenario[] = [
+  {
+    id: 'setup-required', label: 'Provider setup required', mode: 'edit', validation: 'actual',
+    prompt: 'Explain the current graph after I configure a provider.',
+    replies: [{ text: 'The fake provider is configured. No external network is used in this preview.' }],
+  },
+  {
+    id: 'empty-graph', label: 'Empty graph context', mode: 'edit', validation: 'actual',
+    prompt: 'Build a small image classifier from this empty graph.',
+    replies: [{ text: 'This fixture starts with an empty graph. Planning does not apply operations or execute nodes.' }],
+  },
+  {
+    id: 'unavailable-context', label: 'Graph context unavailable', mode: 'edit', validation: 'actual',
+    prompt: 'Help me reconnect to the current graph context.',
+    replies: [{ text: 'The preview graph context is unavailable. No graph was read or executed.' }],
+  },
+  {
+    id: 'lab-evidence', label: 'Saved Lab evidence (no execution)', mode: 'ask', validation: 'actual',
+    prompt: 'Explain the saved study evidence without running another experiment.',
+    replies: [{ text: 'This preview uses seeded study summaries only. No study execution was requested.' }],
+  },
   {
     id: 'ask', label: 'Successful ask', mode: 'ask', validation: 'actual',
     prompt: 'Explain what my current graph does without changing it.',
@@ -165,7 +185,7 @@ export function isNativeRunScenario(scenario: Scenario): boolean {
 }
 
 export function scenarioById(value: string | null): Scenario {
-  return SCENARIOS.find((scenario) => scenario.id === value) ?? SCENARIOS[1];
+  return SCENARIOS.find((scenario) => scenario.id === value) ?? SCENARIOS.find((scenario) => scenario.id === 'edit')!;
 }
 
 // For capped invalid-validation nudges in older bundles, repeat only text:

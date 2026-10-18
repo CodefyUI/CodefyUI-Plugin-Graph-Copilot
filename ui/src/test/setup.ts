@@ -14,6 +14,10 @@ expect.extend(jestDomMatchers);
 // useEffect(auto-scroll) doesn't throw in tests.
 if (typeof window !== 'undefined') {
   window.HTMLElement.prototype.scrollIntoView = function () {};
+  // Model only the open state in jsdom; real modal focus/inertness is exercised
+  // in Chromium, not inferred from these stubs.
+  window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
 }
 
 // Clean up rendered components after each test to prevent DOM accumulation

@@ -192,12 +192,15 @@ describe('ChatView staged streaming', () => {
     });
     renderChatView();
 
-    const chip = screen.getByRole('button', { name: 'Improve my current graph' });
+    const chip = screen.getByRole('button', { name: 'Improve this graph' });
+    const prompt = 'Review my current graph and suggest a focused improvement. Explain the change before applying it.';
     await userEvent.click(chip);
     expect(runTurn).not.toHaveBeenCalled();
-    expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('Improve my current graph');
+    const input = screen.getByRole('textbox', { name: 'Message input' });
+    expect(input).toHaveValue(prompt);
+    expect(input).toHaveFocus();
     await userEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(runTurn).mock.calls[0][0].userText).toBe('Improve my current graph');
+    expect(vi.mocked(runTurn).mock.calls[0][0].userText).toBe(prompt);
   });
 });

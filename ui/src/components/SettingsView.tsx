@@ -48,12 +48,14 @@ export interface SettingsViewProps {
   onChange: (s: Settings) => void;
 }
 
-function PasswordInput({ value, onBlur, onEdit, placeholder, 'aria-label': ariaLabel }: {
+function PasswordInput({ id, value, onBlur, onEdit, placeholder, 'aria-label': ariaLabel, 'aria-describedby': describedBy }: {
+  id: string;
   value: string;
   onBlur: (v: string) => void;
   onEdit: (v: string) => void;
   placeholder?: string;
   'aria-label': string;
+  'aria-describedby'?: string;
 }) {
   const [show, setShow] = useState(false);
   const [local, setLocal] = useState(value);
@@ -61,10 +63,14 @@ function PasswordInput({ value, onBlur, onEdit, placeholder, 'aria-label': ariaL
   return (
     <div className="gcp-key-row">
       <input
-        type={show ? 'text' : 'password'} className="gcp-input" value={local}
+        id={id} type={show ? 'text' : 'password'} className="gcp-input" value={local}
         onChange={(e) => { setLocal(e.target.value); onEdit(e.target.value); }}
         onBlur={() => onBlur(local)} placeholder={placeholder ?? 'API key'}
-        aria-label={ariaLabel} autoComplete="off" spellCheck={false}
+        onKeyDown={(event) => {
+          // The shell may close on Escape without blurring the focused input.
+          if (event.key === 'Escape' && !event.nativeEvent.isComposing) onBlur(local);
+        }}
+        aria-label={ariaLabel} aria-describedby={describedBy} autoComplete="off" spellCheck={false}
       />
       <button type="button" className="gcp-show-btn" onClick={() => setShow((s) => !s)}
         aria-label={show ? 'Hide key' : 'Show key'} title={show ? 'Hide' : 'Show'}>
@@ -449,112 +455,147 @@ export function SettingsView({
   const datalistId = 'gcp-model-datalist';
   const setupReason = readinessReason(settings, codexLoggedIn);
   const modelMissing = !selectedModel.trim();
+  const refreshPrerequisite = provider === 'openai-codex'
+    ? codexSigningOut ? 'Wait for sign-out to finish before refreshing models.'
+      : codexLoggedIn ? null : 'Sign in above to refresh available models.'
+    : provider === 'custom'
+      ? activeBaseUrl?.trim() ? null : 'Enter a base URL above to refresh models. An API key is optional.'
+      : draftKeyRef.current?.trim() ? null : 'Enter an API key above to refresh available models.';
+  const modelCatalogHint = refreshPrerequisite ?? (provider === 'custom'
+    ? 'Refresh queries this endpoint only when you ask. A model ID can also be typed directly.'
+    : 'Refresh loads available models. A model ID can also be typed directly.');
 
   return (
     <div className="gcp-settings">
-      <div className="gcp-field">
-        <label className="gcp-label" htmlFor="gcp-provider-select">Provider</label>
-        <select id="gcp-provider-select" className="gcp-select" value={provider}
-          onChange={(e) => { resetModels(); updateSettings({ provider: e.target.value as Provider }); }}
-          aria-label="Select LLM provider">
-          {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
-        </select>
+      <div className="gcp-view-heading">
+        <h2>Settings</h2>
+        <p>Connect a provider, choose a model, and set how Graph Copilot works.</p>
       </div>
-      <div className="gcp-field">
-        <label className="gcp-label" htmlFor="gcp-model-input">Model</label>
-        <div className="gcp-model-row">
-          <input id="gcp-model-input" className="gcp-input" list={datalistId}
-            value={selectedModel} onChange={(e) => updateModel(e.target.value)}
-            placeholder="model id" aria-label="Model ID"
-            aria-invalid={modelMissing ? 'true' : undefined}
-            aria-describedby={modelMissing ? 'gcp-settings-readiness' : undefined}
-            autoComplete="off" spellCheck={false}
-          />
-          <datalist id={datalistId}>
-            {modelList.map((m) => <option key={m.id} value={m.id} label={m.label} />)}
-          </datalist>
-          <button type="button" className="gcp-load-btn" onClick={handleLoadModels}
-            disabled={modelLoading || (provider === 'openai-codex' && codexSigningOut)}
-            aria-label="Load available models from provider" title="Refresh model list">
-            {modelLoading ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-        {modelError && <span className="gcp-field-hint error" role="alert">{modelError}</span>}
-      </div>
-      {reasoningOptions.length > 0 && (
-        <div className="gcp-field">
-          <label className="gcp-label" htmlFor="gcp-reasoning-effort">Reasoning effort</label>
-          <select id="gcp-reasoning-effort" className="gcp-select"
-            value={settings.reasoningEfforts?.[provider] ?? ''}
-            onChange={(event) => updateReasoningEffort(event.target.value)} aria-label="Reasoning effort">
-            <option value="">Model default{selectedCatalogEntry?.defaultReasoningEffort
-              ? ` (${selectedCatalogEntry.defaultReasoningEffort})` : ''}</option>
-            {reasoningOptions.map((option) => (
-              <option key={option.effort} value={option.effort} title={option.description}>{option.effort}</option>
-            ))}
-          </select>
-        </div>
-      )}
-      <div className="gcp-field">
-        <label>
-          <input type="checkbox" checked={settings.notifyOnRunCompletion !== false}
-            onChange={(e) => updateSettings({ notifyOnRunCompletion: e.target.checked })}
-            aria-label="Notify when a graph run finishes while this tab is in the background" />
-          Notify when a graph run finishes while this tab is in the background
-        </label>
-      </div>
-      {provider !== 'openai-codex' && KEY_PROVIDERS.filter((p) => p === provider).map((p) => (
-        <div className="gcp-field" key={p}>
-          <label className="gcp-label">{p === 'openai' ? 'OpenAI API Key' : p === 'anthropic'
-            ? 'Anthropic API Key' : p === 'openrouter' ? 'OpenRouter API Key' : 'Custom API Key'}</label>
-          <PasswordInput value={typeof settings.apiKeys[p] === 'string' ? settings.apiKeys[p]! : ''}
-            onEdit={(value) => { draftKeyRef.current = value; resetModels(); }}
-            onBlur={(v) => updateKey(p, v)} placeholder={p === 'custom' ? 'API key (optional)' : 'sk-...'}
-            aria-label={p === 'openai' ? 'OpenAI API key' : p === 'anthropic'
-              ? 'Anthropic API key' : p === 'openrouter' ? 'OpenRouter API key' : 'Custom API key'}
-          />
-        </div>
-      ))}
-      {provider === 'custom' && (
-        <div className="gcp-field">
-          <label className="gcp-label" htmlFor="gcp-base-url">Base URL</label>
-          <input id="gcp-base-url" className="gcp-input" type="url" value={activeBaseUrl ?? ''}
-            onChange={(e) => { resetModels(); updateSettings({ customBaseUrl: e.target.value }); }}
-            placeholder="http://127.0.0.1:11434/v1" aria-label="Custom API base URL" spellCheck={false} />
-        </div>
-      )}
-      {provider === 'openai-codex' && (
-        <div className="gcp-field">
-          <label className="gcp-label">ChatGPT Codex Auth</label>
-          <div className="gcp-codex-section">
-            <div className={`gcp-codex-status${codexLoggedIn ? ' signed-in' : codexPending ? ' pending' : ''}`}
-              role="status" aria-live="polite">
-              {codexLoggedIn ? `Signed in${codexEmail ? ` as ${codexEmail}` : ''}` : codexPending
-                ? 'Sign-in pending... (waiting for browser auth)' : 'Not signed in'}
+
+      <section className="gcp-settings-section" aria-labelledby="gcp-settings-connection">
+        <h3 id="gcp-settings-connection">Connection</h3>
+        <div className="gcp-settings-section-body">
+          <div className="gcp-field">
+            <label className="gcp-label" htmlFor="gcp-provider-select">Provider</label>
+            <select id="gcp-provider-select" className="gcp-select" value={provider}
+              onChange={(e) => { resetModels(); updateSettings({ provider: e.target.value as Provider }); }}
+              aria-label="Select LLM provider">
+              {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+            </select>
+          </div>
+          {provider === 'custom' && (
+            <div className="gcp-field">
+              <label className="gcp-label" htmlFor="gcp-base-url">Base URL</label>
+              <input id="gcp-base-url" className="gcp-input" type="url" value={activeBaseUrl ?? ''}
+                onChange={(e) => { resetModels(); updateSettings({ customBaseUrl: e.target.value }); }}
+                placeholder="http://127.0.0.1:11434/v1" aria-label="Custom API base URL" spellCheck={false} />
             </div>
-            <div className="gcp-codex-btns">
-              {!codexLoggedIn && (
-                <button type="button" className="gcp-codex-btn" onClick={handleCodexSignIn}
-                  disabled={codexPending || codexSigningOut} aria-label="Sign in with ChatGPT Codex">
-                  {codexPending ? 'Waiting...' : 'Sign in'}
-                </button>
-              )}
-              {codexLoggedIn && (
-                <button type="button" className="gcp-codex-btn danger" onClick={handleCodexSignOut}
-                  disabled={codexSigningOut} aria-label="Sign out from ChatGPT Codex">
-                  {codexSigningOut ? 'Signing out...' : 'Sign out'}
-                </button>
-              )}
+          )}
+          {provider !== 'openai-codex' && KEY_PROVIDERS.filter((p) => p === provider).map((p) => (
+            <div className="gcp-field" key={p}>
+              <label className="gcp-label" htmlFor={`gcp-${p}-api-key`}>{p === 'openai' ? 'OpenAI API key' : p === 'anthropic'
+                ? 'Anthropic API key' : p === 'openrouter' ? 'OpenRouter API key' : 'Custom API key'}</label>
+              <PasswordInput id={`gcp-${p}-api-key`} value={typeof settings.apiKeys[p] === 'string' ? settings.apiKeys[p]! : ''}
+                onEdit={(value) => { draftKeyRef.current = value; resetModels(); }}
+                onBlur={(v) => updateKey(p, v)} placeholder={p === 'custom' ? 'API key (optional)' : 'sk-...'}
+                aria-label={p === 'openai' ? 'OpenAI API key' : p === 'anthropic'
+                  ? 'Anthropic API key' : p === 'openrouter' ? 'OpenRouter API key' : 'Custom API key'}
+                aria-describedby="gcp-key-save-hint gcp-key-privacy"
+              />
+              <span id="gcp-key-save-hint" className="gcp-field-hint">Saved when you leave this field.</span>
             </div>
-            {codexError && <span className="gcp-field-hint error" role="alert">{codexError}</span>}
+          ))}
+          {provider === 'openai-codex' ? (
+            <div className="gcp-field" role="group" aria-labelledby="gcp-codex-auth-label">
+              <span id="gcp-codex-auth-label" className="gcp-label">ChatGPT Codex sign-in</span>
+              <div className="gcp-codex-section">
+                <div className={`gcp-codex-status${codexLoggedIn ? ' signed-in' : codexPending ? ' pending' : ''}`}
+                  role="status" aria-live="polite">
+                  {codexLoggedIn ? `Signed in${codexEmail ? ` as ${codexEmail}` : ''}` : codexPending
+                    ? 'Sign-in pending... (waiting for browser auth)' : 'Not signed in'}
+                </div>
+                <div className="gcp-codex-btns">
+                  {!codexLoggedIn && (
+                    <button type="button" className="gcp-codex-btn" onClick={handleCodexSignIn}
+                      disabled={codexPending || codexSigningOut} aria-label="Sign in with ChatGPT Codex">
+                      {codexPending ? 'Waiting...' : 'Sign in'}
+                    </button>
+                  )}
+                  {codexLoggedIn && (
+                    <button type="button" className="gcp-codex-btn danger" onClick={handleCodexSignOut}
+                      disabled={codexSigningOut} aria-label="Sign out from ChatGPT Codex">
+                      {codexSigningOut ? 'Signing out...' : 'Sign out'}
+                    </button>
+                  )}
+                </div>
+                {codexError && <span className="gcp-field-hint error" role="alert">{codexError}</span>}
+              </div>
+            </div>
+          ) : (
+            <p id="gcp-key-privacy" className="gcp-field-hint">
+              Keys are stored in this browser's localStorage, not encrypted by Graph Copilot.
+              Your local CodefyUI backend forwards them to the selected provider or custom endpoint. Use a trusted endpoint.
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="gcp-settings-section" aria-labelledby="gcp-settings-model">
+        <h3 id="gcp-settings-model">Model</h3>
+        <div className="gcp-settings-section-body">
+          <div className="gcp-field">
+            <label className="gcp-label" htmlFor="gcp-model-input">Model ID</label>
+            <div className="gcp-model-row">
+              <input id="gcp-model-input" className="gcp-input" list={datalistId}
+                value={selectedModel} onChange={(e) => updateModel(e.target.value)}
+                placeholder="model id" aria-label="Model ID"
+                aria-invalid={modelMissing ? 'true' : undefined}
+                aria-describedby={modelMissing ? 'gcp-settings-readiness' : undefined}
+                autoComplete="off" spellCheck={false}
+              />
+              <datalist id={datalistId}>
+                {modelList.map((m) => <option key={m.id} value={m.id} label={m.label} />)}
+              </datalist>
+              <button type="button" className="gcp-load-btn" onClick={handleLoadModels}
+                disabled={modelLoading || refreshPrerequisite !== null}
+                aria-label="Load available models from provider" aria-describedby="gcp-model-refresh-hint" title="Refresh model list">
+                {modelLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+            <span id="gcp-model-refresh-hint" className="gcp-field-hint">{modelCatalogHint}</span>
+            {modelError && <span className="gcp-field-hint error" role="alert">{modelError}</span>}
+          </div>
+          {reasoningOptions.length > 0 && (
+            <div className="gcp-field">
+              <label className="gcp-label" htmlFor="gcp-reasoning-effort">Reasoning effort</label>
+              <select id="gcp-reasoning-effort" className="gcp-select"
+                value={settings.reasoningEfforts?.[provider] ?? ''}
+                onChange={(event) => updateReasoningEffort(event.target.value)} aria-label="Reasoning effort">
+                <option value="">Model default{selectedCatalogEntry?.defaultReasoningEffort
+                  ? ` (${selectedCatalogEntry.defaultReasoningEffort})` : ''}</option>
+                {reasoningOptions.map((option) => (
+                  <option key={option.effort} value={option.effort} title={option.description}>{option.effort}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {setupReason && <p id="gcp-settings-readiness" className="gcp-field-hint">{setupReason}</p>}
+        </div>
+      </section>
+
+      <section className="gcp-settings-section" aria-labelledby="gcp-settings-behavior">
+        <h3 id="gcp-settings-behavior">Behavior</h3>
+        <div className="gcp-settings-section-body">
+          <div className="gcp-field">
+            <label htmlFor="gcp-run-notifications">
+              <input id="gcp-run-notifications" type="checkbox" checked={settings.notifyOnRunCompletion !== false}
+                onChange={(e) => updateSettings({ notifyOnRunCompletion: e.target.checked })}
+                aria-label="Notify when a graph run finishes while this tab is in the background" />
+              Notify when a graph run finishes while this tab is in the background
+            </label>
           </div>
         </div>
-      )}
-      {setupReason && <p id="gcp-settings-readiness" className="gcp-field-hint">{setupReason}</p>}
-      <p className="gcp-footnote">
-        Keys are stored in this browser's localStorage and sent only to your
-        local CodefyUI backend, which forwards them to the selected provider.
-      </p>
+      </section>
     </div>
   );
 }

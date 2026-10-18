@@ -45,8 +45,10 @@ export function CopilotApp({ api }: CopilotAppProps) {
   const close = () => {
     detachRef.current?.();
     setOpen(false);
-    fabRef.current?.focus();
   };
+  useEffect(() => {
+    if (opened && !open) fabRef.current?.focus();
+  }, [open, opened]);
   const toggle = () => {
     if (open) close();
     else { setOpened(true); setOpen(true); }
@@ -201,7 +203,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
   };
 
   return (
-    <div className="gcp-root">
+    <div className={`gcp-root${open ? ' gcp-root--open' : ''}`}>
       <Fab onClick={toggle} expanded={open} controls={panelId} buttonRef={fabRef} />
 
       {opened && (

@@ -6,6 +6,7 @@ import { ChatView } from './ChatView';
 import { ExperimentsView } from './ExperimentsView';
 import { HistoryView } from './HistoryView';
 import { SettingsView } from './SettingsView';
+import { GraphMark } from './GraphMark';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -73,7 +74,7 @@ function CloseIcon() {
 type View = 'chat' | 'experiments' | 'history' | 'settings';
 type PanelMode = 'compact' | 'expanded';
 
-interface GraphStats {
+export interface GraphStats {
   nodes: number;
   edges: number;
   available: boolean;
@@ -134,6 +135,7 @@ export function ChatWindow({
   const [panelMode, setPanelMode] = useState<PanelMode>('compact');
   const [graphStats, setGraphStats] = useState<GraphStats>(() => readGraphStats(api));
   const [busy, setBusy] = useState(false);
+  const [prefill, setPrefill] = useState<{ id: number; text: string } | null>(null);
   const busyRef = useRef(false);
   const detachRef = useRef<(() => void) | null>(null);
   const viewRef = useRef<HTMLElement>(null);
@@ -176,11 +178,12 @@ export function ChatWindow({
     if (next !== 'chat') detachRef.current?.();
     setView(next);
   };
-  const switchTo = (next: View) => navigate(view === next ? 'chat' : next);
+  const startStudy = (text: string) => {
+    if (busyRef.current) return;
+    setPrefill((previous) => ({ id: (previous?.id ?? 0) + 1, text }));
+    setView('chat');
+  };
   const close = () => { detachRef.current?.(); onClose(); };
-
-  const model = settings.models[settings.provider] ?? '';
-  const apiVersion = Number.isFinite(api.apiVersion) ? `API v${api.apiVersion}` : 'API legacy';
 
   const navItems: Array<{ id: View; label: string; ariaLabel: string; icon: React.ReactNode }> = [
     { id: 'chat', label: 'Chat', ariaLabel: 'Agent chat', icon: <ChatIcon /> },
@@ -207,22 +210,16 @@ export function ChatWindow({
       <header className="gcp-workbench-header">
         <div className="gcp-header-main">
           <div className="gcp-brand">
-            <span className="gcp-header-mark" aria-hidden="true">✦</span>
-            <span className="gcp-brand-copy">
-              <strong>Graph Copilot</strong>
-              <span>Agent workbench</span>
-            </span>
+            <span className="gcp-header-mark"><GraphMark /></span>
+            <strong>Graph Copilot</strong>
           </div>
 
           <div className="gcp-header-actions">
-            <button
-              className="gcp-model-chip"
-              onClick={() => navigate('settings')}
-              aria-label="Active model — open settings"
-              title={`Provider: ${settings.provider}${model ? ` · ${model}` : ''} — click to change`}
-            >
-              <span className="gcp-model-dot" aria-hidden="true" />
-              {model || 'Set up model'}
+            <button className="gcp-icon-btn" onClick={handleNew} disabled={busy}
+              aria-label="New conversation" title={busy ? 'Wait for the current turn to settle' : 'New conversation'}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
             </button>
 
             <button
@@ -240,20 +237,12 @@ export function ChatWindow({
           </div>
         </div>
 
-        <div className="gcp-context-bar" aria-label="Current graph context">
-          <span className={`gcp-live-indicator${graphStats.available ? ' online' : ''}`} aria-hidden="true" />
-          <span className="gcp-context-name">Current graph</span>
-          <span className="gcp-context-stat"><strong>{graphStats.nodes}</strong> nodes</span>
-          <span className="gcp-context-stat"><strong>{graphStats.edges}</strong> edges</span>
-          <span className="gcp-context-api">{apiVersion}</span>
-        </div>
-
         <nav className="gcp-workbench-nav" aria-label="Agent workbench views">
           {navItems.map((item) => (
             <button
               key={item.id}
               className={`gcp-nav-btn${view === item.id ? ' active' : ''}`}
-              onClick={() => switchTo(item.id)}
+              onClick={() => navigate(item.id)}
               aria-label={item.ariaLabel}
               aria-current={view === item.id ? 'page' : undefined}
             >
@@ -279,10 +268,12 @@ export function ChatWindow({
             active={open && view === 'chat'}
             onBusyChange={handleBusy}
             onDetachReady={registerDetach}
+            graphContext={graphStats}
+            prefill={prefill}
           />
         </div>
 
-        {open && view === 'experiments' && <ExperimentsView api={api} />}
+        {open && view === 'experiments' && <ExperimentsView api={api} onStartStudy={busy ? undefined : startStudy} />}
 
         {open && view === 'history' && (
           <HistoryView

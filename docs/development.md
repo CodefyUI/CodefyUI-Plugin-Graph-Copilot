@@ -38,6 +38,10 @@ Open **http://127.0.0.1:4179/?scenario=edit**. This development-only harness cal
 | `?scenario=native-run&serverOwned=1` | In-memory server-owned execution; closing the observer does not stop the host fixture |
 | `&lateInitialId=1` | Hold the first host run ID until **Release next simulated run event**, for close/reopen races |
 | `&manual=1` | Hold mock chat/validation responses until you explicitly use **Release next response**; useful for Stop/navigation races |
+| `?scenario=setup-required` | Unconfigured provider; setup guidance without a model request |
+| `?scenario=empty-graph` / `unavailable-context` | Distinguish an empty graph from an unreadable host graph |
+| `?scenario=lab-evidence` | Seeded partial study with exact numeric evidence and full error disclosures; no study execution |
+| `&tokens=light` | Synthetic light host tokens for contrast and theme-consumption checks |
 | `&bundle=1` | Load the actual existing `frontend/index.js` instead of `ui/src/index.tsx`; no rebuild is performed |
 
 For example, use **http://127.0.0.1:4179/?scenario=edit&manual=1&bundle=1** to step through the built entry. Open the assistant and send the fixture's suggested prompt; the scenario does not send automatically. Other fixtures cover Ask, pre-edit HTTP failure, partial-edit failure, a pending stream, clear confirmation, invalid structure, and unavailable validation. Reloading/selecting a scenario resets the fixture state.
@@ -54,7 +58,7 @@ pnpm --dir ui test:e2e
 
 The Playwright configuration starts its **own** preview server at **http://127.0.0.1:4187** and fails if that port is occupied; it does not reuse a manual 4179 server. Reports go to `ui/playwright-report/`, and failure artifacts go to `ui/test-results/`. Source-entry checks and `bundle=1` checks are different: build the intended bundle first when validating newly changed code.
 
-Include narrow (375px), medium (768px), and desktop (1440px) views, short-height/reduced-motion checks, keyboard/IME interactions, and readable status/confirmation/error text in a browser review. A fixture token override is only a styling check, not evidence of a host light-mode API.
+Include narrow (375px), medium (768px), and desktop (1440px) views, short-height/reduced-motion checks, keyboard/IME interactions, and readable status/confirmation/error text in a browser review. A fixture token override is only a styling check, not evidence of a host light-mode API. The separate CI browser job installs pinned Chromium, builds the plugin, runs the same isolated suite, and retains failure reports/traces for seven days. See [Design review](./design-review.md) for the evidence-first workbench decisions and review loop.
 
 ## Reliability checks and evidence
 

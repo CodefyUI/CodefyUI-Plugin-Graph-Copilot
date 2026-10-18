@@ -81,8 +81,8 @@ export function validateSampleGraph(graph: SampleGraph): { valid: boolean; error
 
 /** Stateful, per-operation v1 host. Refs are scoped to one batch, and failed
  * operations leave successful earlier operations in place, like the real API. */
-export function createSampleGraph(onChange: () => void) {
-  let graph = initialGraph();
+export function createSampleGraph(onChange: () => void, seed: SampleGraph = initialGraph()) {
+  let graph = clone(seed);
   let nextNode = 1;
   let nextEdge = 3;
   let revision = 0;

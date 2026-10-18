@@ -108,10 +108,25 @@ describe('ChatView safe input and recovery', () => {
     expect(input).toHaveValue('Read this');
   });
 
+  it('renders host graph context in ChatView and never invents unavailable counts', () => {
+    const api = { storage: { get: () => null, set: vi.fn() } } as unknown as CodefyUIPluginAPI;
+    const props = { api, settings, codexLoggedIn: false, conversation: newConversation('openai', 'test-model'),
+      onConversationChange: vi.fn(), onOpenSettings: vi.fn(), onOpenHistory: vi.fn() };
+    const { rerender } = render(<ChatView {...props} graphContext={{ nodes: 3, edges: 2, available: true }} />);
+    const context = screen.getByLabelText('Current graph context');
+    expect(context).toHaveTextContent('3 nodes');
+    expect(context).toHaveTextContent('2 edges');
+    expect(screen.getAllByLabelText('Current graph context')).toHaveLength(1);
+    rerender(<ChatView {...props} graphContext={{ nodes: 0, edges: 0, available: false }} />);
+    expect(context).toHaveTextContent('Graph unavailable');
+    expect(context).not.toHaveTextContent('0 nodes');
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
   it('stages a suggested prompt without sending it', () => {
     pendingRun();
     const { input } = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Explain what my current graph does' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Explain this graph' }));
     expect(runTurn).not.toHaveBeenCalled();
     expect(input).toHaveValue('Explain what my current graph does');
     expect(input).toHaveFocus();

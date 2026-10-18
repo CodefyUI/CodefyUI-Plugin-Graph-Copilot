@@ -38,6 +38,10 @@ pnpm --dir ui preview:dev
 | `?scenario=native-run&serverOwned=1` | 記憶體中的 server-owned 執行；關閉 observer 不停止宿主 fixture |
 | `&lateInitialId=1` | 第一個宿主 run ID 暫停，直到 **Release next simulated run event**；供關閉／重開競態測試 |
 | `&manual=1` | Mock 聊天／驗證回應暫停，直到你明確按 **Release next response**；適合檢查 Stop／導覽競態 |
+| `?scenario=setup-required` | 尚未設定供應商的引導，不送出模型要求 |
+| `?scenario=empty-graph`／`unavailable-context` | 區分空圖與無法讀取的宿主圖 |
+| `?scenario=lab-evidence` | 預填 partial study、精確數值與完整錯誤展開，不執行研究 |
+| `&tokens=light` | Synthetic light host tokens，供對比度與主題消費驗證 |
 | `&bundle=1` | 載入現存的實際 `frontend/index.js`，而非 `ui/src/index.tsx`；不會重建 |
 
 例如 **http://127.0.0.1:4179/?scenario=edit&manual=1&bundle=1** 可逐步檢查建置出的進入點。開啟助手並送出 fixture 建議的提示；情境不會自動送出。其他 fixture 涵蓋 Ask、修改前 HTTP 失敗、部分修改後失敗、未結束串流、清空確認、結構無效及驗證不可用。重新整理／選取情境會重設 fixture 狀態。
@@ -54,7 +58,7 @@ pnpm --dir ui test:e2e
 
 Playwright 設定會在 **http://127.0.0.1:4187** 啟動**自己的** preview server，連接埠已被占用時會失敗，不重用手動的 4179 server。報告在 `ui/playwright-report/`，失敗產物在 `ui/test-results/`。原始碼進入點與 `bundle=1` 是不同檢查：驗證新改動前須先建置所要檢查的 bundle。
 
-瀏覽器檢查應包含窄（375px）、中（768px）、桌面（1440px）尺寸、短高度／reduced motion、鍵盤／IME 互動，以及可讀的狀態／確認／錯誤文字。Fixture 的 token override 只是樣式檢查，不是宿主 light-mode API 的證據。
+瀏覽器檢查應包含窄（375px）、中（768px）、桌面（1440px）尺寸、短高度／reduced motion、鍵盤／IME 互動，以及可讀的狀態／確認／錯誤文字。Fixture 的 token override 只是樣式檢查，不是宿主 light-mode API 的證據。獨立 CI browser job 安裝固定版本 Chromium、建置插件並執行相同隔離測試；失敗報告與 traces 保留七天。證據優先的工作台取捨與檢查迴圈見[設計檢視](./design-review.md)。
 
 ## 可靠性檢查與證據
 

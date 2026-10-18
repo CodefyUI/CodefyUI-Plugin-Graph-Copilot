@@ -13,7 +13,7 @@ for (const navigation of ['Close panel', 'Settings', 'Conversation history'] as 
     await expect.poll(async () => chatRequests(await snapshot(page))[0]?.status).toBe('aborted');
     expect((await snapshot(page)).receipts).toEqual([]);
     if (navigation === 'Close panel') await openCopilot(page);
-    else await page.getByRole('button', { name: navigation, exact: true }).click();
+    else await page.getByRole('button', { name: 'Agent chat', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toHaveCount(0);
     expect(requestCount(await snapshot(page))).toBe(1);

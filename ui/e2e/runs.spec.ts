@@ -38,8 +38,8 @@ test('Edit is the default; a starter fills the composer without dispatching', as
   await expect(page.getByRole('radiogroup', { name: 'Agent mode' })).toBeVisible();
   await expect(page.getByRole('radio', { name: 'Edit', exact: true })).toBeChecked();
   await expect(page.getByRole('radio', { name: 'Ask', exact: true })).not.toBeChecked();
-  await page.getByRole('button', { name: 'Build a small CNN image classifier', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('Build a small CNN image classifier');
+  await page.getByRole('button', { name: 'Improve this graph', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('Review my current graph and suggest a focused improvement. Explain the change before applying it.');
   expect(actionRequests(await snapshot(page))).toEqual([]);
   expect((await snapshot(page)).receipts).toEqual([]);
 });
@@ -144,7 +144,7 @@ for (const decision of ['Keep graph', 'Clear graph'] as const) {
     await readyPreview(page, 'scenario=clear');
     await openCopilot(page);
     await send(page, 'Clear my graph and start over.');
-    const confirmation = page.getByRole('group', { name: 'Confirm clearing the graph' });
+    const confirmation = page.getByRole('dialog', { name: 'Clear the current graph?', exact: true });
     await expect(confirmation).toBeVisible();
     await expect(confirmation).toContainText('3 nodes and 2 edges');
     const before = await snapshot(page);

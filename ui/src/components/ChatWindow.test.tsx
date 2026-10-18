@@ -17,6 +17,7 @@ vi.mock('./ChatView', () => ({
     onSettingsChange: (s: Settings) => void;
     onDetachReady: (detach: () => void) => void;
     onBusyChange: (busy: boolean) => void;
+    graphContext: { nodes: number; edges: number; available: boolean };
     active: boolean;
   }) => {
     chatViewCalls(props);
@@ -90,22 +91,42 @@ describe('ChatWindow', () => {
     expect(screen.queryByTestId('settingsview')).toBeNull();
   });
 
-  it('toggles the history view via the History button', () => {
+  it('navigates to History and returns to chat through Agent chat', () => {
     renderWindow();
-    const historyBtn = screen.getByRole('button', { name: /conversation history/i });
-    fireEvent.click(historyBtn);
-    expect(screen.getByTestId('historyview')).toBeTruthy();
-    fireEvent.click(historyBtn);
-    expect(screen.getByTestId('chatview')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
+    expect(screen.getByTestId('historyview')).toBeVisible();
+    expect(screen.getByTestId('chatview')).not.toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
+    expect(screen.getByTestId('chatview')).toBeVisible();
+    expect(screen.queryByTestId('historyview')).toBeNull();
   });
 
-  it('toggles the settings view via the Settings button', () => {
+  it('navigates to Settings and returns to chat through Agent chat', () => {
     renderWindow();
-    const settingsBtn = screen.getByRole('button', { name: /^settings$/i });
-    fireEvent.click(settingsBtn);
-    expect(screen.getByTestId('settingsview')).toBeTruthy();
-    fireEvent.click(settingsBtn);
-    expect(screen.getByTestId('chatview')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByTestId('settingsview')).toBeVisible();
+    expect(screen.getByTestId('chatview')).not.toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
+    expect(screen.getByTestId('chatview')).toBeVisible();
+    expect(screen.queryByTestId('settingsview')).toBeNull();
+  });
+
+  it.each([
+    ['Settings', 'settingsview'],
+    ['Conversation history', 'historyview'],
+    ['Experiments lab', 'experimentsview'],
+  ])('keeps selected navigation %s idempotent without remounting its content', (name, testId) => {
+    renderWindow();
+    const nav = screen.getByRole('button', { name });
+    fireEvent.click(nav);
+    const content = screen.getByTestId(testId);
+    expect(content).toBeVisible();
+    expect(nav).toHaveAttribute('aria-current', 'page');
+    fireEvent.click(nav);
+    expect(screen.getByTestId(testId)).toBe(content);
+    expect(content).toBeVisible();
+    expect(nav).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('chatview')).not.toBeVisible();
   });
 
   it('opens the experiment lab from the primary navigation', () => {
@@ -128,7 +149,7 @@ describe('ChatWindow', () => {
     expect(dialog.getAttribute('data-panel-mode')).toBe('compact');
   });
 
-  it('shows the current graph and CodefyUI API context', () => {
+  it('passes the current graph context into ChatView and subscribes to host changes', () => {
     const unsubscribe = vi.fn();
     const onGraphChanged = vi.fn().mockReturnValue(unsubscribe);
     const api = {
@@ -143,10 +164,7 @@ describe('ChatWindow', () => {
     } as unknown as CodefyUIPluginAPI;
 
     const { unmount } = render(<ChatWindow {...renderWindowProps({ api })} />);
-    const context = screen.getByLabelText(/current graph context/i);
-    expect(context).toHaveTextContent('3 nodes');
-    expect(context).toHaveTextContent('2 edges');
-    expect(context).toHaveTextContent('API v2');
+    expect(chatViewCalls.mock.calls.at(-1)![0].graphContext).toEqual({ nodes: 3, edges: 2, available: true });
     expect(onGraphChanged).toHaveBeenCalledTimes(1);
 
     unmount();
@@ -158,19 +176,17 @@ describe('ChatWindow', () => {
     const onGraphChanged = vi.fn().mockReturnValue(vi.fn());
     const api = { apiVersion: 1, graph: { getGraph, onGraphChanged } } as unknown as CodefyUIPluginAPI;
     renderWindow({ api });
-    const context = screen.getByLabelText('Current graph context');
+    const context = () => chatViewCalls.mock.calls.at(-1)![0].graphContext;
     const refresh = onGraphChanged.mock.calls[0][0] as () => void;
-    expect(context).toHaveTextContent('1 nodes');
+    expect(context()).toEqual({ nodes: 1, edges: 0, available: true });
 
     getGraph.mockReturnValue({ nodes: [{ id: '1' }, { id: '2' }], edges: [{ id: 'edge' }] });
     act(() => refresh());
-    expect(context).toHaveTextContent('2 nodes');
-    expect(context).toHaveTextContent('1 edges');
+    expect(context()).toEqual({ nodes: 2, edges: 1, available: true });
 
     getGraph.mockImplementation(() => { throw new Error('graph unavailable'); });
     act(() => refresh());
-    expect(context).toHaveTextContent('0 nodes');
-    expect(context.querySelector('.gcp-live-indicator')).not.toHaveClass('online');
+    expect(context()).toEqual({ nodes: 0, edges: 0, available: false });
   });
 
   it('keeps navigation usable without optional graph APIs or a readable version', () => {
@@ -178,10 +194,7 @@ describe('ChatWindow', () => {
       graph: { getGraph: () => ({ nodes: null, edges: null }), onGraphChanged: () => { throw new Error('listener unavailable'); } },
     } as unknown as CodefyUIPluginAPI;
     renderWindow({ api });
-    const context = screen.getByLabelText('Current graph context');
-    expect(context).toHaveTextContent('0 nodes');
-    expect(context).toHaveTextContent('0 edges');
-    expect(context).toHaveTextContent('API legacy');
+    expect(chatViewCalls.mock.calls.at(-1)![0].graphContext).toEqual({ nodes: 0, edges: 0, available: true });
     fireEvent.click(screen.getByRole('button', { name: 'Experiments lab' }));
     expect(screen.getByTestId('experimentsview')).toBeVisible();
   });
@@ -190,8 +203,8 @@ describe('ChatWindow', () => {
     renderWindow();
     fireEvent.click(screen.getByText('chatview-open-settings'));
     expect(screen.getByTestId('settingsview')).toBeTruthy();
-    // toggle settings off (back to chat), then open history from ChatView
-    fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+    // Return through Chat before invoking the composer's History callback.
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
     fireEvent.click(screen.getByText('chatview-open-history'));
     expect(screen.getByTestId('historyview')).toBeTruthy();
   });
@@ -212,6 +225,35 @@ describe('ChatWindow', () => {
     expect(screen.getByTestId('chatview')).toBeTruthy();
   });
 
+  it('starts a conversation from the shell action and returns to chat', () => {
+    const props = renderWindow();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    expect(props.onNewConversation).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('chatview')).toBeVisible();
+    expect(screen.queryByTestId('settingsview')).toBeNull();
+  });
+
+  it('blocks the shell New conversation action until the browser owner settles', () => {
+    const props = renderWindow();
+    const newButton = screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement;
+    fireEvent.click(screen.getByText('chatview-start-run'));
+    expect(newButton).toBeDisabled();
+    fireEvent.click(newButton);
+    expect(props.onNewConversation).not.toHaveBeenCalled();
+    // Retain a callback-level guard, not only the native disabled attribute.
+    newButton.disabled = false;
+    fireEvent.click(newButton);
+    expect(props.onNewConversation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
+    fireEvent.click(screen.getByText('chatview-settle-run'));
+    expect(newButton).toBeEnabled();
+    fireEvent.click(newButton);
+    expect(props.onNewConversation).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('chatview')).toBeVisible();
+    expect(screen.queryByTestId('historyview')).toBeNull();
+  });
+
   it('forwards effort settings changes and passive detach registration', () => {
     const props = renderWindow({ onDetachReady: vi.fn() });
     const chatProps = chatViewCalls.mock.calls.at(-1)![0];
@@ -220,7 +262,7 @@ describe('ChatWindow', () => {
     expect(props.onDetachReady).toHaveBeenCalledWith(detachRun);
   });
 
-  it.each(['Settings', 'Conversation history', 'Experiments lab', 'Active model — open settings', 'Close panel'])
+  it.each(['Settings', 'Conversation history', 'Experiments lab', 'chatview-open-settings', 'Close panel'])
     ('synchronously detaches work when leaving chat using %s', (name) => {
       renderWindow();
       fireEvent.click(screen.getByRole('button', { name }));

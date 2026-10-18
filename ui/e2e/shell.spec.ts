@@ -14,11 +14,27 @@ for (const size of sizes) {
     test.use({ viewport: { width: size.width, height: size.height }, reducedMotion: size.reducedMotion });
     test('shell screenshots, keyboard focus, draft and editable mock settings', async ({ page }, testInfo) => {
       await readyPreview(page, 'scenario=edit');
-      const fab = page.getByRole('button', { name: 'Graph Copilot', exact: true });
+      // Keep the launcher locator through fullscreen CSS visibility changes;
+      // includeHidden does not imply it is reachable while the panel is open.
+      const fab = page.getByRole('button', { name: 'Graph Copilot', exact: true, includeHidden: true });
       await expect(fab).toHaveAttribute('aria-expanded', 'false');
       await capture(page, testInfo, `${size.name}-host-widgets`);
       await openCopilot(page);
       await expect(fab).toHaveAttribute('aria-expanded', 'true');
+      const fullscreen = size.width <= 720 || size.height <= 560;
+      if (fullscreen) {
+        await expect(fab).toBeHidden();
+        await expect(page.getByRole('button', { name: 'Graph Copilot', exact: true })).toHaveCount(0);
+      } else {
+        // Real pointer activation proves the desktop panel no longer overlays
+        // its launcher; no forced/programmatic click bypasses hit testing.
+        await expect(fab).toBeVisible();
+        await fab.click();
+        await expect(fab).toHaveAttribute('aria-expanded', 'false');
+        await expect(fab).toBeFocused();
+        await fab.click();
+        await expect(fab).toHaveAttribute('aria-expanded', 'true');
+      }
       const dialog = page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
       const composer = page.getByRole('textbox', { name: 'Message input', exact: true });
       await expect(composer).toBeFocused();
@@ -46,10 +62,12 @@ for (const size of sizes) {
       await page.getByRole('button', { name: 'Load available models from provider', exact: true }).click();
       await expect(page.getByRole('combobox', { name: 'Model ID', exact: true })).toBeVisible();
       await capture(page, testInfo, `${size.name}-settings`);
-      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await page.getByRole('button', { name: 'Agent chat', exact: true }).click();
       await expect(composer).toHaveValue('Draft kept while I inspect settings.');
       await composer.press('Escape');
       await expect(dialog).toBeHidden();
+      await expect(fab).toBeVisible();
+      await expect(fab).toHaveAttribute('aria-expanded', 'false');
       await expect(fab).toBeFocused();
       await fab.click();
       await expect(composer).toHaveValue('Draft kept while I inspect settings.');
