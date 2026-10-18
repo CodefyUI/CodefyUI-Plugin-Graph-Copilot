@@ -12005,7 +12005,7 @@ function Vg(a, i) {
   }).join(", ");
   return i.unknown && !o.includes("UNKNOWN") ? `${o}; receipt UNKNOWN` : o;
 }
-const mS = "graph-copilot", hS = "0.3.0";
+const mS = "graph-copilot", hS = "0.4.0";
 function Ul(a) {
   if (a.length === 0 || a.some((l) => !Number.isFinite(l)))
     return;

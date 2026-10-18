@@ -102,5 +102,5 @@ pnpm start -- --locale zh-Hant      # 預覽繁體中文
 
 ## 持續整合
 
-- **`ci.yml`** 使用 Node 22 / pnpm 10。UI job 跑 Vitest 覆蓋率、型別檢查／重建 bundle，拒絕過期 committed `frontend/`；獨立 root docs job 跑 `pnpm typecheck` 並建置英文／繁體中文。目前不跑 `test:e2e` 或真供應商測試。
+- **`ci.yml`** 使用 Node 22 / pnpm 10。UI job 跑 Vitest 覆蓋率、型別檢查／重建 bundle，拒絕過期 committed `frontend/`；獨立 browser job 安裝 Playwright 固定版本的 Chromium 與系統依賴、建置插件，並以兩個 workers 執行完整隔離 `test:e2e` 測試；失敗報告、截圖與 traces 保留七天。獨立 root docs job 跑 `pnpm typecheck` 並建置英文／繁體中文。真供應商測試仍須另行明確授權、選擇執行，不在這個 CI workflow 中。
 - **`deploy-docs.yml`** 在 Node 22 / pnpm 10 建置兩種語系，於 pull request 檢查文件變更，並將相關 `main` push（或手動執行）部署到 GitHub Pages。

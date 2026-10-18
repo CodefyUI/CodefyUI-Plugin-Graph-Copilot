@@ -6,7 +6,7 @@ sidebar_label: 供應商設定
 
 # 供應商設定
 
-Graph Copilot 透過你**本機的 CodefyUI 後端**與模型供應商溝通；後端會把每個請求轉發給你選擇的供應商。打開聊天面板、點**齒輪圖示**，從五種供應商中挑一種並設定其模型與金鑰。
+Graph Copilot 透過你**本機的 CodefyUI 後端**與模型供應商溝通；後端會把每個請求轉發給你選擇的供應商。打開聊天面板的 **Settings**，或點對話輸入區的 **Model settings** 按鈕，從五種供應商中挑一種並設定其模型與金鑰。
 
 ## 供應商
 
@@ -19,6 +19,8 @@ Graph Copilot 透過你**本機的 CodefyUI 後端**與模型供應商溝通；�
 | **自訂（OpenAI 相容）** | 一個 base URL（Ollama、LM Studio、vLLM…）；金鑰可選 |
 
 對需要金鑰的供應商，貼上 API 金鑰並選擇模型。Codex 會在登入後進入可同步狀態。
+
+Settings 依 **Connection → Model → Behavior** 分組：先設定供應商與憑證，再選模型與支援的 effort，最後設定背景執行完成通知。API 金鑰會在離開金鑰欄位或按 Escape 時儲存；其他設定變更時自動儲存。
 
 ## 模型目錄與重新整理
 
@@ -42,7 +44,7 @@ OpenAI 的 `/v1/models` response 只有 model ID，不含 reasoning-effort metad
 
 ## Reasoning effort
 
-Host catalog 提供 reasoning metadata 時，effort 控制會出現在兩個地方：對話輸入區的快速 chip（點模型名稱即可切換強度，不必離開對話），以及 Settings 內的 selector。兩者都會把選項以 `reasoning_effort` 送出。第一方 OpenAI request 可在所選模型支援時使用 `none`、`low`、`medium`、`high`、`xhigh` 或 `max`。Codex fallback 提供 `low`、`medium`、`high`、`xhigh` 與 `max`；Sol 預設為 `max`，Terra 與 Luna 預設為 `medium`。
+Host 已確認支援 reasoning effort，且所選模型有已知 catalog 選項時，原生 **Reasoning effort** 選單會分別出現在對話輸入區及 **Settings → Model**。輸入區的 **Model settings** 按鈕會開啟 Settings；點模型名稱不會切換 effort。兩個選單都使用 `reasoning_effort`；turn 忙碌時，輸入區的選單會停用。第一方 OpenAI request 可在所選模型支援時使用 `none`、`low`、`medium`、`high`、`xhigh` 或 `max`。Codex fallback 提供 `low`、`medium`、`high`、`xhigh` 與 `max`；Sol 預設為 `max`，Terra 與 Luna 預設為 `medium`。
 
 預設情況下，Codex provider 直接鎖定 **GPT-5.6 Sol at `max` effort** — Graph Copilot 是 agent workbench，因此預設採用最強配置，讓你在單一對話中視需要調低強度。這個值仍受 host 能力把關：在 host 確認所選模型支援 `reasoning_effort` 之前不會送出。
 
@@ -66,7 +68,7 @@ Codex **不會顯示 `ultra`**。Ultra 是產品層級的 multi-agent／delegati
 
 ## 你的金鑰存在哪
 
-API 金鑰存在**你瀏覽器的 localStorage**（依外掛命名空間隔離），並送到本機 CodefyUI 後端，再由它逐次請求轉發給你選的供應商。CodefyUI 1.3.0 的設計是不在伺服器端持久化或記錄這些金鑰。
+API 金鑰存在**你瀏覽器的 localStorage**（依外掛命名空間隔離），**Graph Copilot 不會加密**；金鑰會送到本機 CodefyUI 後端，再由它逐次請求轉發給你選的供應商或自訂 endpoint。請只使用可信任的 endpoint。CodefyUI 1.3.0 的設計是不在伺服器端持久化或記錄這些金鑰。
 
 ## 會送給模型的內容
 

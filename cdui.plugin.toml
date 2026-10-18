@@ -1,13 +1,13 @@
 [plugin]
 id              = "graph-copilot"
 name            = "Graph Copilot — Agent Workbench"
-version         = "0.3.0"
+version         = "0.4.0"
 description     = "An agentic graph workbench for CodefyUI: build and validate graphs, run approved isolated experiments and deterministic parameter searches, retain portable evidence, guard promotion, and develop evidence-grounded research hypotheses."
 schema_version  = 1
 requires_codefyui = ">=1.3.0"
 authors         = ["treeleaves30760"]
 license         = "MIT"
-homepage        = "https://github.com/treeleaves30760/CodefyUI-Plugin-Graph-Copilot"
+homepage        = "https://github.com/CodefyUI/CodefyUI-Plugin-Graph-Copilot"
 
 [frontend]
 entry = "frontend/index.js"

@@ -118,7 +118,7 @@ A portable study contains a redacted baseline, captured redacted GraphOps, scala
 An Edit-mode request to run/train/evaluate can execute the **live canvas graph** with real side effects:
 
 1. server-side structural validation passes;
-2. a graph-change-guarded approval card reviews counts, node types, time cap, and side effects; the approved graph snapshot and identity are checked again after session bootstrap and immediately before the execute frame is sent;
+2. a graph-change-guarded approval dialog reviews counts, node types, time cap, and side effects; the approved graph snapshot and identity are checked again after session bootstrap and immediately before the execute frame is sent;
 3. `/ws/execution` streams node status, training progress/loss, and newer-host metrics into the panel;
 4. the tool records host outcome, per-node scalar/string outputs, final progress, metric tails, log tail, node errors, and supported media references/previews.
 
@@ -132,7 +132,7 @@ The composer **Stop** control and timeout still request cancellation and wait fo
 
 On hosts exposing `/api/runs`, `list_runs`/`get_run` include editor-started runs. A reattach card follows `GET /api/runs/{id}/events` by cursor/long polling using the same `wireOutputs` normalizer, shows status/loss and human-only **Stop run** (`POST /api/runs/{id}/cancel`), or reports `final_metrics` if it finished while away. Dismiss only hides the card and stops following; it does not clear a live run's reservation. A summary suggestion fills the composer and never auto-sends.
 
-An active or unverified tracked run blocks another live submission. Unknown connection errors, authorization failures, and unreadable history retain the pointer rather than treating the run as stopped; only authoritative terminal or missing-run evidence permits cleanup. These surfaces are feature-detected; a host without `/api/runs` reports unavailable. Settings → Notifications (default on) optionally announces a tracked run finishing in a hidden tab, subject to browser permission; detach does not announce completion. Reattachment is host-run recovery, not durable study coordination.
+An active or unverified tracked run blocks another live submission. Unknown connection errors, authorization failures, and unreadable history retain the pointer rather than treating the run as stopped; only authoritative terminal or missing-run evidence permits cleanup. These surfaces are feature-detected; a host without `/api/runs` reports unavailable. The background-run notification setting under **Settings → Behavior** (default on) optionally announces a tracked run finishing in a hidden tab, subject to browser permission; detach does not announce completion. Reattachment is host-run recovery, not durable study coordination.
 
 ## CodefyUI contract boundary
 

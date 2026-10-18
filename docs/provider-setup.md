@@ -6,7 +6,7 @@ sidebar_label: Provider setup
 
 # Provider setup
 
-Graph Copilot talks to a model provider through your **local CodefyUI backend**, which forwards each request to the provider you choose. Open the chat panel and click the **gear icon** to pick one of five providers and set its model and key.
+Graph Copilot talks to a model provider through your **local CodefyUI backend**, which forwards each request to the provider you choose. Open **Settings** in the chat panel, or click the composer's **Model settings** button, to pick one of five providers and set its model and key.
 
 ## Providers
 
@@ -19,6 +19,8 @@ Graph Copilot talks to a model provider through your **local CodefyUI backend**,
 | **Custom (OpenAI-compatible)** | A base URL (Ollama, LM Studio, vLLM, …); key optional |
 
 For the key-based providers, paste an API key and pick a model. Codex becomes ready after sign-in.
+
+Settings is organized as **Connection → Model → Behavior**: configure the provider and credentials, choose the model and supported effort, then set background-run notifications. API keys save when you leave the key field or press Escape; other settings save automatically as you change them.
 
 ## Model catalog and refresh behavior
 
@@ -42,7 +44,7 @@ Custom OpenAI-compatible endpoints are never queried automatically because an ar
 
 ## Reasoning effort
 
-When the host catalog advertises reasoning metadata, the effort control appears in two places: a quick chip in the chat composer (click the model name to switch effort without leaving the conversation) and the selector in Settings. Both send the chosen value as `reasoning_effort`. First-party OpenAI requests can use `none`, `low`, `medium`, `high`, `xhigh`, or `max` when the selected model supports them. The Codex fallback offers `low`, `medium`, `high`, `xhigh`, and `max`; Sol defaults to `max`, while Terra and Luna default to `medium`.
+When the host has confirmed reasoning-effort support and the selected model has known catalog options, a native **Reasoning effort** selector appears separately in the chat composer and under **Settings → Model**. The composer's **Model settings** button opens Settings; clicking the model name does not change effort. Both selectors use `reasoning_effort`; the composer selector is disabled while a turn is busy. First-party OpenAI requests can use `none`, `low`, `medium`, `high`, `xhigh`, or `max` when the selected model supports them. The Codex fallback offers `low`, `medium`, `high`, `xhigh`, and `max`; Sol defaults to `max`, while Terra and Luna default to `medium`.
 
 Out of the box, the Codex provider is pinned to **GPT-5.6 Sol at `max` effort** — Graph Copilot is an agent workbench, so it defaults to the strongest configuration and lets you dial effort down per conversation. The value is still gated on host capability: nothing is sent until the host confirms `reasoning_effort` support for the selected model.
 
@@ -66,7 +68,7 @@ Set a base URL such as `http://127.0.0.1:11434/v1` (Ollama). A key is optional.
 
 ## Where your keys live
 
-API keys are stored in **your browser's localStorage** (namespaced per plugin) and sent to your local CodefyUI backend, which forwards them per request to the provider you selected. CodefyUI 1.3.0 is designed not to persist or log those keys server-side.
+API keys are stored in **your browser's localStorage** (namespaced per plugin), **not encrypted by Graph Copilot**, and sent to your local CodefyUI backend, which forwards them per request to the provider or custom endpoint you selected. Use only a trusted endpoint. CodefyUI 1.3.0 is designed not to persist or log those keys server-side.
 
 ## What is sent to the model
 
