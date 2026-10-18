@@ -247,6 +247,49 @@ describe('fetchModels', () => {
     await expect(fetchModels(api as any, 'openai', 'bad-key')).rejects.toThrow('401');
   });
 
+  it('forwards the optional fifth AbortSignal without changing the model request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ models: [{ id: 'fixture-model' }] }),
+    } as Response);
+    const api = makeApi(fetchMock);
+    const controller = new AbortController();
+
+    await expect(fetchModels(api, 'custom', 'fixture-key', 'https://fixture.invalid', controller.signal))
+      .resolves.toEqual(['fixture-model']);
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/llm/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'custom', api_key: 'fixture-key', base_url: 'https://fixture.invalid' }),
+      signal: controller.signal,
+    });
+  });
+
+  it('forwards catalog cancellation while preserving source, capabilities, and reasoning metadata', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        models: [{ id: 'gpt-rich', reasoning_efforts: ['max'] }],
+        source: 'live',
+        capabilities: { reasoning_effort: true, rich_model_catalog: true },
+      }),
+    } as unknown as Response);
+    const controller = new AbortController();
+
+    await expect(fetchModelCatalog(makeApi(fetchMock), 'openai', 'fixture-key', undefined, controller.signal))
+      .resolves.toEqual({
+        models: [{ id: 'gpt-rich', label: 'gpt-rich', reasoningEfforts: [{ effort: 'max' }] }],
+        source: 'live',
+        capabilities: { reasoningEffort: true, richModelCatalog: true },
+      });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/llm/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'openai', api_key: 'fixture-key' }),
+      signal: controller.signal,
+    });
+  });
+
   it('preserves rich model metadata returned by a newer host', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

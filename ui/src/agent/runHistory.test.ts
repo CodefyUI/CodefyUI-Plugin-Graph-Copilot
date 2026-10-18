@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  cancelRunById, fetchRun, fetchRunArtifacts, fetchRunList, followRun,
-  isTerminalRunStatus, parseRunRow, probeRunHistory, resetRunHistoryProbeForTests,
+  cancelRunById, fetchRun, fetchRunArtifacts, fetchRunList, fetchRunStrict, followRun,
+  isTerminalRunStatus, parseRunRow, probeRunHistory, probeRunHistoryStrict, resetRunHistoryProbeForTests,
 } from './runHistory';
 
 /** api.http.fetch stub routing url -> response. */
@@ -77,6 +77,57 @@ describe('probeRunHistory', () => {
     expect(await probeRunHistory(api)).toBe(false);
     expect(await probeRunHistory(api)).toBe(false);
     expect(api.http.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('strict ownership and lookup evidence', () => {
+  it('uses a fresh validated ownership probe even after a lenient cached success', async () => {
+    const api = httpApi({ '/api/runs?': () => json({ runs: [], total: 0 }) });
+    expect(await probeRunHistory(api)).toBe(true);
+    expect(await probeRunHistoryStrict(api)).toBe(true);
+    api.http.fetch.mockResolvedValueOnce(json({}, 503));
+    await expect(probeRunHistoryStrict(api)).rejects.toThrow('503');
+    expect(api.http.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([404, 405])('treats HTTP %s only as unsupported ownership, not a run lookup', async (status) => {
+    expect(await probeRunHistoryStrict(httpApi({ '/api/runs?': () => json({}, status) }))).toBe(false);
+  });
+
+  it.each([401, 403, 429, 500, 503])('does not downgrade unreadable HTTP %s to legacy ownership', async (status) => {
+    await expect(probeRunHistoryStrict(httpApi({ '/api/runs?': () => json({}, status) }))).rejects.toThrow(String(status));
+  });
+
+  it('rejects offline, invalid JSON, and malformed ownership instead of claiming missing support', async () => {
+    const api = httpApi({ '/api/runs?': () => { throw new Error('offline'); } });
+    await expect(probeRunHistoryStrict(api)).rejects.toThrow('offline');
+    await expect(probeRunHistoryStrict(httpApi({ '/api/runs?': () => new Response('bad json') }))).rejects.toThrow();
+    await expect(probeRunHistoryStrict(httpApi({ '/api/runs?': () => json({ valid: true }) }))).rejects.toThrow('malformed');
+  });
+
+  it('fetchRunStrict returns null only for run-specific 404 and rejects unknown/mismatched evidence', async () => {
+    expect(await fetchRunStrict(httpApi({}), 'gone')).toBeNull();
+    expect(await fetchRunStrict(httpApi({ '/api/runs/run-1': () => json(ROW) }), 'run-1')).toMatchObject({ runId: 'run-1', status: 'succeeded' });
+    for (const body of [{}, { ...ROW, id: 'other' }, { ...ROW, status: 'mystery' }, { ...ROW, active: true }]) {
+      await expect(fetchRunStrict(httpApi({ '/api/runs/run-1': () => json(body) }), 'run-1')).rejects.toThrow('unknown run state');
+    }
+    await expect(fetchRunStrict(httpApi({ '/api/runs/run-1': () => json({}, 500) }), 'run-1')).rejects.toThrow('500');
+    await expect(fetchRunStrict(httpApi({ '/api/runs/run-1': () => new Response('bad json') }), 'run-1')).rejects.toThrow();
+    // Existing read-only lookup retains its tolerant shape behavior.
+    expect(await fetchRun(httpApi({ '/api/runs/run-1': () => json({}) }), 'run-1')).toBeNull();
+  });
+
+  it('strict APIs abort noncooperative requests and never consume late evidence', async () => {
+    const controller = new AbortController();
+    const api = httpApi({});
+    let release!: (response: Response) => void;
+    api.http.fetch.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const pending = probeRunHistoryStrict(api, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    release(json({ runs: [], total: 0 }));
+    await expect(fetchRunStrict(api, 'r', controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(api.http.fetch).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -2,6 +2,9 @@ import React from 'react';
 
 interface FabProps {
   onClick: () => void;
+  expanded?: boolean;
+  controls?: string;
+  buttonRef?: React.Ref<HTMLButtonElement>;
 }
 
 /** Chat-bubble SVG icon 22px */
@@ -22,11 +25,14 @@ function ChatBubbleIcon() {
   );
 }
 
-export function Fab({ onClick }: FabProps) {
+export function Fab({ onClick, expanded = false, controls, buttonRef }: FabProps) {
   return (
     <button
+      ref={buttonRef}
       className="gcp-fab"
       onClick={onClick}
+      aria-expanded={expanded}
+      aria-controls={controls}
       aria-label="Graph Copilot"
       title="Graph Copilot"
     >

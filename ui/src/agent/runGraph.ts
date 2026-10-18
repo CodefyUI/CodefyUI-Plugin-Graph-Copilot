@@ -11,8 +11,8 @@
  * Host generations differ in run ownership: current hosts own the run in a
  * run service (closing the socket does NOT stop it; `{action:"cancel"}` is
  * the only stop), while CodefyUI 1.3.0 owned the run by the socket (closing
- * cancels). Cancellation therefore sends an explicit cancel action first and
- * then closes the socket — both generations stop either way.
+ * cancels). Cancellation sends an explicit cancel action first; without a
+ * terminal acknowledgement, closing alone does not prove a server-owned stop.
  */
 
 import type { CodefyUIPluginAPI, SerializedGraph } from '../types/codefyui';
@@ -24,6 +24,11 @@ import {
 } from './experiments';
 import { finiteNumber, normalizeNodeStatus, type MediaOutput } from './wireOutputs';
 import { isPassiveDetach } from './abortReasons';
+import { awaitWithSignal, isAbortError, throwIfAborted } from './toolGuards';
+
+function observe(fn: () => unknown): void {
+  try { void Promise.resolve(fn()).catch(() => {}); } catch { /* progress is not execution */ }
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,6 +41,9 @@ export const MAX_RUN_TIMEOUT_MINUTES = 720;
 
 /** Grace period after a cancel request before the socket is force-closed. */
 const CANCEL_GRACE_MS = 5_000;
+/** Passive cleanup may await the host's first identity frame, but never keep
+ * the browser turn latched indefinitely when the host cannot name the run. */
+const DETACH_ID_GRACE_MS = 5_000;
 
 /** Caps that keep the tool result token-lean. */
 const MAX_RESULT_ENTRIES = 60;
@@ -64,6 +72,15 @@ export interface RunGraphOutcome {
   status: 'complete' | 'error' | 'cancelled' | 'timeout' | 'detached';
   durationMs: number;
   runId?: string;
+  /** True once an execute frame was dispatched. A pre-submit socket/bootstrap
+   * failure must not invent an unidentified host-run reservation. */
+  submitted?: boolean;
+  /** An explicit host terminal frame, as distinct from transport cleanup. */
+  terminalConfirmed?: boolean;
+  /** For cancelled/timeout outcomes, true only when nothing was submitted or
+   * the host acknowledged a terminal stop. False means local cleanup finished
+   * without evidence that a server-owned run stopped. */
+  cancelConfirmed?: boolean;
   error?: string;
   /** Terminal error message per failed node id. */
   nodeErrors: Record<string, string>;
@@ -91,7 +108,12 @@ export interface RunMediaItem extends MediaOutput {
 }
 
 export interface RunLiveGraphOptions {
+  /** Browser observation/agent turn signal. Passive teardown stops following
+   * submitted server-owned runs; other aborts explicitly cancel execution. */
   signal?: AbortSignal;
+  /** Independent explicit Stop, allowing cancellation during passive late-ID
+   * cleanup after the observation signal's immutable reason was already set. */
+  cancelSignal?: AbortSignal;
   timeoutMs: number;
   /** Current hosts own runs after submission; legacy 1.3.0 sockets own them. */
   serverOwnedRuns: boolean;
@@ -100,6 +122,12 @@ export interface RunLiveGraphOptions {
    * endpoint the field is left off the wire and the host's own fallback
    * applies. */
   device?: string;
+  /** Approval-bound payload copied before bootstrap awaits; never replaced by
+   * a fresh canvas read after the user approved it. */
+  approvedGraph?: SerializedGraph;
+  /** Synchronous approval/abort guard after bootstrap and at socket open,
+   * immediately before sending execute. A failure refuses submission. */
+  beforeExecute?: () => void;
   onProgress?: (update: RunProgressUpdate) => void;
   /** Called once, the first time the host names the run id — early enough to
    * persist a reattach pointer before any long training epoch begins. */
@@ -115,12 +143,17 @@ export async function fetchDefaultDevice(
   api: CodefyUIPluginAPI,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
+  throwIfAborted(signal);
   try {
-    const response = await api.http.fetch('/api/system/devices', { signal });
+    const response = await awaitWithSignal(api.http.fetch('/api/system/devices', { signal }), signal);
+    throwIfAborted(signal);
     if (!response.ok) return undefined;
-    const body = await response.json() as { default?: unknown };
+    const body = await awaitWithSignal(response.json(), signal) as { default?: unknown };
+    throwIfAborted(signal);
     return typeof body.default === 'string' && body.default ? body.default : undefined;
-  } catch {
+  } catch (error) {
+    throwIfAborted(signal);
+    if (isAbortError(error)) throw error;
     return undefined;
   }
 }
@@ -203,38 +236,39 @@ export async function runLiveGraph(
   api: CodefyUIPluginAPI,
   opts: RunLiveGraphOptions,
 ): Promise<RunGraphOutcome> {
-  const { signal, timeoutMs, onProgress } = opts;
-  const graph = executableGraph(api.graph.getGraph());
-  const keyFor = nodeKeyResolver(graph);
-  const totalNodes = graph.nodes.length;
+  const { signal, cancelSignal, timeoutMs, onProgress } = opts;
+  // Snapshot before the first await: host getGraph may return mutable state.
+  const approvedGraph = opts.approvedGraph === undefined ? undefined : structuredClone(opts.approvedGraph);
   const startedAt = Date.now();
   const emptyCancelledOutcome = (): RunGraphOutcome => ({
-    status: 'cancelled',
-    durationMs: Date.now() - startedAt,
-    nodeErrors: {},
-    completedNodes: 0,
-    totalNodes,
-    outputs: {},
-    finalProgress: {},
-    metrics: {},
-    textTail: '',
-    media: [],
+    status: 'cancelled', submitted: false, cancelConfirmed: true, durationMs: Date.now() - startedAt,
+    nodeErrors: {}, completedNodes: 0, totalNodes: 0,
+    outputs: {}, finalProgress: {}, metrics: {}, textTail: '', media: [],
   });
-
-  if (signal?.aborted) return emptyCancelledOutcome();
-
+  const assertObserving = (): void => {
+    throwIfAborted(signal);
+    throwIfAborted(cancelSignal);
+  };
   let device: string | undefined;
   let token: string;
   try {
-    device = opts.device ?? await fetchDefaultDevice(api, signal);
-    token = await executionToken(api, signal);
+    assertObserving();
+    device = opts.device ?? await awaitWithSignal(fetchDefaultDevice(api, signal), cancelSignal);
+    assertObserving();
+    token = await awaitWithSignal(executionToken(api, signal), cancelSignal);
+    assertObserving();
+    opts.beforeExecute?.();
+    assertObserving();
   } catch (error) {
-    if (signal?.aborted) return emptyCancelledOutcome();
-    throw error;
+    if (!signal?.aborted && !cancelSignal?.aborted && !isAbortError(error)) throw error;
+    // Pre-submit Stop is authoritative: there is no host job to detach/cancel.
+    return emptyCancelledOutcome();
   }
-  if (signal?.aborted) return emptyCancelledOutcome();
+  const graph = executableGraph(approvedGraph ?? api.graph.getGraph());
+  const keyFor = nodeKeyResolver(graph);
+  const totalNodes = graph.nodes.length;
 
-  return new Promise<RunGraphOutcome>((resolve) => {
+  return new Promise<RunGraphOutcome>((resolve, reject) => {
     const socket = new WebSocket(executionUrl(token));
 
     const outputs: Record<string, number | string> = {};
@@ -248,8 +282,11 @@ export async function runLiveGraph(
     let settled = false;
     let cancelRequested = false;
     let passiveDetachRequested = false;
+    let detachTimer: number | undefined;
     let cancelTimer: number | undefined;
     let executeSent = false;
+    let cancelConfirmed = false;
+    let terminalConfirmed = false;
 
     const finish = (
       status: RunGraphOutcome['status'],
@@ -259,13 +296,21 @@ export async function runLiveGraph(
       settled = true;
       window.clearTimeout(timer);
       if (cancelTimer !== undefined) window.clearTimeout(cancelTimer);
+      if (detachTimer !== undefined) window.clearTimeout(detachTimer);
       signal?.removeEventListener('abort', onAbort);
+      cancelSignal?.removeEventListener('abort', onExplicitCancel);
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
         socket.close();
       }
+      const stopping = status === 'cancelled' || status === 'timeout';
+      const confirmed = !executeSent || cancelConfirmed;
+      if (stopping && !confirmed) error = `${error ? `${error} ` : ''}Host termination is unconfirmed; the run may still be running. Reattach to inspect it.`;
       const textTail = texts.join('\n').slice(-MAX_TEXT_TAIL_CHARS);
       resolve({
         status,
+        submitted: executeSent,
+        ...(terminalConfirmed ? { terminalConfirmed: true } : {}),
+        ...(stopping ? { cancelConfirmed: confirmed } : {}),
         durationMs: Date.now() - startedAt,
         runId,
         ...(error ? { error: scrubExecutionCredential(error, token) } : {}),
@@ -287,6 +332,10 @@ export async function runLiveGraph(
       if (settled) return;
       if (cancelRequested) return;
       cancelRequested = true;
+      // An explicit Stop/timeout supersedes passive identity waiting. A late ID
+      // must now be followed by the normal terminal acknowledgement handshake.
+      passiveDetachRequested = false;
+      if (detachTimer !== undefined) window.clearTimeout(detachTimer);
       // Nothing was submitted yet (still fetching the token / connecting):
       // there is no server-side run to stop, so finish immediately instead
       // of waiting out the cancel grace for an acknowledgement that cannot
@@ -296,12 +345,21 @@ export async function runLiveGraph(
         finish(finalStatus);
         return;
       }
-      onProgress?.({
+      observe(() => onProgress?.({
         phase: 'cancelling',
         elapsedMs: Date.now() - startedAt,
         completedNodes: terminalNodes.size,
         totalNodes,
-      });
+      }));
+      // Arm grace BEFORE send: a synchronous terminal acknowledgement must
+      // clear it, not leave a late cleanup timer behind.
+      pendingCancelStatus = finalStatus;
+      cancelTimer = window.setTimeout(
+        () => finish(finalStatus, finalStatus === 'timeout'
+          ? `Run timed out after ${Math.round(timeoutMs / 60_000)} minutes; cancellation was requested.`
+          : undefined),
+        CANCEL_GRACE_MS,
+      );
       try {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify(
@@ -311,48 +369,64 @@ export async function runLiveGraph(
       } catch {
         // Socket already going away — the close below still stops 1.3.0 runs.
       }
-      cancelTimer = window.setTimeout(
-        () => finish(finalStatus, finalStatus === 'timeout'
-          ? `Run timed out after ${Math.round(timeoutMs / 60_000)} minutes and was cancelled.`
-          : undefined),
-        CANCEL_GRACE_MS,
-      );
-      // Remember why we are cancelling so the terminal frame maps correctly.
-      pendingCancelStatus = finalStatus;
     };
 
     let pendingCancelStatus: 'cancelled' | 'timeout' = 'cancelled';
     const requestPassiveDetach = (): void => {
-      if (settled) return;
+      if (settled || cancelRequested || passiveDetachRequested) return;
       if (!opts.serverOwnedRuns || !executeSent) {
         requestCancel('cancelled');
         return;
       }
       passiveDetachRequested = true;
-      if (runId !== undefined) finish('detached');
+      if (runId !== undefined) { finish('detached'); return; }
+      // Keep the connection only long enough to recover a reattach identity.
+      // Expiry is unknown host state, never an invented cancellation/finish.
+      detachTimer = window.setTimeout(() => finish('detached',
+        'The host submission may still be running, but its run ID was not received. Inspect host runs before releasing the reservation.'), DETACH_ID_GRACE_MS);
     };
     const onAbort = () => {
-      if (isPassiveDetach(signal)) requestPassiveDetach();
+      if (isPassiveDetach(signal) && !cancelSignal?.aborted) requestPassiveDetach();
       else requestCancel('cancelled');
     };
+    const onExplicitCancel = () => requestCancel('cancelled');
     const timer = window.setTimeout(() => requestCancel('timeout'), timeoutMs);
 
     signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) {
-      finish('cancelled');
+    cancelSignal?.addEventListener('abort', onExplicitCancel, { once: true });
+    if (signal?.aborted || cancelSignal?.aborted) {
+      requestCancel('cancelled');
       return;
     }
 
-    onProgress?.({
+    observe(() => onProgress?.({
       phase: 'connecting',
       elapsedMs: 0,
       completedNodes: 0,
       totalNodes,
-    });
+    }));
 
     socket.onopen = () => {
+      if (settled || cancelRequested || signal?.aborted || cancelSignal?.aborted) return;
+      try {
+        opts.beforeExecute?.();
+        assertObserving();
+      } catch (error) {
+        if (signal?.aborted || cancelSignal?.aborted || isAbortError(error)) { finish('cancelled'); return; }
+        // Approval became stale while connecting: no execute frame was sent.
+        settled = true;
+        window.clearTimeout(timer);
+        if (cancelTimer !== undefined) window.clearTimeout(cancelTimer);
+        if (detachTimer !== undefined) window.clearTimeout(detachTimer);
+        signal?.removeEventListener('abort', onAbort);
+        cancelSignal?.removeEventListener('abort', onExplicitCancel);
+        socket.close();
+        reject(error);
+        return;
+      }
       if (settled || cancelRequested) return;
-      socket.send(JSON.stringify({
+      executeSent = true;
+      try { socket.send(JSON.stringify({
         action: 'execute',
         nodes: graph.nodes,
         edges: graph.edges,
@@ -360,8 +434,7 @@ export async function runLiveGraph(
         record_outputs: false,
         weights_persistent: true,
         ...(device ? { device } : {}),
-      }));
-      executeSent = true;
+      })); } catch (error) { finish('error', String(error)); }
     };
 
     socket.onmessage = (event) => {
@@ -372,14 +445,23 @@ export async function runLiveGraph(
       } catch {
         return;
       }
+      if (!message || typeof message !== 'object') return;
       const type = String(message.type ?? '');
-      if (typeof message.run_id === 'string' && message.run_id) {
-        if (runId === undefined) opts.onRunId?.(message.run_id);
+      if (runId === undefined && typeof message.run_id === 'string' && message.run_id) {
         runId = message.run_id;
-        if (passiveDetachRequested) {
-          finish('detached');
-          return;
-        }
+        // Persist identity BEFORE passive completion; the browser signal may
+        // already be aborted, but this is ownership evidence, not new work.
+        observe(() => opts.onRunId?.(runId!));
+      }
+      if (settled) return;
+      const terminalFrame = type === 'execution_complete' || type === 'execution_stopped' ||
+        type === 'execution_error' || type === 'error' || message.rejected === true;
+      if (terminalFrame) terminalConfirmed = true;
+      // A terminal frame carrying the first ID is real evidence, not a live
+      // detached run. Otherwise hand off only after ownership was persisted.
+      if (passiveDetachRequested && runId !== undefined && !terminalFrame) {
+        finish('detached');
+        return;
       }
 
       if (message.rejected === true) {
@@ -423,7 +505,7 @@ export async function runLiveGraph(
             }
           }
         }
-        onProgress?.({
+        observe(() => onProgress?.({
           phase: 'running',
           nodeType: key,
           nodeStatus: status,
@@ -431,7 +513,7 @@ export async function runLiveGraph(
           elapsedMs: Date.now() - startedAt,
           completedNodes: terminalNodes.size,
           totalNodes,
-        });
+        }));
       } else if (type === 'metric') {
         const points = Array.isArray(message.points) ? message.points : [];
         for (const rawPoint of points) {
@@ -444,6 +526,7 @@ export async function runLiveGraph(
       } else if (type === 'execution_complete') {
         finish('complete');
       } else if (type === 'execution_stopped') {
+        cancelConfirmed = true;
         finish(pendingCancelStatus, cancelRequested
           ? undefined
           : `Run stopped by the host (${String(message.reason ?? 'stopped')}).`);
@@ -452,11 +535,11 @@ export async function runLiveGraph(
       }
     };
 
-    socket.onerror = () => finish('error', 'Execution WebSocket failed.');
+    socket.onerror = () => finish(passiveDetachRequested ? 'detached' : cancelRequested ? pendingCancelStatus : 'error', 'Execution WebSocket failed.');
     socket.onclose = () => {
       if (!settled) {
         finish(
-          cancelRequested ? pendingCancelStatus : 'error',
+          passiveDetachRequested ? 'detached' : cancelRequested ? pendingCancelStatus : 'error',
           cancelRequested
             ? undefined
             : 'Execution WebSocket closed before the run completed.',

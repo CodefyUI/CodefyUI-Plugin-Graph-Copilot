@@ -334,6 +334,22 @@ describe('metric resolution', () => {
 });
 
 describe('executeCandidateGraph', () => {
+  it('Stop sends native cancel and awaits cleanup before rejecting', async () => {
+    const controller = new AbortController();
+    let ack!: () => void;
+    socketBehavior = (socket, payload) => {
+      if (payload.action === 'execute') socket.emit({ type: 'execution_started', run_id: 'native-study-run' });
+      if (payload.action === 'cancel') ack = () => socket.emit({ type: 'execution_stopped', run_id: 'native-study-run' });
+    };
+    let settled = false;
+    const pending = executeCandidateGraph(BASE_GRAPH, 'token', controller.signal).catch((error) => { settled = true; return error; });
+    await Promise.resolve(); controller.abort(); await Promise.resolve();
+    expect(sentPayloads.at(-1)).toMatchObject({ action: 'cancel', run_id: 'native-study-run' });
+    expect(settled).toBe(false);
+    ack(); expect(await pending).toMatchObject({ name: 'AbortError' });
+    expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.CLOSED);
+  });
+
   it('runs an unsaved clone, filters notes, and collects scalar plus progress metrics', async () => {
     const result = await executeCandidateGraph(BASE_GRAPH, 'abc');
     expect(MockWebSocket.instances[0].url).toContain('token=abc');
@@ -372,7 +388,8 @@ describe('executeCandidateGraph', () => {
     socketBehavior = () => {};
     const pending = executeCandidateGraph(BASE_GRAPH, 'x', undefined, 10);
     const assertion = expect(pending).rejects.toThrow('timed out');
-    await vi.advanceTimersByTimeAsync(11);
+    await vi.advanceTimersByTimeAsync(5_011);
+    expect(sentPayloads.at(-1)?.action).toBe('cancel');
     await assertion;
   });
 
@@ -768,6 +785,20 @@ describe('runGraphExperiments', () => {
       'remove node note',
     ]);
     expect(structuralState.apply).not.toHaveBeenCalled();
+  });
+
+  it('reviews undefined promotion returns before persistence and never claims application', async () => {
+    const state = fakeApi();
+    state.apply.mockReturnValue(undefined);
+    const captured = vi.fn((operations: GraphOp[], receipt: ApplyResult) => {
+      expect(operations).toEqual([{ op: 'set_params', node_id: 'model', params: { quality: 3 } }]);
+      expect(receipt).toBeUndefined();
+      expect(state.api.storage.set).not.toHaveBeenCalled();
+    });
+    const result = await runGraphExperiments(state.api, request({ apply_best: true }), undefined, { onPromotionReceipt: captured });
+    expect(captured).toHaveBeenCalledTimes(1);
+    expect(result.appliedVariantId).toBeUndefined();
+    expect(result.applyConflict).toContain('effects are unknown');
   });
 
   it('records partial promotion errors instead of claiming the winner was applied', async () => {

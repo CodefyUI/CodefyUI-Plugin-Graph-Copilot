@@ -97,6 +97,12 @@ describe('normalizeNodeStatus — current typed outputs shape', () => {
           },
         },
         { output_kind: 'video', video: { url: 'https://evil.example/x.mp4', format: 'mp4' } },
+        { output_kind: 'video', video: { url: '//evil.example/x.mp4' } },
+        { output_kind: 'video', video: { url: '/\\evil.example/x.mp4' } },
+        { output_kind: 'video', video: { url: '/api/media/../auth/bootstrap' } },
+        { output_kind: 'video', video: { url: '/api/media/%2e%2e/auth/bootstrap' } },
+        { output_kind: 'video', video: { url: '/api/media/%5cevil.mp4' } },
+        { output_kind: 'video', video: { url: '/api/media/a\n.mp4' } },
         { output_kind: 'video', video: { format: 'mp4' } }, // no url: dropped
       ],
     });

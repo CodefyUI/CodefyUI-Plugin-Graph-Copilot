@@ -10,11 +10,14 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { CodefyUIPluginAPI, SerializedGraph, NodeDefinition } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import type { Conversation } from '../state/conversations';
 import { newConversation } from '../state/conversations';
+import type { RunTurnOpts } from '../agent/loop';
+import type { TurnResult } from '../agent/types';
+import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { resetRunHistoryProbeForTests } from '../agent/runHistory';
 import { readActiveRun, writeActiveRun } from '../agent/runPointer';
 
@@ -133,6 +136,47 @@ describe('ChatView reattach banner integration', () => {
 
     renderChatView(api);
     expect(await screen.findByText('Run in progress (reattached)')).toBeInTheDocument();
+  });
+
+  it('reopens before a late ID, waits for owner settlement, then follows exactly once without dispatching', async () => {
+    let opts!: RunTurnOpts;
+    let resolve!: (value: TurnResult) => void;
+    vi.mocked(runTurn).mockImplementation((value) => {
+      opts = value;
+      return new Promise<TurnResult>((done) => { resolve = done; });
+    });
+    const api = makeApi(async (url) => {
+      if (url.startsWith('/api/runs?limit=1')) return json({ runs: [], total: 0 });
+      if (url === '/api/runs/run-1') return json(runPayload());
+      if (url.includes('/api/runs/run-1/events')) return new Promise<Response>(() => {});
+      throw new Error(`unexpected url ${url}`);
+    });
+    const conversation = makeConversation();
+    const props = { api, settings: READY_SETTINGS, codexLoggedIn: false, conversation,
+      onConversationChange: vi.fn(), onOpenSettings: vi.fn(), onOpenHistory: vi.fn() };
+    const view = render(<ChatView {...props} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message input' }), { target: { value: 'Run graph' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    view.rerender(<ChatView {...props} active={false} />);
+    expect(opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
+    expect(opts.cancelSignal?.aborted).toBe(false);
+    view.rerender(<ChatView {...props} active />);
+    expect(screen.getByRole('textbox', { name: 'Message input' })).toBeDisabled();
+    expect(api.http.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByText('Run in progress (reattached)')).toBeNull();
+
+    const detached: TurnResult = { id: opts.runId!, mode: 'edit', status: 'incomplete', reason: 'execution_detached',
+      mutation: 'none', mutationAttempted: false, sideEffectAttempted: true, hostRunId: 'run-1',
+      appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] }, turns: [] };
+    act(() => opts.callbacks.onFinished(detached));
+    expect(screen.getByRole('textbox', { name: 'Message input' })).toBeDisabled();
+    expect(api.http.fetch).not.toHaveBeenCalled();
+    writeActiveRun(api, POINTER);
+    await act(async () => resolve(detached));
+    await screen.findByText('Run in progress (reattached)');
+    await waitFor(() => expect(vi.mocked(api.http.fetch).mock.calls.filter(([url]) => String(url).includes('/events'))).toHaveLength(1));
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByLabelText('Background graph run')).toHaveLength(1);
   });
 
   it('renders the finished-run banner text when a pointer resolves to a succeeded row', async () => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import {
@@ -36,6 +36,21 @@ export interface CopilotAppProps {
 
 export function CopilotApp({ api }: CopilotAppProps) {
   const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const panelId = useId();
+  const fabRef = useRef<HTMLButtonElement>(null);
+  const detachRef = useRef<(() => void) | null>(null);
+  const authRevision = useRef(0);
+  const registerDetach = useCallback((detach: () => void) => { detachRef.current = detach; }, []);
+  const close = () => {
+    detachRef.current?.();
+    setOpen(false);
+    fabRef.current?.focus();
+  };
+  const toggle = () => {
+    if (open) close();
+    else { setOpened(true); setOpen(true); }
+  };
   const [settings, setSettings] = useState<Settings>(() => loadSettings(api));
   const [codexLoggedIn, setCodexLoggedIn] = useState(false);
   const [codexEmail, setCodexEmail] = useState<string | null>(null);
@@ -59,9 +74,10 @@ export function CopilotApp({ api }: CopilotAppProps) {
   useEffect(() => {
     if (settings.provider !== 'openai-codex') return;
     let cancelled = false;
+    const revision = ++authRevision.current;
     coordinatedCodexStatus(() => codexStatus(api))
       .then((s) => {
-        if (cancelled || s === null) return;
+        if (cancelled || authRevision.current !== revision || s === null) return;
         const loggedIn = s.status === 'logged_in';
         const email = loggedIn ? s.email ?? null : null;
         if (loggedIn !== codexLoggedIn || email !== codexEmail) {
@@ -165,6 +181,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
   };
 
   const handleCodexStatusChange = (loggedIn: boolean, email: string | null) => {
+    authRevision.current += 1;
     setCodexLoggedIn(loggedIn);
     setCodexEmail(email);
   };
@@ -185,10 +202,13 @@ export function CopilotApp({ api }: CopilotAppProps) {
 
   return (
     <div className="gcp-root">
-      <Fab onClick={() => setOpen((o) => !o)} />
+      <Fab onClick={toggle} expanded={open} controls={panelId} buttonRef={fabRef} />
 
-      {open && (
+      {opened && (
         <ChatWindow
+          open={open}
+          panelId={panelId}
+          onDetachReady={registerDetach}
           api={api}
           settings={settings}
           codexLoggedIn={codexLoggedIn}
@@ -199,7 +219,7 @@ export function CopilotApp({ api }: CopilotAppProps) {
           onCodexStatusChange={handleCodexStatusChange}
           onNewConversation={handleNewConversation}
           onResumeConversation={handleResumeConversation}
-          onClose={() => setOpen(false)}
+          onClose={close}
         />
       )}
     </div>

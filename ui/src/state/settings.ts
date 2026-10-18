@@ -77,6 +77,12 @@ const STORAGE_KEY = 'settings';
 
 type StrictApi = Pick<CodefyUIPluginAPI, 'storage'>;
 
+/** Persisted JSON is untrusted; missing/malformed identities are never confirmed. */
+function selectedModelId(s: Settings, provider: Provider): string | undefined {
+  const model: unknown = s.models?.[provider];
+  return typeof model === 'string' && model.trim() ? model : undefined;
+}
+
 /**
  * Deep-merge `patch` over `base` — only one level deep (enough for Settings).
  * Sub-objects are shallow-merged; primitives are replaced.
@@ -143,10 +149,12 @@ export function saveSettings(api: StrictApi, s: Settings): void {
  * is treated as unsupported for compatibility with legacy hosts.
  */
 export function activeReasoningEffort(s: Settings): ReasoningEffort | undefined {
+  const model = selectedModelId(s, s.provider);
   const capability = s.providerCapabilities?.[s.provider];
   if (
-    capability?.reasoningEffort !== true
-    || capability.reasoningModel !== s.models[s.provider]
+    model === undefined
+    || capability?.reasoningEffort !== true
+    || capability.reasoningModel !== model
   ) {
     return undefined;
   }
@@ -171,6 +179,7 @@ export function withReasoningEffort(
     reasoningEfforts[provider] = effort;
   }
   const capability = s.providerCapabilities?.[provider];
+  const model = selectedModelId(s, provider);
   return {
     ...s,
     reasoningEfforts,
@@ -180,7 +189,7 @@ export function withReasoningEffort(
         [provider]: {
           reasoningEffort: capability.reasoningEffort,
           richModelCatalog: capability.richModelCatalog,
-          ...(effort ? { reasoningModel: s.models[provider] ?? '' } : {}),
+          ...(effort && model !== undefined ? { reasoningModel: model } : {}),
         },
       },
     } : {}),
@@ -202,7 +211,7 @@ export function reconcileModelCatalogSettings(
   const existing = s.providerCapabilities?.[provider];
   const reasoningEfforts = { ...s.reasoningEfforts };
   const selectedEffort = reasoningEfforts[provider];
-  const selectedModel = s.models[provider] ?? '';
+  const selectedModel = selectedModelId(s, provider) ?? '';
   const advertisedEntry = models.find((model) => model.id === selectedModel);
   const selectedEntry = catalogEntryForModel(
     provider,
@@ -250,25 +259,27 @@ export function reconcileModelCatalogSettings(
   };
 }
 
-/**
- * Returns true when the current settings are sufficient to make a chat request.
- * - openai / openrouter / anthropic / custom (with optional key): need the relevant apiKey.
- *   custom additionally needs customBaseUrl.
- * - openai-codex: needs codexLoggedIn.
- */
-export function providerReady(s: Settings, codexLoggedIn: boolean): boolean {
+/** A concrete setup step; values are trimmed for readiness, never rewritten here. */
+export function readinessReason(s: Settings, codexLoggedIn: boolean): string | null {
+  const hasText = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+  const providers = ['openai', 'openrouter', 'anthropic', 'openai-codex', 'custom'];
+  if (!providers.includes(s.provider)) return 'Select a supported provider in Settings.';
+  if (!hasText(s.models?.[s.provider])) return 'Enter a model ID in Settings before sending a request.';
   switch (s.provider) {
     case 'openai':
-      return Boolean(s.apiKeys.openai);
+      return hasText(s.apiKeys?.openai) ? null : 'Enter an OpenAI API key in Settings.';
     case 'openrouter':
-      return Boolean(s.apiKeys.openrouter);
+      return hasText(s.apiKeys?.openrouter) ? null : 'Enter an OpenRouter API key in Settings.';
     case 'anthropic':
-      return Boolean(s.apiKeys.anthropic);
+      return hasText(s.apiKeys?.anthropic) ? null : 'Enter an Anthropic API key in Settings.';
     case 'openai-codex':
-      return codexLoggedIn;
+      return codexLoggedIn ? null : 'Sign in with ChatGPT Codex in Settings.';
     case 'custom':
-      return Boolean(s.customBaseUrl);
-    default:
-      return false;
+      return hasText(s.customBaseUrl) ? null : 'Enter the custom API base URL in Settings.';
   }
+}
+
+/** Model and provider credentials must be nonempty after trimming. Custom keys remain optional. */
+export function providerReady(s: Settings, codexLoggedIn: boolean): boolean {
+  return readinessReason(s, codexLoggedIn) === null;
 }

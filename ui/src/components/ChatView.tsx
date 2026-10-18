@@ -1,22 +1,20 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import { activeReasoningEffort, providerReady, withReasoningEffort } from '../state/settings';
+import { providerReady, readinessReason, withReasoningEffort } from '../state/settings';
 import type { ReasoningEffort } from '../llm/models';
 import { catalogEntryForModel } from '../llm/models';
-import type { Conversation, ChatTurn } from '../state/conversations';
-import { saveConversation, titleFrom, listConversations } from '../state/conversations';
+import type { Conversation } from '../state/conversations';
+import { listConversations } from '../state/conversations';
 import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
-import { runTurn } from '../agent/loop';
-import type { ExperimentApprovalRequest, RunApprovalRequest } from '../agent/loop';
-import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
-import { formatRunStatusLine } from '../agent/runGraph';
-import { RunSparkline, appendLossPoint } from './RunSparkline';
+import type { AgentMode } from '../agent/types';
+import { useAgentRun } from './useAgentRun';
+import { RunSparkline } from './RunSparkline';
 import { MessageBubble } from './MessageBubble';
 import { describeStage, groupTurns } from './turnStages';
 import { RunReattachBanner } from './RunReattachBanner';
-import { maybeRequestNotificationPermission, notifyRunFinished } from './notify';
+import { maybeRequestNotificationPermission } from './notify';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -152,6 +150,10 @@ export interface ChatViewProps {
   onSettingsChange?: (s: Settings) => void;
   onOpenSettings: () => void;
   onOpenHistory: () => void;
+  active?: boolean;
+  onBusyChange?: (busy: boolean) => void;
+  /** Passive view exits stop the browser agent without cancelling host work. */
+  onDetachReady?: (detach: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,44 +169,52 @@ export function ChatView({
   onSettingsChange,
   onOpenSettings,
   onOpenHistory,
+  active = true,
+  onBusyChange,
+  onDetachReady,
 }: ChatViewProps) {
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<AgentMode>(conversation.mode ?? 'edit');
   const [effortOpen, setEffortOpen] = useState(false);
-  const [streamingText, setStreamingText] = useState('');
-  /** Turns finalized during the in-flight run (staged display). */
-  const [liveTurns, setLiveTurns] = useState<ChatTurn[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [lastUserText, setLastUserText] = useState('');
-  const [lastAttachments, setLastAttachments] = useState<Attachment[]>([]);
   const [staged, setStaged] = useState<Staged[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [experimentApproval, setExperimentApproval] = useState<ExperimentApprovalRequest | null>(null);
-  const [runApproval, setRunApproval] = useState<RunApprovalRequest | null>(null);
-  const [runStatusLine, setRunStatusLine] = useState<string | null>(null);
-  const [runLossSeries, setRunLossSeries] = useState<number[]>([]);
+  const [showLatest, setShowLatest] = useState(false);
+  const run = useAgentRun({ api, settings, conversation, onConversationChange, active, onBusyChange });
+  const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, runStatusLine, runLossSeries } = run;
+  useEffect(() => { onDetachReady?.(run.detach); }, [onDetachReady, run.detach]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true); // stick to bottom unless the user scrolls up
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
+  const setupRef = useRef<HTMLButtonElement>(null);
+  const composingRef = useRef(false);
   const dragDepth = useRef(0);
 
   const ready = providerReady(settings, codexLoggedIn);
   const anyLoading = staged.some((s) => s.status === 'loading');
+  const anyFailed = staged.some((s) => s.status === 'error');
   const readyAtts = staged.filter((s) => s.status === 'ready' && s.att).map((s) => s.att!);
-  const canSend = ready && !busy && !anyLoading && (input.trim().length > 0 || readyAtts.length > 0);
+  const canSend = ready && active && !busy && !anyLoading && !anyFailed &&
+    (input.trim().length > 0 || readyAtts.length > 0);
 
-  // Detach a current host's server-owned run when the panel unmounts. Explicit
-  // Stop uses an ordinary abort below and therefore keeps cancellation semantics.
-  useEffect(() => () => {
-    approvalResolveRef.current?.(false);
-    approvalResolveRef.current = null;
-    abortRef.current?.abort(PASSIVE_DETACH_REASON);
-  }, []);
+  useEffect(() => {
+    setInput('');
+    setStaged([]);
+    setMode(conversation.mode ?? 'edit');
+    setEffortOpen(false);
+    pinnedRef.current = true;
+    setShowLatest(false);
+  }, [conversation.id]);
+
+  useEffect(() => {
+    if (!active) setEffortOpen(false);
+    if (active && !busy) {
+      if (ready) textareaRef.current?.focus();
+      else setupRef.current?.focus();
+    }
+  }, [active, conversation.id, ready, busy]);
 
   // Elapsed-seconds ticker while a run is in flight
   useEffect(() => {
@@ -225,6 +235,7 @@ export function ChatView({
     const el = listRef.current;
     if (!el) return;
     pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setShowLatest(!pinnedRef.current);
   }, []);
 
   useEffect(() => {
@@ -323,164 +334,46 @@ export function ChatView({
   // Send logic
   // ---------------------------------------------------------------------------
 
-  const doSend = useCallback(
-    async (userText: string, atts: Attachment[]) => {
-      const text = userText.trim();
-      if ((!text && atts.length === 0) || busy || !ready) return;
+  const repin = () => {
+    pinnedRef.current = true;
+    setShowLatest(false);
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
 
-      setLastError(null);
-      setLastUserText(text);
-      setLastAttachments(atts);
-      setInput('');
-      setStaged([]);
-      setBusy(true);
-      setStreamingText('');
-      setLiveTurns([]);
-      pinnedRef.current = true; // a fresh send re-pins the view to the bottom
-
-      const userTurn: ChatTurn = { role: 'user', content: text };
-      if (atts.length > 0) userTurn.attachments = atts;
-
-      // Provider/model are stamped per send so history rows reflect what the
-      // conversation actually ran on.
-      let conv = { ...conversation };
-      if (!conv.title) conv.title = titleFrom(text || atts[0]?.name || 'Attachment');
-      conv.provider = settings.provider;
-      conv.model = settings.models[settings.provider] ?? '';
-      const reasoningEffort = activeReasoningEffort(settings);
-      if (reasoningEffort) {
-        conv.reasoningEffort = reasoningEffort;
-      } else {
-        delete conv.reasoningEffort;
-      }
-      conv.messages = [...conv.messages, userTurn];
-      conv.updatedAt = Date.now();
-      onConversationChange(conv);
-      saveConversation(api, conv);
-
-      const abortCtrl = new AbortController();
-      abortRef.current = abortCtrl;
-
-      let streamBuf = '';
-
-      await runTurn({
-        api,
-        settings,
-        history: conv.messages.slice(0, -1), // exclude the user turn we just added
-        userText: text,
-        attachments: atts.length > 0 ? atts : undefined,
-        callbacks: {
-          onTextDelta(t) {
-            streamBuf += t;
-            setStreamingText(streamBuf);
-          },
-          onTurnAppended(turn) {
-            // An assistant turn absorbs the text streamed so far — reset the
-            // buffer so the next round streams into a fresh bubble.
-            if (turn.role !== 'tool') {
-              streamBuf = '';
-              setStreamingText('');
-            } else {
-              // A landed tool result ends any live run status; a still-running
-              // run keeps re-setting the line with each progress event.
-              setRunStatusLine(null);
-              setRunLossSeries([]);
-            }
-            setLiveTurns((prev) => [...prev, turn]);
-          },
-          onOpsApplied() { /* stage rows render live from the appended turns */ },
-          onExperimentApproval(request) {
-            if (abortCtrl.signal.aborted) return Promise.resolve(false);
-            approvalResolveRef.current?.(false);
-            return new Promise<boolean>((resolve) => {
-              approvalResolveRef.current = resolve;
-              setExperimentApproval(request);
-            });
-          },
-          onRunApproval(request) {
-            if (abortCtrl.signal.aborted) return Promise.resolve(false);
-            approvalResolveRef.current?.(false);
-            return new Promise<boolean>((resolve) => {
-              approvalResolveRef.current = resolve;
-              setRunApproval(request);
-            });
-          },
-          onRunProgress(update) {
-            setRunStatusLine(formatRunStatusLine(update));
-            if (update.phase === 'connecting') {
-              setRunLossSeries([]);
-            } else {
-              setRunLossSeries((prev) => appendLossPoint(prev, update));
-            }
-          },
-          onRunFinished(outcome) {
-            const detail = [
-              ...Object.entries(outcome.metrics).slice(0, 2)
-                .map(([name, value]) => `${name} ${Number.isInteger(value) ? value : value.toFixed(4)}`),
-              `${Math.max(1, Math.round(outcome.durationMs / 60_000))} min`,
-            ].join(' · ');
-            notifyRunFinished(settings, { runId: outcome.runId, status: outcome.status, detail });
-          },
-          onTurnsCommitted(turns) {
-            setStreamingText('');
-            streamBuf = '';
-            setLiveTurns([]);
-            conv = { ...conv, messages: [...conv.messages, ...turns], updatedAt: Date.now() };
-            onConversationChange(conv);
-            saveConversation(api, conv);
-          },
-          onError(msg) {
-            setLastError(msg);
-            setStreamingText('');
-            streamBuf = '';
-          },
-          onFinished() {
-            approvalResolveRef.current?.(false);
-            approvalResolveRef.current = null;
-            setExperimentApproval(null);
-            setRunApproval(null);
-            setRunStatusLine(null);
-            setRunLossSeries([]);
-            setBusy(false);
-            abortRef.current = null;
-          },
-        },
-        signal: abortCtrl.signal,
-      });
-    },
-    [api, busy, conversation, onConversationChange, ready, settings],
-  );
-
-  const handleSend = () => doSend(input, readyAtts);
+  const handleSend = () => {
+    if (!canSend) return;
+    void run.start(input, readyAtts, mode);
+    setInput('');
+    setStaged([]);
+    repin();
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !composingRef.current &&
+        !e.nativeEvent.isComposing && e.keyCode !== 229) {
       e.preventDefault();
-      doSend(input, readyAtts);
+      handleSend();
     }
   };
 
-  const handleStop = () => {
-    approvalResolveRef.current?.(false);
-    approvalResolveRef.current = null;
-    setExperimentApproval(null);
-    setRunApproval(null);
-    abortRef.current?.abort();
+  const handleRetry = () => {
+    if (!ready || !active) return;
+    repin();
+    void run.retry();
   };
-  const handleExperimentDecision = (approved: boolean) => {
-    const resolve = approvalResolveRef.current;
-    approvalResolveRef.current = null;
-    setExperimentApproval(null);
-    resolve?.(approved);
+
+  const handleContinue = () => {
+    if (!ready || !active || busy) return;
+    repin();
+    void run.start('Continue the previous request from the current graph and recorded run results. Read the graph again first; do not replay operations or executions already dispatched.', [], mode);
   };
+
+  const handleExperimentDecision = (approved: boolean) => run.decide(approved);
   const handleRunDecision = (approved: boolean) => {
     if (approved) maybeRequestNotificationPermission(settings);
-    const resolve = approvalResolveRef.current;
-    approvalResolveRef.current = null;
-    setRunApproval(null);
-    resolve?.(approved);
+    run.decide(approved);
   };
-  const handleRetry = () => doSend(lastUserText, lastAttachments);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -498,23 +391,25 @@ export function ChatView({
   // While a tool is executing, its stage row already shows a spinner — the
   // generic thinking indicator is only for gaps with no visible activity.
   const lastItem = items[items.length - 1];
-  const runningStage = lastItem?.stages.find((s) => !s.result);
+  const runningStage = lastItem && liveTurns.includes(lastItem.turn)
+    ? lastItem.stages.find((stage) => !stage.result)
+    : undefined;
   const toolRunning = !!runningStage;
-  const showThinking = busy && streamingText === '' && !toolRunning && !experimentApproval && !runApproval;
+  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation && !experimentApproval && !runApproval;
 
   // Live run status for the composer bar: what the agent is doing right now.
   const liveStepCount = liveTurns.filter(
     (t) => t.role === 'assistant' && (t.tool_calls?.length ?? 0) > 0,
   ).length;
-  const runPhase = experimentApproval || runApproval
+  const runPhase = run.confirmation || experimentApproval || runApproval
     ? 'Waiting for approval'
     : runStatusLine
     ? runStatusLine
     : streamingText !== ''
     ? 'Writing reply'
     : runningStage
-    ? describeStage(runningStage).label
-    : 'Thinking';
+    ? describeStage(runningStage, true).label
+    : run.phase === 'validating' ? 'Checking structure' : 'Thinking';
 
   // Composer model/effort identity. Effort options surface only after the
   // host has confirmed reasoning-effort support for this provider+model.
@@ -545,20 +440,43 @@ export function ChatView({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <RunReattachBanner
+      <div className="gcp-mode-bar">
+        <div className="gcp-mode-switch" role="radiogroup" aria-label="Agent mode">
+          {(['ask', 'edit'] as const).map((value) => (
+            <button key={value} role="radio" aria-checked={mode === value} tabIndex={mode === value ? 0 : -1}
+              disabled={busy} onClick={() => setMode(value)} onKeyDown={(event) => {
+                if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+                  event.preventDefault();
+                  const next = mode === 'ask' ? 'edit' : 'ask';
+                  setMode(next);
+                  const sibling = next === 'ask' ? event.currentTarget.previousElementSibling : event.currentTarget.nextElementSibling;
+                  (sibling as HTMLButtonElement | null)?.focus();
+                }
+              }}>
+              {value === 'ask' ? 'Ask' : 'Edit'}
+            </button>
+          ))}
+        </div>
+        <span>{mode === 'ask' ? 'Read-only guidance' : 'Can change the current graph'}</span>
+      </div>
+      <span className="gcp-sr-only" role="status" aria-live="polite">
+        {busy ? run.phase === 'awaiting_confirmation' ? 'Waiting for your confirmation' : 'Assistant working' :
+          run.summary ? run.summary.reason === 'execution_detached' ? 'Detached from host run' : `Run ${run.summary.status}` : ''}
+      </span>
+      {active && !busy && <RunReattachBanner
         api={api}
         settings={settings}
         onAskAgent={(text) => {
           setInput(text);
           textareaRef.current?.focus();
         }}
-      />
+      />}
 
-      {/* Message list */}
+      {/* Live tokens are readable, but only run transitions are announced. */}
       <div
         className="gcp-messages"
         role="log"
-        aria-live="polite"
+        aria-live="off"
         aria-label="Conversation"
         ref={listRef}
         onScroll={handleListScroll}
@@ -574,7 +492,10 @@ export function ChatView({
             {ready && (
               <div className="gcp-welcome-suggestions" aria-label="Suggested prompts">
                 {SUGGESTIONS.map((s) => (
-                  <button key={s} className="gcp-suggestion" onClick={() => doSend(s, [])}>
+                  <button key={s} className="gcp-suggestion" onClick={() => {
+                    setInput(s);
+                    textareaRef.current?.focus();
+                  }}>
                     {s}
                   </button>
                 ))}
@@ -594,12 +515,8 @@ export function ChatView({
         )}
 
         {items.map((item) => (
-          <MessageBubble
-            key={item.key}
-            turn={item.turn}
-            stages={item.stages}
-            step={item.step}
-          />
+          <MessageBubble key={item.key} turn={item.turn} stages={item.stages}
+            step={item.step} active={busy && liveTurns.includes(item.turn)} />
         ))}
 
         {/* Text currently streaming for this round */}
@@ -613,10 +530,10 @@ export function ChatView({
 
         {/* Waiting on the model (no visible activity yet) */}
         {showThinking && (
-          <div className="gcp-thinking" role="status" aria-label="Waiting for the assistant">
+          <div className="gcp-thinking" aria-label="Waiting for the assistant">
             <span className="gcp-thinking-orb" aria-hidden="true">✦</span>
-            <span className="gcp-thinking-text">Thinking</span>
-            {elapsed >= 3 && <span className="gcp-thinking-time">{elapsed}s</span>}
+            <span className="gcp-thinking-text">{run.phase === 'validating' ? 'Checking structure' : 'Thinking'}</span>
+            {elapsed >= 3 && <span className="gcp-thinking-time" aria-hidden="true">{elapsed}s</span>}
           </div>
         )}
 
@@ -628,12 +545,36 @@ export function ChatView({
               <div className="gcp-error-title">Request failed</div>
               <div className="gcp-error-text">{lastError}</div>
             </div>
-            <button className="gcp-retry-btn" onClick={handleRetry} aria-label="Retry">
-              Retry
-            </button>
+          </div>
+        )}
+        {!busy && (lastError || (run.summary && run.summary.status !== 'completed')) && (
+          <div className="gcp-recovery">
+            {run.canRetry ? (
+              <button className="gcp-retry-btn" onClick={handleRetry} disabled={!ready} aria-label="Retry">Retry</button>
+            ) : run.summary && (run.summary.mutationAttempted || run.summary.sideEffectAttempted) ? (
+              <>
+                <span>Changes and dispatched executions are not replayed. Stop does not undo applied changes.</span>
+                <button className="gcp-retry-btn" onClick={handleContinue} disabled={!ready}>
+                  Continue from current graph
+                </button>
+              </>
+            ) : null}
           </div>
         )}
       </div>
+
+      {showLatest && <button className="gcp-jump-latest" onClick={repin}>Jump to latest</button>}
+
+      {run.confirmation && (
+        <div className="gcp-confirmation" role="group" aria-label="Confirm clearing the graph">
+          <strong>Clear the current graph?</strong>
+          <p>This removes {run.confirmation.nodeCount} nodes and {run.confirmation.edgeCount} edges. Changes are not automatically undone.</p>
+          <div className="gcp-confirmation-actions">
+            <button className="gcp-secondary-btn" onClick={() => run.decide(false)} autoFocus>Keep graph</button>
+            <button className="gcp-danger-btn" onClick={() => run.decide(true)}>Clear graph</button>
+          </div>
+        </div>
+      )}
 
       {/* Drop hint overlay */}
       {dragging && (
@@ -666,35 +607,40 @@ export function ChatView({
             <div id="gcp-experiment-approval-title" className="gcp-experiment-approval-title">
               Run {experimentApproval.executionCount} graph execution{experimentApproval.executionCount === 1 ? '' : 's'}?
             </div>
-            <div className="gcp-experiment-approval-hypothesis">
-              {experimentApproval.hypothesis}
-            </div>
-            <div className="gcp-experiment-approval-facts">
-              <span>{experimentApproval.variantCount} variants</span>
-              <span>{experimentApproval.repetitions} repetitions</span>
-              <span>concurrency {experimentApproval.concurrency}</span>
-              <span>per-run cap {experimentApproval.runTimeoutMinutes} min</span>
-              {experimentApproval.applyBest && <span>parameter winner may be applied</span>}
-            </div>
-            <div className="gcp-experiment-approval-warning">
-              Review the candidate settings below. Credential values are schema-redacted.
-            </div>
-            <div className="gcp-experiment-approval-candidates" aria-label="Candidate changes">
-              {experimentApproval.variants.map((variant, index) => (
-                <div key={`${index}-${variant.label}`}>
-                  <strong>{variant.label}</strong>
-                  <span>{variant.operations.length > 0 ? variant.operations.join(' · ') : 'baseline — no changes'}</span>
-                </div>
-              ))}
-            </div>
-            <div className="gcp-experiment-approval-nodes">
-              <strong>Nodes that may execute</strong>
-              <span>{experimentApproval.nodeTypes.length > 0 ? experimentApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
-            </div>
-            <div className="gcp-experiment-approval-warning">
-              Candidate edits stay off-canvas, but nodes may write files, call networks, use GPU time, or incur API costs.
+            <div className="gcp-experiment-approval-body" role="region" aria-label="Execution approval details" tabIndex={0}>
+              <div className="gcp-experiment-approval-hypothesis">
+                {experimentApproval.hypothesis}
+              </div>
+              <div className="gcp-experiment-approval-facts">
+                <span>{experimentApproval.variantCount} variants</span>
+                <span>{experimentApproval.repetitions} repetitions</span>
+                <span>concurrency {experimentApproval.concurrency}</span>
+                <span>per-run cap {experimentApproval.runTimeoutMinutes} min</span>
+                {experimentApproval.applyBest && <span>parameter winner may be applied</span>}
+              </div>
+              <div className="gcp-experiment-approval-warning">
+                Review the candidate settings below. Credential values are schema-redacted.
+              </div>
+              <div className="gcp-experiment-approval-candidates" aria-label="Candidate changes">
+                {experimentApproval.variants.map((variant, index) => (
+                  <div key={`${index}-${variant.label}`}>
+                    <strong>{variant.label}</strong>
+                    <span>{variant.operations.length > 0 ? variant.operations.join(' · ') : 'baseline — no changes'}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="gcp-experiment-approval-nodes">
+                <strong>Nodes that may execute</strong>
+                <span>{experimentApproval.nodeTypes.length > 0 ? experimentApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
+              </div>
+              <div className="gcp-experiment-approval-warning">
+                Candidate edits stay off-canvas, but nodes may write files, call networks, use GPU time, or incur API costs.
+              </div>
             </div>
             <div className="gcp-experiment-approval-actions">
+              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
+                <StopIcon />
+              </button>
               <button className="gcp-approval-secondary" onClick={() => handleExperimentDecision(false)} autoFocus>
                 Cancel
               </button>
@@ -718,25 +664,30 @@ export function ChatView({
             <div id="gcp-run-approval-title" className="gcp-experiment-approval-title">
               Run the current graph?
             </div>
-            <div className="gcp-experiment-approval-hypothesis">
-              {runApproval.reason}
-            </div>
-            <div className="gcp-experiment-approval-facts">
-              <span>{runApproval.nodeCount} node{runApproval.nodeCount === 1 ? '' : 's'}</span>
-              <span>{runApproval.edgeCount} edge{runApproval.edgeCount === 1 ? '' : 's'}</span>
-              <span>device {runApproval.device}</span>
-              <span>time cap {runApproval.timeoutMinutes} min</span>
-            </div>
-            <div className="gcp-experiment-approval-nodes">
-              <strong>Nodes that will execute</strong>
-              <span>{runApproval.nodeTypes.length > 0 ? runApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
-            </div>
-            <div className="gcp-experiment-approval-warning">
-              This executes your live graph with real side effects — file writes, network
-              calls, GPU time. Training runs can take a long time; progress streams into
-              this panel and Stop cancels the run.
+            <div className="gcp-experiment-approval-body" role="region" aria-label="Execution approval details" tabIndex={0}>
+              <div className="gcp-experiment-approval-hypothesis">
+                {runApproval.reason}
+              </div>
+              <div className="gcp-experiment-approval-facts">
+                <span>{runApproval.nodeCount} node{runApproval.nodeCount === 1 ? '' : 's'}</span>
+                <span>{runApproval.edgeCount} edge{runApproval.edgeCount === 1 ? '' : 's'}</span>
+                <span>device {runApproval.device}</span>
+                <span>time cap {runApproval.timeoutMinutes} min</span>
+              </div>
+              <div className="gcp-experiment-approval-nodes">
+                <strong>Nodes that will execute</strong>
+                <span>{runApproval.nodeTypes.length > 0 ? runApproval.nodeTypes.join(', ') : 'No typed nodes detected'}</span>
+              </div>
+              <div className="gcp-experiment-approval-warning">
+                This executes your live graph with real side effects — file writes, network
+                calls, GPU time. Stop requests cancellation; completed side effects are not undone.
+                Closing or navigating away leaves server-owned runs running and stops local timeout monitoring.
+              </div>
             </div>
             <div className="gcp-experiment-approval-actions">
+              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
+                <StopIcon />
+              </button>
               <button className="gcp-approval-secondary" onClick={() => handleRunDecision(false)} autoFocus>
                 Cancel
               </button>
@@ -767,7 +718,7 @@ export function ChatView({
                 <span className="gcp-chip-body">
                   <span className="gcp-chip-name">{s.name}</span>
                   <span className="gcp-chip-size">
-                    {s.status === 'loading' ? 'reading…' : s.status === 'error' ? 'failed' : formatBytes(s.size)}
+                    {s.status === 'loading' ? 'reading…' : s.status === 'error' ? s.error || 'Could not read this file. Remove it to send.' : formatBytes(s.size)}
                   </span>
                 </span>
                 {s.status === 'loading' && <span className="gcp-chip-spinner" aria-hidden="true" />}
@@ -813,6 +764,8 @@ export function ChatView({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={() => { composingRef.current = false; }}
             onPaste={handlePaste}
             disabled={busy || !ready}
             aria-label="Message input"
@@ -820,9 +773,11 @@ export function ChatView({
           />
 
           {busy ? (
-            <button className="gcp-stop-btn" onClick={handleStop} aria-label="Stop generation" title="Stop">
-              <StopIcon />
-            </button>
+            !experimentApproval && !runApproval && (
+              <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
+                <StopIcon />
+              </button>
+            )
           ) : (
             <button
               className="gcp-send-btn"
@@ -924,7 +879,7 @@ export function ChatView({
           </div>
 
           {busy ? (
-            <div className="gcp-runbar" role="status" aria-label="Agent activity">
+            <div className="gcp-runbar" role="status" aria-label="Agent activity" aria-live="off">
               <span className="gcp-runbar-pulse" aria-hidden="true" />
               <span className="gcp-runbar-phase">{runPhase}…</span>
               {runLossSeries.length >= 2 && <RunSparkline series={runLossSeries} />}
@@ -935,7 +890,9 @@ export function ChatView({
             </div>
           ) : (
             <div className="gcp-composer-hint" aria-hidden="true">
-              Enter ↵ send · Shift+Enter newline
+              {anyLoading ? 'Wait for attachments to finish reading'
+                : anyFailed ? 'Remove unreadable attachments before sending'
+                : 'Enter ↵ send · Shift+Enter newline'}
             </div>
           )}
         </div>
@@ -943,8 +900,9 @@ export function ChatView({
         {/* Provider-not-ready overlay */}
         {!ready && !busy && (
           <div className="gcp-not-ready-overlay">
-            <span className="gcp-not-ready-label">Configure a provider in Settings</span>
+            <span className="gcp-not-ready-label">{readinessReason(settings, codexLoggedIn)}</span>
             <button
+              ref={setupRef}
               className="gcp-cta-btn"
               onClick={onOpenSettings}
               aria-label="Open settings to configure a provider"

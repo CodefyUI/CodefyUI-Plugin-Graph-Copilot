@@ -14,6 +14,17 @@ describe('Fab', () => {
     expect(btn.querySelector('svg')).toBeTruthy();
   });
 
+  it('exposes panel expansion, controlled id, and focus ref', () => {
+    const ref = React.createRef<HTMLButtonElement>();
+    const { rerender } = render(<Fab onClick={vi.fn()} expanded controls="panel-id" buttonRef={ref} />);
+    const btn = screen.getByRole('button', { name: 'Graph Copilot' });
+    expect(btn).toHaveAttribute('aria-expanded', 'true');
+    expect(btn).toHaveAttribute('aria-controls', 'panel-id');
+    expect(ref.current).toBe(btn);
+    rerender(<Fab onClick={vi.fn()} expanded={false} controls="panel-id" buttonRef={ref} />);
+    expect(btn).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('calls onClick when clicked', async () => {
     const onClick = vi.fn();
     render(<Fab onClick={onClick} />);

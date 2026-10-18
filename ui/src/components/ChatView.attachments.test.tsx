@@ -121,11 +121,11 @@ describe('ChatView attachments', () => {
 
     // Loading chip
     expect(await screen.findByText('a.txt')).toBeInTheDocument();
-    expect(screen.getByText(/reading/i)).toBeInTheDocument();
+    expect(screen.getByText('reading…')).toBeInTheDocument();
 
     // Resolve the read -> ready chip (size shown)
     await act(async () => { resolveRead(makeAtt()); });
-    await waitFor(() => expect(screen.queryByText(/reading/i)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('reading…')).not.toBeInTheDocument());
   });
 
   it('send is disabled while a file is still loading', async () => {
@@ -197,6 +197,6 @@ describe('ChatView attachments', () => {
     });
 
     expect(await screen.findByText('big.png')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/failed/i)).toBeInTheDocument());
+    expect(await screen.findByText('too large')).toBeVisible();
   });
 });

@@ -25,6 +25,7 @@ vi.mock('../state/attachments', async (importOriginal) => {
 
 import { runTurn } from '../agent/loop';
 import type { RunTurnOpts } from '../agent/loop';
+import type { TurnResult } from '../agent/types';
 import { PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { readFileAsAttachment } from '../state/attachments';
 import { ChatView } from './ChatView';
@@ -77,7 +78,7 @@ describe('ChatView interactions', () => {
     let capturedSignal: AbortSignal | undefined;
     vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
       capturedSignal = opts.signal;
-      return new Promise<void>(() => {}); // never resolves -> stays busy
+      return new Promise(() => {}); // never resolves -> stays busy
     });
     renderChatView(makeFakeApi());
     const textarea = screen.getByRole('textbox', { name: /message input/i });
@@ -94,7 +95,7 @@ describe('ChatView interactions', () => {
     let capturedSignal: AbortSignal | undefined;
     vi.mocked(runTurn).mockImplementation((opts: RunTurnOpts) => {
       capturedSignal = opts.signal;
-      return new Promise<void>(() => {});
+      return new Promise<TurnResult>(() => {});
     });
     const view = renderChatView(makeFakeApi());
     const textarea = screen.getByRole('textbox', { name: /message input/i });
@@ -160,7 +161,11 @@ describe('ChatView interactions', () => {
     const file = new File(['x'], 'bad.txt', { type: 'text/plain' });
 
     fireEvent.paste(textarea, { clipboardData: { types: ['Files'], files: [file] } });
-    expect(await screen.findByText(/failed/i)).toBeTruthy();
+    expect(await screen.findByText('too big')).toBeVisible();
+    fireEvent.change(textarea, { target: { value: 'Read this' } });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(runTurn).not.toHaveBeenCalled();
   });
 
   it('offers a previous-conversations shortcut on the welcome screen', () => {

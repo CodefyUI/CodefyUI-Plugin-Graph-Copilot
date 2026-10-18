@@ -1,26 +1,41 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import { DEFAULT_SETTINGS } from '../state/settings';
 import type { Conversation } from '../state/conversations';
 
-// Stub the three child views so these tests focus on ChatWindow's own
-// header + view-switching logic (each child is covered by its own suite).
+// Stub child views so these tests focus on ChatWindow's workbench and lifecycle.
+// Each child is covered by its own suite.
+const chatViewCalls = vi.hoisted(() => vi.fn());
+const detachRun = vi.hoisted(() => vi.fn());
 vi.mock('./ChatView', () => ({
-  ChatView: (props: { onOpenSettings: () => void; onOpenHistory: () => void }) => (
-    <div data-testid="chatview">
-      <button onClick={props.onOpenSettings}>chatview-open-settings</button>
-      <button onClick={props.onOpenHistory}>chatview-open-history</button>
-    </div>
-  ),
+  ChatView: (props: {
+    onOpenSettings: () => void;
+    onOpenHistory: () => void;
+    onSettingsChange: (s: Settings) => void;
+    onDetachReady: (detach: () => void) => void;
+    onBusyChange: (busy: boolean) => void;
+    active: boolean;
+  }) => {
+    chatViewCalls(props);
+    React.useLayoutEffect(() => { props.onDetachReady(detachRun); }, [props.onDetachReady]);
+    return (
+      <div data-testid="chatview" data-active={props.active}>
+        <button onClick={props.onOpenSettings}>chatview-open-settings</button>
+        <button onClick={props.onOpenHistory}>chatview-open-history</button>
+        <button onClick={() => props.onBusyChange(true)}>chatview-start-run</button>
+        <button onClick={() => props.onBusyChange(false)}>chatview-settle-run</button>
+      </div>
+    );
+  },
 }));
 vi.mock('./HistoryView', () => ({
-  HistoryView: (props: { onResume: (c: { id: string }) => void; onNew: () => void }) => (
+  HistoryView: (props: { onResume: (c: { id: string }) => void; onNew: () => void; disabled: boolean }) => (
     <div data-testid="historyview">
-      <button onClick={() => props.onResume({ id: 'resumed' })}>history-resume</button>
-      <button onClick={props.onNew}>history-new</button>
+      <button disabled={props.disabled} onClick={() => props.onResume({ id: 'resumed' })}>history-resume</button>
+      <button disabled={props.disabled} onClick={props.onNew}>history-new</button>
     </div>
   ),
 }));
@@ -97,7 +112,8 @@ describe('ChatWindow', () => {
     renderWindow();
     fireEvent.click(screen.getByRole('button', { name: /experiments lab/i }));
     expect(screen.getByTestId('experimentsview')).toBeTruthy();
-    expect(screen.queryByTestId('chatview')).toBeNull();
+    expect(screen.getByTestId('chatview')).not.toBeVisible();
+    expect(screen.getByTestId('chatview')).toHaveAttribute('data-active', 'false');
   });
 
   it('switches between compact and expanded panel modes', () => {
@@ -137,6 +153,39 @@ describe('ChatWindow', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('refreshes current graph counts from host changes and clears unavailable data', () => {
+    const getGraph = vi.fn().mockReturnValue({ nodes: [{ id: '1' }], edges: [] });
+    const onGraphChanged = vi.fn().mockReturnValue(vi.fn());
+    const api = { apiVersion: 1, graph: { getGraph, onGraphChanged } } as unknown as CodefyUIPluginAPI;
+    renderWindow({ api });
+    const context = screen.getByLabelText('Current graph context');
+    const refresh = onGraphChanged.mock.calls[0][0] as () => void;
+    expect(context).toHaveTextContent('1 nodes');
+
+    getGraph.mockReturnValue({ nodes: [{ id: '1' }, { id: '2' }], edges: [{ id: 'edge' }] });
+    act(() => refresh());
+    expect(context).toHaveTextContent('2 nodes');
+    expect(context).toHaveTextContent('1 edges');
+
+    getGraph.mockImplementation(() => { throw new Error('graph unavailable'); });
+    act(() => refresh());
+    expect(context).toHaveTextContent('0 nodes');
+    expect(context.querySelector('.gcp-live-indicator')).not.toHaveClass('online');
+  });
+
+  it('keeps navigation usable without optional graph APIs or a readable version', () => {
+    const api = {
+      graph: { getGraph: () => ({ nodes: null, edges: null }), onGraphChanged: () => { throw new Error('listener unavailable'); } },
+    } as unknown as CodefyUIPluginAPI;
+    renderWindow({ api });
+    const context = screen.getByLabelText('Current graph context');
+    expect(context).toHaveTextContent('0 nodes');
+    expect(context).toHaveTextContent('0 edges');
+    expect(context).toHaveTextContent('API legacy');
+    fireEvent.click(screen.getByRole('button', { name: 'Experiments lab' }));
+    expect(screen.getByTestId('experimentsview')).toBeVisible();
+  });
+
   it('opens settings and history from ChatView callbacks', () => {
     renderWindow();
     fireEvent.click(screen.getByText('chatview-open-settings'));
@@ -161,6 +210,80 @@ describe('ChatWindow', () => {
     fireEvent.click(screen.getByText('history-new'));
     expect(props.onNewConversation).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('chatview')).toBeTruthy();
+  });
+
+  it('forwards effort settings changes and passive detach registration', () => {
+    const props = renderWindow({ onDetachReady: vi.fn() });
+    const chatProps = chatViewCalls.mock.calls.at(-1)![0];
+    expect(chatProps.onSettingsChange).toBe(props.onSettingsChange);
+    expect(chatProps.active).toBe(true);
+    expect(props.onDetachReady).toHaveBeenCalledWith(detachRun);
+  });
+
+  it.each(['Settings', 'Conversation history', 'Experiments lab', 'Active model — open settings', 'Close panel'])
+    ('synchronously detaches work when leaving chat using %s', (name) => {
+      renderWindow();
+      fireEvent.click(screen.getByRole('button', { name }));
+      expect(detachRun).toHaveBeenCalledTimes(1);
+    });
+
+  it('blocks History mutations until the detached browser owner settles', () => {
+    const props = renderWindow();
+    fireEvent.click(screen.getByText('chatview-start-run'));
+    fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
+    expect(screen.getByText('history-resume')).toBeDisabled();
+    expect(screen.getByText('history-new')).toBeDisabled();
+    fireEvent.click(screen.getByText('history-new'));
+    expect(props.onNewConversation).not.toHaveBeenCalled();
+
+    // Guard callbacks themselves, not just native disabled controls.
+    const newButton = screen.getByText('history-new') as HTMLButtonElement;
+    const resumeButton = screen.getByText('history-resume') as HTMLButtonElement;
+    newButton.disabled = false;
+    resumeButton.disabled = false;
+    fireEvent.click(newButton);
+    fireEvent.click(resumeButton);
+    expect(props.onNewConversation).not.toHaveBeenCalled();
+    expect(props.onResumeConversation).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('chatview-settle-run'));
+    expect(screen.getByText('history-new')).toBeEnabled();
+    fireEvent.click(screen.getByText('history-new'));
+    expect(props.onNewConversation).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('chatview')).toBeVisible();
+  });
+
+  it('keeps ChatView mounted while hidden and unmounts inactive secondary views', () => {
+    const props = renderWindowProps({ panelId: 'workbench-panel' });
+    const { rerender } = render(<ChatWindow {...props} />);
+    const chat = screen.getByTestId('chatview');
+    expect(screen.getByRole('dialog')).toHaveAttribute('id', 'workbench-panel');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(chat).not.toBeVisible();
+    expect(screen.getByTestId('settingsview')).toBeVisible();
+
+    rerender(<ChatWindow {...props} open={false} />);
+    expect(chat).toBeInTheDocument();
+    expect(screen.queryByTestId('settingsview')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    rerender(<ChatWindow {...props} open />);
+    fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
+    expect(screen.getByTestId('chatview')).toBe(chat);
+    expect(chat).toBeVisible();
+  });
+
+  it('focuses secondary content, handles Escape, and ignores composing Escape', () => {
+    const props = renderWindow();
+    fireEvent.click(screen.getByRole('button', { name: 'Experiments lab' }));
+    const content = screen.getByRole('main');
+    expect(content).toHaveFocus();
+    detachRun.mockClear();
+    fireEvent.keyDown(content, { key: 'Escape', isComposing: true });
+    expect(props.onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(content, { key: 'Escape' });
+    expect(detachRun).toHaveBeenCalledTimes(1);
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it('calls onClose when the close button is clicked', () => {

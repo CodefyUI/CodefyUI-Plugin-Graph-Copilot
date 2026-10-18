@@ -8,8 +8,10 @@ import {
   loadSettings,
   saveSettings,
   providerReady,
+  readinessReason,
   activeReasoningEffort,
   withReasoningEffort,
+  reconcileModelCatalogSettings,
 } from './settings';
 import type { Settings } from './settings';
 
@@ -119,6 +121,43 @@ describe('loadSettings', () => {
 // ---------------------------------------------------------------------------
 
 describe('providerReady', () => {
+  it.each(['openai', 'openrouter', 'anthropic', 'openai-codex', 'custom'] as const)('requires a trimmed model for %s', (provider) => {
+    const s: Settings = {
+      ...DEFAULT_SETTINGS, provider, models: { [provider]: ' \n\t ' },
+      apiKeys: { openai: 'key', openrouter: 'key', anthropic: 'key' }, customBaseUrl: 'http://localhost/v1',
+    };
+    expect(providerReady(s, true)).toBe(false);
+    expect(readinessReason(s, true)).toMatch(/model id/i);
+    expect(providerReady({ ...s, models: { [provider]: ' model ' } }, true)).toBe(true);
+  });
+
+  it.each(['openai', 'openrouter', 'anthropic'] as const)('requires a non-whitespace key for %s and gives specific guidance', (provider) => {
+    const s: Settings = { ...DEFAULT_SETTINGS, provider, models: { [provider]: 'model' }, apiKeys: { [provider]: ' \t ' } };
+    expect(providerReady(s, false)).toBe(false);
+    expect(readinessReason(s, false)).toMatch(/api key/i);
+    expect(readinessReason({ ...s, apiKeys: { [provider]: ' key ' } }, false)).toBeNull();
+  });
+
+  it('requires a trimmed custom base URL but keeps the custom API key optional', () => {
+    const s: Settings = { ...DEFAULT_SETTINGS, provider: 'custom', models: { custom: 'local' }, customBaseUrl: '  \n ' };
+    expect(providerReady(s, false)).toBe(false);
+    expect(readinessReason(s, false)).toMatch(/base url/i);
+    expect(providerReady({ ...s, customBaseUrl: ' http://localhost/v1 ', apiKeys: { custom: ' ' } }, false)).toBe(true);
+  });
+
+  it('gives a sign-in reason only after a Codex model is selected', () => {
+    const s: Settings = { ...DEFAULT_SETTINGS, provider: 'openai-codex' };
+    expect(readinessReason(s, false)).toMatch(/sign in/i);
+    expect(readinessReason(s, true)).toBeNull();
+  });
+
+  it('fails closed on unknown persisted providers and non-string required fields', () => {
+    expect(providerReady({ ...DEFAULT_SETTINGS, provider: 'unknown' } as unknown as Settings, true)).toBe(false);
+    expect(readinessReason({ ...DEFAULT_SETTINGS, provider: 'unknown' } as unknown as Settings, true)).toMatch(/provider/i);
+    expect(providerReady({ ...DEFAULT_SETTINGS, models: { openai: 123 } } as unknown as Settings, false)).toBe(false);
+    expect(providerReady({ ...DEFAULT_SETTINGS, apiKeys: { openai: {} } } as unknown as Settings, false)).toBe(false);
+  });
+
   it('openai requires apiKeys.openai', () => {
     const s: Settings = { ...DEFAULT_SETTINGS, provider: 'openai', apiKeys: {} };
     expect(providerReady(s, false)).toBe(false);
@@ -134,7 +173,7 @@ describe('providerReady', () => {
   });
 
   it('openrouter requires apiKeys.openrouter', () => {
-    const s: Settings = { ...DEFAULT_SETTINGS, provider: 'openrouter', apiKeys: {} };
+    const s: Settings = { ...DEFAULT_SETTINGS, provider: 'openrouter', models: { openrouter: 'provider/model' }, apiKeys: {} };
     expect(providerReady(s, false)).toBe(false);
     const s2: Settings = { ...s, apiKeys: { openrouter: 'sk-or-test' } };
     expect(providerReady(s2, false)).toBe(true);
@@ -147,7 +186,7 @@ describe('providerReady', () => {
   });
 
   it('custom requires customBaseUrl', () => {
-    const s: Settings = { ...DEFAULT_SETTINGS, provider: 'custom', customBaseUrl: '' };
+    const s: Settings = { ...DEFAULT_SETTINGS, provider: 'custom', models: { custom: 'local-model' }, customBaseUrl: '' };
     expect(providerReady(s, false)).toBe(false);
     const s2: Settings = { ...s, customBaseUrl: 'http://127.0.0.1:11434/v1' };
     expect(providerReady(s2, false)).toBe(true);
@@ -203,6 +242,55 @@ describe('activeReasoningEffort', () => {
       providerCapabilities: { 'openai-codex': { reasoningEffort: true } },
     };
 
+    expect(activeReasoningEffort(s)).toBeUndefined();
+  });
+});
+
+describe('malformed persisted model identities', () => {
+  const malformedModels: unknown[] = [123, false, null, {}, [], undefined];
+
+  it.each(malformedModels)('reconciles %j without throwing or enabling effort', (model) => {
+    const api = makeApi();
+    api.storage.set('settings', JSON.stringify({
+      provider: 'openai',
+      models: { openai: model },
+      apiKeys: { openai: 'fixture-key' },
+      reasoningEfforts: { openai: 'max' },
+    }));
+    const s = loadSettings(api);
+    // Explicitly missing entries can also occur in caller-supplied legacy Settings.
+    if (model === undefined) s.models = {};
+    const next = reconcileModelCatalogSettings(s, 'openai', [], {
+      reasoningEffort: true,
+      richModelCatalog: true,
+    }, 'live');
+    expect(next.models).toEqual(s.models); // do not silently migrate a pinned model
+    expect(next.reasoningEfforts?.openai).toBe('max');
+    expect(next.providerCapabilities?.openai?.reasoningModel).toBeUndefined();
+    expect(activeReasoningEffort(next)).toBeUndefined();
+    expect(providerReady(next, true)).toBe(false);
+  });
+
+  it.each(malformedModels)('keeps an effort preference for %j without stamping a malformed model', (model) => {
+    const s = {
+      ...DEFAULT_SETTINGS,
+      models: { openai: model },
+      reasoningEfforts: { openai: 'low' },
+      providerCapabilities: { openai: { reasoningEffort: true } },
+    } as unknown as Settings;
+    const next = withReasoningEffort(s, 'openai', 'max');
+    expect(next.reasoningEfforts?.openai).toBe('max');
+    expect(next.providerCapabilities?.openai?.reasoningModel).toBeUndefined();
+    expect(activeReasoningEffort(next)).toBeUndefined();
+  });
+
+  it('does not enable effort when both model and capability carry the same corrupt identity', () => {
+    const s = {
+      ...DEFAULT_SETTINGS,
+      models: { openai: 123 },
+      reasoningEfforts: { openai: 'max' },
+      providerCapabilities: { openai: { reasoningEffort: true, reasoningModel: 123 } },
+    } as unknown as Settings;
     expect(activeReasoningEffort(s)).toBeUndefined();
   });
 });

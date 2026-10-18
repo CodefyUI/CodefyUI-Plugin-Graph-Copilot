@@ -6,6 +6,7 @@
  */
 let generation = 0;
 let requestSequence = 0;
+let pendingLogoutGeneration: number | null = null;
 let pending: {
   generation: number;
   sequence: number;
@@ -20,7 +21,22 @@ export function invalidateCodexStatusGeneration(): number {
   generation += 1;
   requestSequence += 1;
   pending = null;
+  pendingLogoutGeneration = null;
   return generation;
+}
+
+/** Invalidate older snapshots and suppress status reads until this logout settles. */
+export function beginCodexLogout(): number {
+  const epoch = invalidateCodexStatusGeneration();
+  pendingLogoutGeneration = epoch;
+  return epoch;
+}
+
+/** Release only this logout's block; a newer auth action or logout wins. */
+export function finishCodexLogout(epoch: number): void {
+  if (pendingLogoutGeneration === epoch && generation === epoch) {
+    invalidateCodexStatusGeneration();
+  }
 }
 
 export function isCurrentCodexStatusGeneration(candidate: number): boolean {
@@ -33,6 +49,7 @@ export function isCurrentCodexStatusGeneration(candidate: number): boolean {
  */
 export async function coordinatedCodexStatus<T>(reader: () => Promise<T>): Promise<T | null> {
   const requestGeneration = generation;
+  if (pendingLogoutGeneration === requestGeneration) return null;
   let request = pending;
   if (request === null || request.generation !== requestGeneration) {
     request = {

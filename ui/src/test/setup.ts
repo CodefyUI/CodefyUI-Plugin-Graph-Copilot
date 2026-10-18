@@ -3,6 +3,7 @@ import { expect, afterEach } from 'vitest';
 import * as jestDomMatchers from '@testing-library/jest-dom/matchers';
 import { cleanup } from '@testing-library/react';
 
+// React 19 needs the same act environment for direct act() and RTL helpers.
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
