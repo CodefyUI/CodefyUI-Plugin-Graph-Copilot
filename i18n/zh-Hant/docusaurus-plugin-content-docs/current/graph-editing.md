@@ -54,12 +54,14 @@ sidebar_label: 圖編輯
 
 `clear_graph` 必須是批次的**唯一操作**。清空混合新增／連線／排版會拒絕且不修改，不默默拆批。
 
+清空、即時執行及研究決策使用原生 **document-modal dialog**（`ConfirmDialog`）；工作台本身仍為 non-modal。初始焦點位於安全的拒絕動作：**Keep graph** 或 **Cancel**。Escape 只拒絕最上層決策，工作台保持開啟。關閉 dialog 不代表核准；執行仍需明確核准。
+
 - 一次性確認綁定 **Agent turn、工具呼叫與完整未截短圖快照**。
 - 派送前再檢查核准。確認期間圖變更會使核准失效，turn 以 incomplete 結束，需新確認。
 - **Keep graph** 拒絕清空並結束 turn；不得改用逐節點移除繞過。
 - Stop、離開聊天到 Settings／History／Experiment Lab，或關閉面板會取消待核准要求。
 
-即時執行／研究核准與清空確認分開。核准卡審查圖／候選、上限與副作用；核准一項不代表授權另一項。即時執行在 session bootstrap 後及提交前，再檢查已核准圖快照與身分；過期核准不能授權另一張圖。
+即時執行／研究核准與清空確認分開。核准 dialog 審查圖／候選、上限與副作用；核准一項不代表授權另一項。即時執行在 session bootstrap 後及提交前，再檢查已核准圖快照與身分；過期核准不能授權另一張圖。
 
 ## 閱讀進度與結果
 

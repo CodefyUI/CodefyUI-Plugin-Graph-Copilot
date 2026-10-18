@@ -10,11 +10,11 @@ const config: Config = {
   favicon: 'img/logo.svg',
 
   // Production URL and base path for GitHub Pages.
-  url: 'https://treeleaves30760.github.io',
+  url: 'https://codefyui.github.io',
   baseUrl: '/CodefyUI-Plugin-Graph-Copilot/',
 
   // GitHub Pages deployment config.
-  organizationName: 'treeleaves30760',
+  organizationName: 'CodefyUI',
   projectName: 'CodefyUI-Plugin-Graph-Copilot',
 
   onBrokenLinks: 'throw',
@@ -38,7 +38,7 @@ const config: Config = {
           routeBasePath: '/',
           // "Edit this page" links resolve to docs/<file> at the repo root.
           editUrl:
-            'https://github.com/treeleaves30760/CodefyUI-Plugin-Graph-Copilot/tree/main/',
+            'https://github.com/CodefyUI/CodefyUI-Plugin-Graph-Copilot/tree/main/',
         },
         blog: false,
         theme: {
@@ -61,7 +61,7 @@ const config: Config = {
       },
       items: [
         {
-          href: 'https://github.com/treeleaves30760/CodefyUI-Plugin-Graph-Copilot',
+          href: 'https://github.com/CodefyUI/CodefyUI-Plugin-Graph-Copilot',
           label: 'GitHub',
           position: 'right',
         },
@@ -87,11 +87,11 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/treeleaves30760/CodefyUI-Plugin-Graph-Copilot',
+              href: 'https://github.com/CodefyUI/CodefyUI-Plugin-Graph-Copilot',
             },
             {
               label: 'CodefyUI',
-              href: 'https://github.com/treeleaves30760/CodefyUI-Plugin-Official',
+              href: 'https://github.com/CodefyUI/CodefyUI',
             },
           ],
         },

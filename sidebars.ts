@@ -38,7 +38,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Reference',
       collapsed: false,
-      items: ['architecture', 'backend-agent-contract', 'roadmap', 'development'],
+      items: ['architecture', 'backend-agent-contract', 'roadmap', 'development', 'design-review'],
     },
   ],
 };

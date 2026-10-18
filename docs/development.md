@@ -102,5 +102,5 @@ Root `pnpm build` builds documentation; `pnpm --dir ui build` builds the plugin.
 
 ## Continuous integration
 
-- **`ci.yml`** uses Node 22 / pnpm 10. Its UI job runs Vitest coverage, typechecks/rebuilds the bundle, and rejects stale committed `frontend/`. A separate root docs job runs `pnpm typecheck` and builds English/Traditional Chinese. It does not currently run `test:e2e` or live-provider tests.
+- **`ci.yml`** uses Node 22 / pnpm 10. Its UI job runs Vitest coverage, typechecks/rebuilds the bundle, and rejects stale committed `frontend/`. The separate browser job installs Playwright-pinned Chromium with system dependencies, builds the plugin, and runs the full isolated `test:e2e` suite with two workers; failure reports, screenshots, and traces are retained for seven days. A separate root docs job runs `pnpm typecheck` and builds English/Traditional Chinese. Real-provider tests remain a separate, explicitly authorized opt-in, not part of this CI workflow.
 - **`deploy-docs.yml`** builds both locales on Node 22 / pnpm 10, checks documentation changes on pull requests, and deploys relevant pushes to `main` (or manual runs) to GitHub Pages.

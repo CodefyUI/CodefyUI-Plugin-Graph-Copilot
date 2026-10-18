@@ -21,11 +21,11 @@
   },
   "link.item.label.GitHub": {
     "message": "GitHub",
-    "description": "The label of footer link with label=GitHub linking to https://github.com/treeleaves30760/CodefyUI-Plugin-Graph-Copilot"
+    "description": "The label of footer link with label=GitHub linking to https://github.com/CodefyUI/CodefyUI-Plugin-Graph-Copilot"
   },
   "link.item.label.CodefyUI": {
     "message": "CodefyUI",
-    "description": "The label of footer link with label=CodefyUI linking to https://github.com/treeleaves30760/CodefyUI-Plugin-Official"
+    "description": "The label of footer link with label=CodefyUI linking to https://github.com/CodefyUI/CodefyUI"
   },
   "copyright": {
     "message": "Copyright © 2026 treeleaves30760 · MIT 授權 · 以 Docusaurus 建置。",

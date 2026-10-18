@@ -7,9 +7,13 @@
     "message": "開始使用",
     "description": "The label for category 'Getting Started' in sidebar 'docsSidebar'"
   },
-  "sidebar.docsSidebar.category.Using Graph Copilot": {
-    "message": "使用 Graph Copilot",
-    "description": "The label for category 'Using Graph Copilot' in sidebar 'docsSidebar'"
+  "sidebar.docsSidebar.category.Agent Workbench": {
+    "message": "Agent 工作台",
+    "description": "The label for category 'Agent Workbench' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Paper Reproductions": {
+    "message": "論文重現",
+    "description": "The label for category 'Paper Reproductions' in sidebar 'docsSidebar'"
   },
   "sidebar.docsSidebar.category.Reference": {
     "message": "參考",

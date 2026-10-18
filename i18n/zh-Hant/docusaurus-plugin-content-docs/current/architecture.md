@@ -117,7 +117,7 @@ Portable study 包含 redacted baseline、captured redacted GraphOps、scalar ev
 Edit 下 run／train／evaluate 要求可執行**即時畫布圖**並帶真實副作用：
 
 1. 伺服器結構驗證通過；
-2. 防圖變更的核准卡審查數量、節點型別、時間上限與副作用；session bootstrap 後及送出 execute frame 前，再檢查已核准圖快照與身分；
+2. 防圖變更的核准 dialog 審查數量、節點型別、時間上限與副作用；session bootstrap 後及送出 execute frame 前，再檢查已核准圖快照與身分；
 3. `/ws/execution` 串流節點狀態、訓練進度／loss 與新版宿主指標；
 4. 工具記錄宿主結果、逐節點 scalar／string 輸出、最終進度、指標／log 尾端、節點錯誤與支援的 media 參照／預覽。
 
@@ -131,7 +131,7 @@ Composer 的 **Stop** 與 timeout 仍要求取消並等待原生清理證據。�
 
 提供 `/api/runs` 的宿主讓 `list_runs`／`get_run` 讀編輯器啟動的執行。Reattach 卡以 cursor／long polling 追蹤 `GET /api/runs/{id}/events`，沿用 `wireOutputs` 正規化器，顯示狀態／loss、人手 **Stop run**（`POST /api/runs/{id}/cancel`），或離開期間完成的 `final_metrics`。Dismiss 只隱藏卡片並停止追蹤，不清除活動執行的 reservation。摘要提示只填 composer，不自動送出。
 
-活動中或狀態未確認的追蹤 run 都會阻止另一即時提交。未知連線錯誤、授權失敗與無法讀取的紀錄保留 pointer，不假定執行已停止；只有權威終態或執行不存在的證據才允許清除。介面會 feature-detect；沒有 `/api/runs` 回報 unavailable。Settings → Notifications（預設開啟）在取得瀏覽器權限後，可通知隱藏分頁追蹤執行完成；detach 不發送完成通知。Reattach 是宿主 run recovery，不是 durable study 協調。
+活動中或狀態未確認的追蹤 run 都會阻止另一即時提交。未知連線錯誤、授權失敗與無法讀取的紀錄保留 pointer，不假定執行已停止；只有權威終態或執行不存在的證據才允許清除。介面會 feature-detect；沒有 `/api/runs` 回報 unavailable。**Settings → Behavior** 下的背景執行完成通知設定（預設開啟）在取得瀏覽器權限後，可通知隱藏分頁追蹤執行完成；detach 不發送完成通知。Reattach 是宿主 run recovery，不是 durable study 協調。
 
 ## CodefyUI 契約邊界
 

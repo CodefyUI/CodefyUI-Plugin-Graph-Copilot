@@ -2,7 +2,7 @@
 
 Graph Copilot is a frontend plugin that adds an AI workbench to the CodefyUI editor. It can construct and revise node graphs, run bounded experiments on isolated graph variants, rank measured metrics, safely promote a parameter-only winner, and help turn observations into testable research questions. **Edit** is the default mode; **Ask** provides executor-enforced read-only guidance.
 
-[Documentation](https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/) · [Architecture](docs/architecture.md) · [Graph editing](docs/graph-editing.md) · [Experiments and research](docs/experiments-and-research.md) · [Backend agent contract](docs/backend-agent-contract.md) · [Roadmap](docs/roadmap.md)
+[Documentation](https://codefyui.github.io/CodefyUI-Plugin-Graph-Copilot/) · [Architecture](docs/architecture.md) · [Graph editing](docs/graph-editing.md) · [Experiments and research](docs/experiments-and-research.md) · [Backend agent contract](docs/backend-agent-contract.md) · [Roadmap](docs/roadmap.md)
 
 ## What it can do
 
@@ -79,10 +79,16 @@ For study design, metric selection, portable evidence, reproducibility, and resp
 - A supported remote provider, ChatGPT Codex login, or OpenAI-compatible local endpoint.
 
 ```bash
-cdui plugin install treeleaves30760/CodefyUI-Plugin-Graph-Copilot
+cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 ```
 
-Reload the CodefyUI browser tab. The Graph Copilot button appears in the editor.
+This unpinned command installs the latest merged `main` commit, including the prebuilt UI (**0.4.0**). Existing users must update explicitly:
+
+```bash
+cdui plugin update graph-copilot
+```
+
+Reload the CodefyUI browser tab afterward. Pinned tags/commits/branches continue to follow their saved ref; see [Installation and updates](docs/installation.md) to switch back to latest `main`. There is no automatic update of already-installed copies.
 
 ## Provider setup and data handling
 
@@ -136,7 +142,7 @@ MIT
 
 Graph Copilot 是 CodefyUI 編輯器的前端 AI 工作台：建構與修改節點圖、在隔離候選圖上執行有上限的實驗、依量測指標排名、安全套用純參數贏家，並把觀察整理成可驗證的研究問題。預設為 **Edit**；**Ask** 由執行層強制唯讀。
 
-[完整文件](https://treeleaves30760.github.io/CodefyUI-Plugin-Graph-Copilot/zh-Hant/) · [架構](i18n/zh-Hant/docusaurus-plugin-content-docs/current/architecture.md) · [圖編輯](i18n/zh-Hant/docusaurus-plugin-content-docs/current/graph-editing.md) · [實驗與研究](i18n/zh-Hant/docusaurus-plugin-content-docs/current/experiments-and-research.md) · [後端 Agent 契約](i18n/zh-Hant/docusaurus-plugin-content-docs/current/backend-agent-contract.md) · [路線圖](i18n/zh-Hant/docusaurus-plugin-content-docs/current/roadmap.md)
+[完整文件](https://codefyui.github.io/CodefyUI-Plugin-Graph-Copilot/zh-Hant/) · [架構](i18n/zh-Hant/docusaurus-plugin-content-docs/current/architecture.md) · [圖編輯](i18n/zh-Hant/docusaurus-plugin-content-docs/current/graph-editing.md) · [實驗與研究](i18n/zh-Hant/docusaurus-plugin-content-docs/current/experiments-and-research.md) · [後端 Agent 契約](i18n/zh-Hant/docusaurus-plugin-content-docs/current/backend-agent-contract.md) · [路線圖](i18n/zh-Hant/docusaurus-plugin-content-docs/current/roadmap.md)
 
 ## 功能
 
@@ -213,10 +219,16 @@ Manifest 的 **CodefyUI 1.3.0+** 要求涵蓋基礎前端 API 與後端端點；
 - 支援的遠端 provider、ChatGPT Codex 登入或 OpenAI 相容本機端點。
 
 ```bash
-cdui plugin install treeleaves30760/CodefyUI-Plugin-Graph-Copilot
+cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 ```
 
-重整 CodefyUI 瀏覽器分頁後，即可看到 Graph Copilot 按鈕。
+此未指定 ref 的指令會安裝最新已合併的 `main` commit，包含預編譯 UI（**0.4.0**）。既有使用者需明確更新：
+
+```bash
+cdui plugin update graph-copilot
+```
+
+完成後重新整理 CodefyUI 分頁。已固定 tag／commit／分支的安裝仍跟隨保存的 ref；切回最新 `main` 的方式見[安裝與更新](i18n/zh-Hant/docusaurus-plugin-content-docs/current/installation.md)。既有安裝不會自動升級。
 
 ## 供應商與資料處理
 

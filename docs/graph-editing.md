@@ -54,12 +54,14 @@ Results are matched using **`OpResult.index`**, not array position. Missing, dup
 
 `clear_graph` must be the **only operation in its batch**. A mixed clear-plus-add/connect/layout batch is rejected without changes, not silently split.
 
+Clear, live-run, and study decisions use native **document-modal dialogs** (`ConfirmDialog`); the workbench itself remains non-modal. Initial focus goes to the safe decline action: **Keep graph** or **Cancel**. Escape declines only the topmost decision and keeps the workbench open. Dismissing a dialog is not approval; execution still requires explicit approval.
+
 - The panel asks for one-time confirmation bound to the **agent turn, tool call, and full, untruncated graph snapshot**.
 - Approval is checked again immediately before dispatch. If the graph changed while you were deciding, confirmation is invalid and the turn ends incomplete; a fresh confirmation is required.
 - **Keep graph** declines the clear and ends the turn. The assistant must not bypass refusal by removing nodes individually.
 - Stop, leaving chat for Settings/History/Experiment Lab, or closing the panel cancels pending approval.
 
-Live execution and study approval are separate from clear confirmation. Their cards review the submitted graph/candidates, limits, and side-effect warning; approving one does not authorize another. For live execution, the approved graph snapshot and identity are checked again after session bootstrap and immediately before submission; changed approval cannot authorize a different graph.
+Live execution and study approval are separate from clear confirmation. Their dialogs review the submitted graph/candidates, limits, and side-effect warning; approving one does not authorize another. For live execution, the approved graph snapshot and identity are checked again after session bootstrap and immediately before submission; changed approval cannot authorize a different graph.
 
 ## Reading progress and results
 
