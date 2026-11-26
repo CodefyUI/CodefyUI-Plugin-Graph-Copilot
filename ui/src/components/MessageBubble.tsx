@@ -1,6 +1,7 @@
 import React, { useId, useState } from 'react';
 import type { ChatTurn } from '../state/conversations';
 import type { AttachmentKind } from '../state/attachments';
+import { currentLocale, translate } from '../i18n';
 import type { ToolStage } from './turnStages';
 import { describeStage, formatDuration } from './turnStages';
 import { Markdown } from './markdown';
@@ -182,6 +183,7 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   // Tool turns are never rendered standalone (they fold into stages)
   if (turn.role === 'tool') return null;
+  const t = translate.bind(null, currentLocale());
 
   const isUser = turn.role === 'user';
   const displayText = streaming && streamingText !== undefined ? streamingText : turn.content;
@@ -206,6 +208,15 @@ export function MessageBubble({
             ),
           )}
         </div>
+      )}
+
+      {/* Skills invoked with /name: a tag, never the skill's text */}
+      {isUser && (turn.skills?.length ?? 0) > 0 && (
+        <ul className="gcp-skill-tags in-transcript" aria-label={t('tags.label')}>
+          {turn.skills!.map((skill) => (
+            <li key={skill.id} className="gcp-skill-tag invoked">{t('tags.invoked', { name: skill.name })}</li>
+          ))}
+        </ul>
       )}
 
       {/* Step marker — labels each tool-calling round of a multi-round run */}

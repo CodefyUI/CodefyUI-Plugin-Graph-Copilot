@@ -7,6 +7,10 @@ import { ExperimentsView } from './ExperimentsView';
 import { HistoryView } from './HistoryView';
 import { SettingsView } from './SettingsView';
 import { GraphMark } from './GraphMark';
+import { SkillsView } from './SkillsView';
+import type { SlashCommand } from './SlashMenu';
+import { fetchAgentContext, invalidateAgentContext, type AgentContext } from '../agent/hostContext';
+import { useT } from '../i18n';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -47,6 +51,15 @@ function GearIcon() {
   );
 }
 
+function SkillsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M9 13h6M9 16h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function ExpandIcon({ expanded }: { expanded: boolean }) {
   return expanded ? (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -71,7 +84,20 @@ function CloseIcon() {
 // Types and graph context
 // ---------------------------------------------------------------------------
 
-type View = 'chat' | 'experiments' | 'history' | 'settings';
+type View = 'chat' | 'experiments' | 'history' | 'skills' | 'settings';
+
+/** The host's agent context: undefined while unknown, null without Agent Skills. */
+function useAgentContext(api: CodefyUIPluginAPI) {
+  const [context, setContext] = useState<AgentContext | null | undefined>(undefined);
+  const refresh = useCallback((force = false) => {
+    let live = true;
+    if (force) invalidateAgentContext(api);
+    void fetchAgentContext(api, { force }).then((value) => { if (live) setContext(value); });
+    return () => { live = false; };
+  }, [api]);
+  useEffect(() => refresh(), [refresh]);
+  return { context, refresh };
+}
 type PanelMode = 'compact' | 'expanded';
 
 export interface GraphStats {
@@ -131,7 +157,9 @@ export function ChatWindow({
   panelId = 'graph-copilot-panel',
   onDetachReady,
 }: ChatWindowProps) {
+  const t = useT();
   const [view, setView] = useState<View>('chat');
+  const { context: agentContext, refresh: refreshContext } = useAgentContext(api);
   const [panelMode, setPanelMode] = useState<PanelMode>('compact');
   const [graphStats, setGraphStats] = useState<GraphStats>(() => readGraphStats(api));
   const [busy, setBusy] = useState(false);
@@ -184,11 +212,20 @@ export function ChatWindow({
     setView('chat');
   };
   const close = () => { detachRef.current?.(); onClose(); };
+  const slashCommand = (command: SlashCommand) => {
+    if (command === 'new') handleNew();
+    else if (command === 'skills') navigate('skills');
+    else if (command === 'settings') navigate('settings');
+  };
+  const skillsOn = agentContext != null;
+  useEffect(() => { if (!skillsOn && view === 'skills') setView('chat'); }, [skillsOn, view]);
 
   const navItems: Array<{ id: View; label: string; ariaLabel: string; icon: React.ReactNode }> = [
     { id: 'chat', label: 'Chat', ariaLabel: 'Agent chat', icon: <ChatIcon /> },
     { id: 'experiments', label: 'Lab', ariaLabel: 'Experiments lab', icon: <LabIcon /> },
     { id: 'history', label: 'History', ariaLabel: 'Conversation history', icon: <HistoryIcon /> },
+    // Only on a host with Agent Skills (CodefyUI with apiVersion 6).
+    ...(skillsOn ? [{ id: 'skills' as View, label: t('skills.title'), ariaLabel: t('skills.title'), icon: <SkillsIcon /> }] : []),
     { id: 'settings', label: 'Settings', ariaLabel: 'Settings', icon: <GearIcon /> },
   ];
 
@@ -270,6 +307,8 @@ export function ChatWindow({
             onDetachReady={registerDetach}
             graphContext={graphStats}
             prefill={prefill}
+            agentContext={agentContext ?? null}
+            onSlashCommand={slashCommand}
           />
         </div>
 
@@ -283,6 +322,10 @@ export function ChatWindow({
             onNew={handleNew}
             disabled={busy}
           />
+        )}
+
+        {open && view === 'skills' && skillsOn && (
+          <SkillsView api={api} onChanged={() => refreshContext(true)} />
         )}
 
         {open && view === 'settings' && (

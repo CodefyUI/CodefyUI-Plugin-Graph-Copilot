@@ -12,7 +12,7 @@ for (const width of [375, 1440]) {
         return { foreground: style.color, background: style.backgroundColor };
       });
       expect(colors).toEqual({ foreground: 'rgb(71, 85, 105)', background: 'rgb(255, 255, 255)' });
-      const composer = page.getByRole('textbox', { name: 'Message input', exact: true });
+      const composer = page.getByRole('combobox', { name: 'Message input', exact: true });
       const composerColors = await composer.evaluate((element) => {
         const style = getComputedStyle(element);
         return { foreground: style.color, background: style.backgroundColor };

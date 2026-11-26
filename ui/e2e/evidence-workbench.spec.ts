@@ -3,7 +3,7 @@ import { test, expect, readyPreview, openCopilot, snapshot, capture, actionReque
 import { expectControlContrast, expectKeyboardFocus } from './accessibility';
 
 const workbench = (page: Page) => page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message input', exact: true });
+const composer = (page: Page) => page.getByRole('combobox', { name: 'Message input', exact: true });
 
 const environments = [
   { name: 'dark-narrow', width: 375, height: 812, light: false, reducedMotion: 'no-preference' as const, forcedColors: 'none' as const },

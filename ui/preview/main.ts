@@ -7,6 +7,7 @@ import { seededConversations } from './history';
 import { seededLabEvidence } from './lab';
 import { LIGHT_HOST_TOKENS } from './hostTokens';
 import { isNativeRunScenario, scenarioById, SCENARIOS } from './scenarios';
+import { createMockSkills } from './skills';
 import type { PreviewSnapshot } from './types';
 
 const params = new URLSearchParams(window.location.search);
@@ -20,6 +21,14 @@ const nativeRun = isNativeRunScenario(scenario);
 const serverOwned = nativeRun && params.get('serverOwned') === '1';
 const lateInitialId = serverOwned && params.get('lateInitialId') === '1';
 const unreadableRunHistory = serverOwned && params.get('runHistory') === 'unreadable';
+// `host=v6`: CodefyUI with Agent Skills and the side dock (apiVersion 6).
+// `host=v5`: CodefyUI 3.2.0 (apiVersion 5, no skills, floating widget only).
+// Neither: the original apiVersion 1 fixture.
+const hostVersion = params.get('host') === 'v6' || scenario.needsSkills ? 6 : params.get('host') === 'v5' ? 5 : 1;
+const skills = hostVersion >= 6 ? createMockSkills({
+  install: params.get('skillInstall') === 'refused' ? 'refused' : 'ok',
+  instructions: scenario.instructions ?? null,
+}) : undefined;
 if (lightTokens) {
   for (const [key, value] of Object.entries(LIGHT_HOST_TOKENS)) document.documentElement.style.setProperty(key, value);
 }
@@ -42,13 +51,14 @@ const byId = <T extends HTMLElement>(id: string): T => {
 
 const graph = scenario.id === 'empty-graph' ? createSampleGraph(render, { nodes: [], edges: [] }) : createSampleGraph(render);
 const execution = createMockExecution(nativeRun, window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason), { serverOwned, lateInitialId });
-const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory });
+const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory, skills });
 
 function snapshot(): PreviewSnapshot {
   const graphState = graph.inspect();
   return {
     ready, scenario: scenario.id, entry: bundle ? 'bundle' : 'source', manual,
     serverOwned, lateInitialId, unreadableRunHistory,
+    hostVersion, skills: skills?.inspect() ?? null,
     ...graphState, ...http.inspect(), ...execution.inspect(),
     activeRun: JSON.parse(memory.get('active_run') ?? 'null') as unknown,
     conversations: JSON.parse(memory.get('conversations') ?? '[]') as unknown[],
@@ -86,7 +96,7 @@ function render(): void {
 }
 
 const api: CodefyUIPluginAPI = {
-  apiVersion: 1,
+  apiVersion: hostVersion,
   pluginId: 'graph-copilot-preview',
   ui: {
     addFloatingWidget({ id }) {

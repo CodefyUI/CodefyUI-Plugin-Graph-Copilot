@@ -31,10 +31,19 @@ export interface ChatTurn {
   /** Files attached to a user turn (images/pdf/text). Persisted for display
    *  and re-sent to the model on later turns within the history window. */
   attachments?: Attachment[];
+  /** Skills the user invoked with `/name` on this turn. The body goes to the
+   *  model with the message; the transcript shows only a skill tag. */
+  skills?: SkillInvocation[];
   /** Optional local metadata; old conversations need no migration. */
   runId?: string;
   toolOutcome?: ToolOutcome;
   runSummary?: RunSummary;
+}
+
+export interface SkillInvocation {
+  id: string;
+  name: string;
+  body: string;
 }
 
 export interface Conversation {

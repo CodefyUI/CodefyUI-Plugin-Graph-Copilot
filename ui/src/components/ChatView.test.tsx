@@ -141,7 +141,7 @@ describe('ChatView', () => {
   describe('disabled state (no provider key)', () => {
     it('textarea is disabled when provider is not ready', () => {
       renderChatView({ settings: EMPTY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       expect(textarea).toBeDisabled();
     });
 
@@ -185,7 +185,7 @@ describe('ChatView', () => {
 
     it('typing in the textarea updates the input value', async () => {
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'Hello graph');
       expect((textarea as HTMLTextAreaElement).value).toBe('Hello graph');
     });
@@ -194,7 +194,7 @@ describe('ChatView', () => {
       const onConversationChange = vi.fn();
       renderChatView({ settings: READY_SETTINGS, onConversationChange });
 
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'add a Conv2d node');
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -213,7 +213,7 @@ describe('ChatView', () => {
       };
       renderChatView({ settings: READY_SETTINGS, onConversationChange });
 
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'test message');
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -244,7 +244,7 @@ describe('ChatView', () => {
         onConversationChange: (conversation) => conversationUpdates.push(conversation),
       });
 
-      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'reason');
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'reason');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
       await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
@@ -255,7 +255,7 @@ describe('ChatView', () => {
     it('saveConversation called after user turn is appended', async () => {
       renderChatView({ settings: READY_SETTINGS });
 
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'save test');
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -266,7 +266,7 @@ describe('ChatView', () => {
 
     it('Shift+Enter does not send and adds newline', async () => {
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'line1');
       // Shift+Enter should not trigger send
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
@@ -275,7 +275,7 @@ describe('ChatView', () => {
 
     it('clicking the Send button also sends', async () => {
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'click send test');
 
       const sendBtn = screen.getByRole('button', { name: /send message/i });
@@ -297,7 +297,7 @@ describe('ChatView', () => {
         opts.callbacks.onFinished();
       });
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'run the comparison');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
@@ -323,7 +323,7 @@ describe('ChatView', () => {
         opts.callbacks.onFinished();
       });
       renderChatView({ settings: READY_SETTINGS });
-      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
       await screen.findByRole('dialog');
@@ -345,7 +345,7 @@ describe('ChatView', () => {
         opts.callbacks.onFinished();
       });
       renderChatView({ settings: READY_SETTINGS });
-      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
       const dialog = await screen.findByRole('dialog');

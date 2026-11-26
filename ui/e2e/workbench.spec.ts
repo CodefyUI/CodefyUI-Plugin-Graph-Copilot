@@ -3,7 +3,7 @@ import { test, expect, readyPreview, openCopilot, send, snapshot, capture, actio
 import { expectControlContrast, expectKeyboardFocus } from './accessibility';
 
 const workbench = (page: Page) => page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message input', exact: true });
+const composer = (page: Page) => page.getByRole('combobox', { name: 'Message input', exact: true });
 
 async function expectNativeFocusCycle(page: Page, dialog: Locator, safeAction: Locator): Promise<void> {
   await expect(dialog).toBeVisible();

@@ -15,12 +15,13 @@ const env = (mode: 'ask' | 'edit' = 'edit'): ToolEnvironment => ({ api: fakeApi(
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe('the built-in registry', () => {
-  it('keeps the ten tools, in their order, with the wire shape the loop sends', () => {
-    expect(BUILTIN_TOOLS.map((tool) => tool.name)).toEqual([
+  it('keeps the ten core tools, in their order, with the wire shape the loop sends', () => {
+    const core = BUILTIN_TOOLS.filter((tool) => !tool.available);
+    expect(core.map((tool) => tool.name)).toEqual([
       'apply_graph_operations', 'get_current_graph', 'get_node_schemas', 'validate_graph', 'run_graph',
       'research', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run',
     ]);
-    expect(TOOLS).toEqual(BUILTIN_TOOLS.map(toWire));
+    expect(TOOLS).toEqual(core.map(toWire));
     for (const tool of TOOLS) expect(Object.keys(tool).sort()).toEqual(['description', 'input_schema', 'name']);
   });
 

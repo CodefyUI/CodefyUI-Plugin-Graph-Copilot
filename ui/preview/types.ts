@@ -11,6 +11,8 @@ export interface PreviewSnapshot {
   serverOwned: boolean;
   lateInitialId: boolean;
   unreadableRunHistory: boolean;
+  hostVersion: number;
+  skills: Array<{ id: string; enabled: boolean }> | null;
   graph: SampleGraph;
   revision: number;
   receipts: GraphReceipt[];

@@ -41,7 +41,9 @@ export function chatRequests(state: PreviewSnapshot) {
  * native auth/execute requests, or an accidental model dispatch. */
 export function actionRequests(state: PreviewSnapshot) {
   return state.requests.filter((request) =>
-    request.url !== '/api/llm/models' && request.url !== '/api/llm/codex/status' && request.url !== '/api/runs?limit=1');
+    request.url !== '/api/llm/models' && request.url !== '/api/llm/codex/status' && request.url !== '/api/runs?limit=1'
+    // Agent Skills discovery (GET; 404 on an older host) is read-only too.
+    && request.url !== '/api/agent/context');
 }
 
 export async function snapshot(page: Page): Promise<PreviewSnapshot> {
@@ -66,7 +68,7 @@ export async function openCopilot(page: Page): Promise<void> {
 }
 
 export async function send(page: Page, text: string): Promise<void> {
-  await page.getByRole('textbox', { name: 'Message input', exact: true }).fill(text);
+  await page.getByRole('combobox', { name: 'Message input', exact: true }).fill(text);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
 }
 

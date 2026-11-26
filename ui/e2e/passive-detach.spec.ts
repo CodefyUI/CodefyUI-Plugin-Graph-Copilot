@@ -103,7 +103,7 @@ test('fast reopen waits for a late initial run ID before mounting its reattach f
   await page.getByRole('button', { name: 'Close panel', exact: true }).click();
   await openCopilot(page);
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Message input', exact: true })).toBeDisabled();
   await expect(banner(page)).toHaveCount(0);
   let state = await snapshot(page);
   expect(state.activeRun).toBeNull();

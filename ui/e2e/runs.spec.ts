@@ -39,7 +39,7 @@ test('Edit is the default; a starter fills the composer without dispatching', as
   await expect(page.getByRole('radio', { name: 'Edit', exact: true })).toBeChecked();
   await expect(page.getByRole('radio', { name: 'Ask', exact: true })).not.toBeChecked();
   await page.getByRole('button', { name: 'Improve this graph', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('Review my current graph and suggest a focused improvement. Explain the change before applying it.');
+  await expect(page.getByRole('combobox', { name: 'Message input' })).toHaveValue('Review my current graph and suggest a focused improvement. Explain the change before applying it.');
   expect(actionRequests(await snapshot(page))).toEqual([]);
   expect((await snapshot(page)).receipts).toEqual([]);
 });

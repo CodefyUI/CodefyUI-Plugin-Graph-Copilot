@@ -5,7 +5,9 @@
  * still-open fence mid-stream), inline code, bold, italic, #/##/### headings,
  * bullet & numbered lists, horizontal rules, and http(s) links. Everything is
  * built as React nodes — no dangerouslySetInnerHTML — so raw HTML in the text
- * stays inert. Emphasis parsing is deliberately conservative (delimiters must
+ * stays inert. Images are never loaded: `![alt](url)` becomes link text,
+ * because a remote image URL is a way to carry data out in its query string.
+ * Links open in a new tab without an opener and show their full URL on hover. Emphasis parsing is deliberately conservative (delimiters must
  * sit on word boundaries) to avoid mangling identifiers like 2*3*4.
  */
 
@@ -16,7 +18,13 @@ import React from 'react';
 // ---------------------------------------------------------------------------
 
 const CODE_RE = /`([^`\n]+)`/;
+const IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\s]+)\)/;
 const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/;
+const SAFE_URL = /^https?:\/\//i;
+
+function SafeLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer" title={href}>{children}</a>;
+}
 const BOLD_RE = /\*\*([^\n]+?)\*\*/;
 // Opening * must follow start/whitespace/'('; content must not start or end
 // with whitespace or '*' (so '**bold**' is left for the bold rule).
@@ -45,17 +53,29 @@ function findInline(text: string): InlineMatch | null {
     });
   }
 
+  const image = IMAGE_RE.exec(text);
+  if (image) {
+    const href = image[2];
+    const label = image[1].trim() || href;
+    consider({
+      index: image.index,
+      length: image[0].length,
+      // Never an <img>: a link the user may choose to open.
+      node: (key) => SAFE_URL.test(href)
+        ? <SafeLink key={key} href={href}>{`[image: ${label}]`}</SafeLink>
+        : image[0],
+    });
+  }
+
   const link = LINK_RE.exec(text);
-  if (link) {
+  if (link && !(image && image.index + 1 === link.index)) {
     const href = link[2];
     consider({
       index: link.index,
       length: link[0].length,
       node: (key) =>
-        /^https?:\/\//i.test(href) ? (
-          <a key={key} href={href} target="_blank" rel="noopener noreferrer">
-            {link[1]}
-          </a>
+        SAFE_URL.test(href) ? (
+          <SafeLink key={key} href={href}>{link[1]}</SafeLink>
         ) : (
           link[0] // unsafe protocol -> keep the raw text inert
         ),

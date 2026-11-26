@@ -9,7 +9,10 @@ import {
   isAbortError, isRecord, rememberAffectedNodes, repairScopeError, reviewReceipt, throwIfAborted,
 } from './toolGuards';
 import type { Settings } from '../state/settings';
-import type { ChatTurn } from '../state/conversations';
+import type { ChatTurn, SkillInvocation } from '../state/conversations';
+import type { AgentContext } from './hostContext';
+import { skillSession, withSkills } from './skillSession';
+export { skillNamesIn, skillSession, withSkills } from './skillSession';
 import type { Attachment } from '../state/attachments';
 import type { CodefyUIPluginAPI, ApplyResult, GraphOp, NodeDefinition, SerializedGraph } from '../types/codefyui';
 import {
@@ -29,7 +32,7 @@ import { RunExit } from './runExit';
 import { validateCurrentGraph } from './validation';
 import { toolRegistry, toWire } from './tools';
 import type {
-  ApprovalRequest, ApprovalRequirement, ProjectCommitApprovalRequest, ToolContext, ToolEnvironment, ToolRegistry, TurnState,
+  ApprovalRequest, ApprovalRequirement, ProjectCommitApprovalRequest, SkillSession, ToolContext, ToolEnvironment, ToolRegistry, TurnState,
 } from './tools';
 export { validateCurrentGraph } from './validation';
 export type { CurrentGraphValidation } from './validation';
@@ -39,8 +42,9 @@ export const MAX_TOOL_ROUNDS = 16;
 export const MAX_VALIDATION_NUDGES = 2;
 const MAX_TOOLS_PER_ROUND = 32;
 
-/** The built-in tools as sent to the model (every one, Edit mode). */
-export const TOOLS = toolRegistry.all().map(toWire);
+/** The built-in tools every host gets, as sent to the model in Edit mode.
+ * Tools gated by `available` (skills, workspace, project) join per turn. */
+export const TOOLS = toolRegistry.all().filter((tool) => !tool.available).map(toWire);
 
 export interface TurnCallbacks {
   onTextDelta(t: string): void;
@@ -75,20 +79,26 @@ export interface RunTurnOpts {
   confirmClearGraph?: (request: ClearGraphRequest, signal?: AbortSignal) => Promise<boolean>;
   /** The tools this turn may use; the built-in registry by default. */
   registry?: ToolRegistry;
+  /** `GET /api/agent/context`; null or absent on a host without Agent Skills.
+   * A reader is called, and awaited, at the start of the turn (Stop still works). */
+  agentContext?: AgentContext | null | (() => Promise<AgentContext | null>);
+  /** Skills the user invoked with `/name` on this message. */
+  skills?: SkillInvocation[];
 }
 
 function turnToWire(turn: ChatTurn, provider: Provider): WireMessage {
+  const text = turn.role === 'user' ? withSkills(turn.content, turn.skills) : turn.content;
   const message: WireMessage = {
     role: turn.role,
     content: turn.role === 'user' && turn.attachments?.length
-      ? composeUserContent(turn.content, turn.attachments, provider) : turn.content,
+      ? composeUserContent(text, turn.attachments, provider) : text,
   };
   if (turn.tool_calls?.length) message.tool_calls = copy(turn.tool_calls);
   if (turn.tool_call_id) message.tool_call_id = turn.tool_call_id;
   return message;
 }
 
-function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode): WireMessage[] {
+function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: AgentContext | null, readOnlyTools?: string[]): WireMessage[] {
   throwIfAborted(opts.signal);
   const definitions = opts.api.graph.getNodeDefinitions();
   throwIfAborted(opts.signal);
@@ -107,9 +117,9 @@ function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode): WireMessage[]
     }, opts.settings.provider);
   });
   return [
-    { role: 'system', content: buildSystemPrompt(definitions, graph, mode) },
+    { role: 'system', content: buildSystemPrompt(definitions, graph, mode, { context, readOnlyTools }) },
     ...safeHistory,
-    { role: 'user', content: composeUserContent(opts.userText, opts.attachments, opts.settings.provider) },
+    { role: 'user', content: composeUserContent(withSkills(opts.userText, opts.skills), opts.attachments, opts.settings.provider) },
   ];
 }
 
@@ -127,6 +137,15 @@ function localValidation(report: ValidationReport): ValidationReport {
 }
 
 export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
+  let agentContext: AgentContext | null = null;
+  if (typeof opts.agentContext === 'function') {
+    // A failed or stopped read is "no skills": the turn itself reports Stop.
+    try { agentContext = await awaitWithSignal(opts.agentContext(), opts.signal); } catch { agentContext = null; }
+  } else agentContext = opts.agentContext ?? null;
+  return runTurnWithContext(opts, agentContext);
+}
+
+async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext | null): Promise<TurnResult> {
   const { api, settings, callbacks, signal } = opts;
   const mode = opts.mode ?? 'edit';
   const summary: RunSummary = {
@@ -152,7 +171,11 @@ export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
   const toolCallsBySlot = new Map<number, WireToolCall>();
   const secretContexts: Array<{ graph: SerializedGraph; definitions: NodeDefinition[] }> = [];
   const experimentBudget = { remaining: MAX_EXPERIMENT_RUNS };
-  const env: ToolEnvironment = { api, settings, mode };
+  const env: ToolEnvironment = {
+    api, settings, mode,
+    host: { skills: agentContext !== null, gitProject: false },
+    ...(agentContext ? { skills: skillSession(agentContext, opts.history, historyWindow(opts.history), opts.skills) } : {}),
+  };
   const offeredTools = (opts.registry ?? toolRegistry).list({ mode, env });
   const offered = new Map(offeredTools.map((tool) => [tool.name, tool]));
   const safeText = (text: string): string => {
@@ -415,7 +438,7 @@ export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
     throwIfAborted(signal);
     historicalCallIds(opts.history).forEach((id) => knownIds.add(id));
     throwIfAborted(signal);
-    const wire = buildInitialMessages(opts, mode);
+    const wire = buildInitialMessages(opts, mode, agentContext, mode === 'ask' ? offeredTools.map((tool) => tool.name) : undefined);
     const tools = offeredTools.map(toWire);
     while (true) {
       throwIfAborted(signal);

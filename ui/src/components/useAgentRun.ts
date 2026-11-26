@@ -8,12 +8,14 @@ import type { AgentMode, ClearGraphRequest, RunPhase, RunSummary } from '../agen
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { activeReasoningEffort, type Settings } from '../state/settings';
 import type { Attachment } from '../state/attachments';
-import type { ChatTurn, Conversation } from '../state/conversations';
+import type { ChatTurn, Conversation, SkillInvocation } from '../state/conversations';
+import { fetchAgentContext } from '../agent/hostContext';
 import { saveConversation, titleFrom } from '../state/conversations';
 
 interface Request {
   text: string;
   attachments: Attachment[];
+  skills: SkillInvocation[];
   history: ChatTurn[];
   mode: AgentMode;
   conversationId: string;
@@ -100,23 +102,24 @@ export function useAgentRun(options: Options) {
 
   const decide = useCallback((approve: boolean) => pendingDecision.current?.(approve), []);
 
-  const start = useCallback(async (text: string, attachments: Attachment[], mode: AgentMode, retry = false) => {
+  const start = useCallback(async (text: string, attachments: Attachment[], mode: AgentMode, retry = false, skills: SkillInvocation[] = []) => {
     const current = latest.current;
     if (runRef.current || !current.active) return;
     const previous = lastRequest.current;
     if (retry && (!previous || previous.conversationId !== current.conversation.id)) return;
     const request: Request = retry && previous ? previous : {
-      text: text.trim(), attachments: [...attachments], history: [...current.conversation.messages],
+      text: text.trim(), attachments: [...attachments], skills: [...skills], history: [...current.conversation.messages],
       mode, conversationId: current.conversation.id,
     };
-    if (!request.text && request.attachments.length === 0) return;
+    if (!request.text && request.attachments.length === 0 && request.skills.length === 0) return;
 
     const id = crypto.randomUUID();
     const userTurn: ChatTurn = { role: 'user', content: request.text, runId: id };
     if (request.attachments.length) userTurn.attachments = request.attachments;
+    if (request.skills.length) userTurn.skills = request.skills;
     const conversation: Conversation = {
       ...current.conversation,
-      title: current.conversation.title || titleFrom(request.text || request.attachments[0]?.name || 'Attachment'),
+      title: current.conversation.title || titleFrom(request.text || request.attachments[0]?.name || (request.skills[0] ? `/${request.skills[0].name}` : 'Attachment')),
       provider: current.settings.provider, model: current.settings.models[current.settings.provider] ?? '',
       mode: request.mode,
       messages: retry ? current.conversation.messages : [...current.conversation.messages, userTurn],
@@ -206,6 +209,9 @@ export function useAgentRun(options: Options) {
     try {
       publish(conversation);
       const result = await runTurn({
+        // Cached for 30 s; null on a host without Agent Skills (feature off).
+        agentContext: () => fetchAgentContext(current.api),
+        ...(request.skills.length ? { skills: request.skills } : {}),
         api: current.api, settings: current.settings, history: request.history,
         userText: request.text, attachments: request.attachments.length ? request.attachments : undefined,
         runId: id, mode: request.mode, signal: run.abort.signal, cancelSignal: run.cancel.signal,
@@ -290,7 +296,7 @@ export function useAgentRun(options: Options) {
     start, stop, detach, decide, canRetry,
     retry: () => {
       const request = lastRequest.current;
-      if (request && canRetry) return start(request.text, request.attachments, request.mode, true);
+      if (request && canRetry) return start(request.text, request.attachments, request.mode, true, request.skills);
     },
   };
 }

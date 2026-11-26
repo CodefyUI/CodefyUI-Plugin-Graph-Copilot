@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useId } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import { providerReady, readinessReason, withReasoningEffort } from '../state/settings';
@@ -10,6 +10,11 @@ import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
 import type { AgentMode } from '../agent/types';
 import { useAgentRun } from './useAgentRun';
+import { SlashMenu, optionId, slashItems, slashQuery, type SlashCommand, type SlashItem } from './SlashMenu';
+import { getSkill, type AgentContext } from '../agent/hostContext';
+import { skillNamesIn } from '../agent/skillSession';
+import type { SkillInvocation } from '../state/conversations';
+import { useT } from '../i18n';
 import { RunSparkline } from './RunSparkline';
 import { MessageBubble } from './MessageBubble';
 import { describeStage, groupTurns } from './turnStages';
@@ -156,6 +161,10 @@ export interface ChatViewProps {
   onDetachReady?: (detach: () => void) => void;
   graphContext?: GraphStats;
   prefill?: { id: number; text: string } | null;
+  /** The host's agent context: null on a host without Agent Skills. */
+  agentContext?: AgentContext | null;
+  /** `/new`, `/skills`, `/settings` from the slash menu. */
+  onSlashCommand?: (command: SlashCommand) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,8 +185,16 @@ export function ChatView({
   onDetachReady,
   graphContext,
   prefill,
+  agentContext,
+  onSlashCommand,
 }: ChatViewProps) {
+  const t = useT();
   const [input, setInput] = useState('');
+  const [pendingSkills, setPendingSkills] = useState<SkillInvocation[]>([]);
+  const [slashActive, setSlashActive] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState<string | null>(null);
+  const [slashNotice, setSlashNotice] = useState<string | null>(null);
+  const menuId = useId();
   const [mode, setMode] = useState<AgentMode>(conversation.mode ?? 'edit');
   const [elapsed, setElapsed] = useState(0);
   const [staged, setStaged] = useState<Staged[]>([]);
@@ -199,12 +216,19 @@ export function ChatView({
   const anyLoading = staged.some((s) => s.status === 'loading');
   const anyFailed = staged.some((s) => s.status === 'error');
   const readyAtts = staged.filter((s) => s.status === 'ready' && s.att).map((s) => s.att!);
-  const canSend = ready && active && !busy && !anyLoading && !anyFailed &&
-    (input.trim().length > 0 || readyAtts.length > 0);
+  const query = slashQuery(input);
+  const menuOpen = query !== null && slashDismissed !== input && !busy && ready;
+  const menuItems = menuOpen ? slashItems(query, agentContext?.skills ?? null) : [];
+  const activeIndex = menuItems.length ? Math.min(slashActive, menuItems.length - 1) : -1;
+  const loadedSkills = [...skillNamesIn(conversation.messages)].filter((name) => !pendingSkills.some((skill) => skill.name === name));
+  const canSend = ready && active && !busy && !anyLoading && !anyFailed && !menuOpen &&
+    (input.trim().length > 0 || readyAtts.length > 0 || pendingSkills.length > 0);
 
   useEffect(() => {
     setInput('');
     setStaged([]);
+    setPendingSkills([]);
+    setSlashNotice(null);
     setMode(conversation.mode ?? 'edit');
     pinnedRef.current = true;
     setShowLatest(false);
@@ -352,13 +376,54 @@ export function ChatView({
 
   const handleSend = () => {
     if (!canSend) return;
-    void run.start(input, readyAtts, mode);
+    void run.start(input, readyAtts, mode, false, pendingSkills);
     setInput('');
     setStaged([]);
+    setPendingSkills([]);
+    setSlashNotice(null);
     repin();
   };
 
+  const pickSlash = (item: SlashItem) => {
+    setInput('');
+    setSlashActive(0);
+    setSlashNotice(null);
+    if (item.kind === 'command') {
+      if (item.command === 'clear') setPendingSkills([]);
+      else onSlashCommand?.(item.command);
+      return;
+    }
+    const { skill } = item;
+    if (pendingSkills.some((pending) => pending.id === skill.id)) return;
+    void getSkill(api, skill.id).then((result) => {
+      if (!result.ok) { setSlashNotice(t('slash.loadFailed', { name: skill.name, message: result.error.message })); return; }
+      setPendingSkills((current) => current.some((pending) => pending.id === skill.id)
+        ? current : [...current, { id: skill.id, name: skill.name, body: result.value.body }]);
+    }).catch(() => setSlashNotice(t('slash.loadFailed', { name: skill.name, message: '' })));
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const composing = composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229;
+    if (menuOpen && !composing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!menuItems.length) return;
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setSlashActive((activeIndex + step + menuItems.length) % menuItems.length);
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        if (activeIndex >= 0) { e.preventDefault(); pickSlash(menuItems[activeIndex]); }
+        else if (e.key === 'Enter') e.preventDefault();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSlashDismissed(input);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !composingRef.current &&
         !e.nativeEvent.isComposing && e.keyCode !== 229) {
       e.preventDefault();
@@ -717,6 +782,30 @@ export function ChatView({
           </div>
         )}
 
+        {(pendingSkills.length > 0 || loadedSkills.length > 0) && (
+          <ul className="gcp-skill-tags" aria-label={t('tags.label')}>
+            {loadedSkills.map((name) => (
+              <li key={`loaded:${name}`} className="gcp-skill-tag loaded" title={t('tags.loaded', { name })}>
+                <span className="gcp-skill-tag-name">{name}</span>
+              </li>
+            ))}
+            {pendingSkills.map((skill) => (
+              <li key={`pending:${skill.id}`} className="gcp-skill-tag pending" title={t('tags.pending', { name: skill.name })}>
+                <span className="gcp-skill-tag-name">/{skill.name}</span>
+                <button className="gcp-skill-tag-remove" aria-label={t('tags.remove', { name: skill.name })}
+                  onClick={() => setPendingSkills((current) => current.filter((item) => item.id !== skill.id))}>
+                  <RemoveIcon />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {slashNotice && <div className="gcp-slash-notice" role="alert">{slashNotice}</div>}
+        {menuOpen && (
+          <SlashMenu id={menuId} items={menuItems} active={activeIndex} t={t}
+            onPick={pickSlash} onHover={setSlashActive} />
+        )}
+
         <div className="gcp-input-row">
           <input
             ref={fileInputRef}
@@ -744,8 +833,14 @@ export function ChatView({
             rows={1}
             placeholder="Message Graph Copilot…"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { setInput(e.target.value); setSlashActive(0); }}
             onKeyDown={handleKeyDown}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-expanded={menuOpen}
+            aria-controls={menuOpen ? menuId : undefined}
+            aria-activedescendant={menuOpen && activeIndex >= 0 ? optionId(menuId, activeIndex) : undefined}
             onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={() => { composingRef.current = false; }}
             onPaste={handlePaste}

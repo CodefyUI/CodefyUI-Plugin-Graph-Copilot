@@ -7,7 +7,7 @@ for (const entry of ['source', 'bundle'] as const) {
     await expect(button).toBeVisible();
     await button.click();
     await expect(page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeEnabled();
+    await expect(page.getByRole('combobox', { name: 'Message input', exact: true })).toBeEnabled();
     const state = await snapshot(page);
     expect(state.entry).toBe(entry);
     expect(state.widgets).toEqual(['copilot']);

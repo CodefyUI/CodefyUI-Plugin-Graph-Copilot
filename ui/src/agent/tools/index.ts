@@ -9,6 +9,8 @@ import { runGraphExperimentsTool } from './run_graph_experiments';
 import { optimizeGraphParametersTool } from './optimize_graph_parameters';
 import { listRunsTool } from './list_runs';
 import { getRunTool } from './get_run';
+import { loadSkillTool } from './load_skill';
+import { readSkillFileTool } from './read_skill_file';
 import { createToolRegistry } from './registry';
 import type { ToolDefinition } from './types';
 
@@ -23,6 +25,8 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   optimizeGraphParametersTool,
   listRunsTool,
   getRunTool,
+  loadSkillTool,
+  readSkillFileTool,
 ];
 
 /** The registry the loop uses. */

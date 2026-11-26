@@ -15,6 +15,7 @@ import type {
 } from '../types';
 import type { TurnCallbacks } from '../loop';
 import type { ExperimentApprovalRequest, RunApprovalRequest } from '../runtimeTools';
+import type { AgentContext } from '../hostContext';
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -47,6 +48,16 @@ export interface ToolEnvironment {
   mode: AgentMode;
   /** Host features probed for this turn (absent when not probed). */
   host?: HostFeatures;
+  /** The host's skills and what this conversation has loaded; absent when off. */
+  skills?: SkillSession;
+}
+
+export interface SkillSession {
+  context: AgentContext;
+  /** Skills loaded anywhere in this conversation: their files may be read. */
+  loaded: Set<string>;
+  /** Skills whose body the model already has in this turn's context. */
+  inContext: Set<string>;
 }
 
 export interface HostFeatures {

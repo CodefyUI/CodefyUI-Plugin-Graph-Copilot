@@ -18,7 +18,7 @@ for (const size of sizes) {
       await openCopilot(page);
       const dialog = page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
       await expect(page.getByRole('radio', { name: 'Edit', exact: true })).toBeChecked();
-      await expect(page.getByRole('textbox', { name: 'Message input' })).toBeFocused();
+      await expect(page.getByRole('combobox', { name: 'Message input' })).toBeFocused();
       await capture(page, testInfo, `${size.name}-welcome`);
       await send(page, 'Add Normalize between Dataset and Preview, with scale 0.5.');
       await expect(dialog.getByRole('status').filter({ has: page.getByText('Completed', { exact: true }) })).toBeVisible();

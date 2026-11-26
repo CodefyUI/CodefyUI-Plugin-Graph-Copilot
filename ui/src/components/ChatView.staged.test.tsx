@@ -81,7 +81,7 @@ async function startRun(text = 'build it') {
   });
 
   const utils = renderChatView();
-  const textarea = screen.getByRole('textbox', { name: /message input/i });
+  const textarea = screen.getByRole('combobox', { name: /message input/i });
   await userEvent.type(textarea, text);
   fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
   await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
@@ -196,7 +196,7 @@ describe('ChatView staged streaming', () => {
     const prompt = 'Review my current graph and suggest a focused improvement. Explain the change before applying it.';
     await userEvent.click(chip);
     expect(runTurn).not.toHaveBeenCalled();
-    const input = screen.getByRole('textbox', { name: 'Message input' });
+    const input = screen.getByRole('combobox', { name: 'Message input' });
     expect(input).toHaveValue(prompt);
     expect(input).toHaveFocus();
     await userEvent.click(screen.getByRole('button', { name: 'Send message' }));
