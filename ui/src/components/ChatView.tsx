@@ -201,7 +201,7 @@ export function ChatView({
   const [dragging, setDragging] = useState(false);
   const [showLatest, setShowLatest] = useState(false);
   const run = useAgentRun({ api, settings, conversation, onConversationChange, active, onBusyChange });
-  const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, runStatusLine, runLossSeries } = run;
+  const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, commitApproval, runStatusLine, runLossSeries } = run;
   useEffect(() => { onDetachReady?.(run.detach); }, [onDetachReady, run.detach]);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -469,13 +469,13 @@ export function ChatView({
     ? lastItem.stages.find((stage) => !stage.result)
     : undefined;
   const toolRunning = !!runningStage;
-  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation && !experimentApproval && !runApproval;
+  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation && !experimentApproval && !runApproval && !commitApproval;
 
   // Live run status for the composer bar: what the agent is doing right now.
   const liveStepCount = liveTurns.filter(
     (t) => t.role === 'assistant' && (t.tool_calls?.length ?? 0) > 0,
   ).length;
-  const runPhase = run.confirmation || experimentApproval || runApproval
+  const runPhase = run.confirmation || experimentApproval || runApproval || commitApproval
     ? 'Waiting for approval'
     : runStatusLine
     ? runStatusLine
@@ -736,6 +736,23 @@ export function ChatView({
         </ConfirmDialog>
       )}
 
+      {commitApproval && (
+        <ConfirmDialog title={`Commit ${commitApproval.files.length} file${commitApproval.files.length === 1 ? '' : 's'}?`} active={active}
+          onCancel={() => run.decide(false)} detailsLabel="Commit approval details"
+          actions={<>
+            <button className="gcp-approval-secondary" onClick={() => run.decide(false)} data-autofocus>Cancel</button>
+            <button className="gcp-approval-primary" onClick={() => run.decide(true)}>{`Commit ${commitApproval.files.length} file${commitApproval.files.length === 1 ? '' : 's'}`}</button>
+          </>}>
+          <div className="gcp-experiment-approval-hypothesis">{commitApproval.message}</div>
+          <ul className="gcp-commit-files" aria-label="Files to commit">
+            {commitApproval.files.map((file) => <li key={file.path}><code>{file.path}</code> <span>{file.status}</span></li>)}
+          </ul>
+          <div className="gcp-experiment-approval-warning">
+            Only these files are staged and committed, on the current branch. Nothing is pushed.
+          </div>
+        </ConfirmDialog>
+      )}
+
       {busy && (
         <div className="gcp-runbar" role="status" aria-label="Agent activity" aria-live="off">
           <span className="gcp-runbar-pulse" aria-hidden="true" />
@@ -850,7 +867,7 @@ export function ChatView({
           />
 
           {busy ? (
-            !experimentApproval && !runApproval && (
+            !experimentApproval && !runApproval && !commitApproval && (
               <button className="gcp-stop-btn" onClick={run.stop} aria-label="Stop generation" title="Stop">
                 <StopIcon />
               </button>

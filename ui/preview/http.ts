@@ -31,6 +31,8 @@ export interface MockHttpOptions {
   /** A host with Agent Skills. Without it the skills URLs answer 404, as
    * CodefyUI 3.2.0 does, and the plugin turns the feature off. */
   skills?: MockSkills;
+  /** A project-mode host on a git repository (`project=1`). */
+  gitProject?: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -161,6 +163,18 @@ export function createMockHttp(
       if (!options.skills) return json({ detail: 'Not Found' }, 404);
       const answer = options.skills.handle(request.method, url, payload);
       return answer ? json(answer[1], answer[0]) : reject(request, `unexpected skills route ${request.method} ${url}`);
+    }
+    if (url === '/api/git/status' && request.method === 'GET') {
+      request.status = 'complete';
+      onChange();
+      return json(options.gitProject
+        ? { repo: { state: 'ready', project_dir: '/mock/project' }, status: {
+          branch: 'main', detached: false, head: 'abc1234def', upstream: null, ahead: null, behind: null,
+          staged: [], unstaged: [{ path: 'graphs/train.graph.json', kind: 'modified', xy: ' M' }],
+          untracked: [{ path: 'notes.md', kind: 'untracked', xy: '??' }, { path: '.env', kind: 'untracked', xy: '??' }],
+          conflicted: [], merge_in_progress: false, rebase_in_progress: false,
+        } }
+        : { repo: { state: 'no_project' }, status: null });
     }
     const listMatch = /^\/api\/runs\?limit=([1-9]\d?)$/.exec(url);
     const runMatch = /^\/api\/runs\/(mock-history-run|mock-native-run)(\/artifacts)?$/.exec(url);

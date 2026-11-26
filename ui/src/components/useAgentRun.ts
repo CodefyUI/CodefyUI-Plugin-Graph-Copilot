@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runTurn, type ExperimentApprovalRequest, type RunApprovalRequest } from '../agent/loop';
+import type { ProjectCommitApprovalRequest } from '../agent/tools/types';
 import { isPassiveDetach, PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { formatRunStatusLine } from '../agent/runGraph';
 import { appendLossPoint } from './RunSparkline';
@@ -10,6 +11,7 @@ import { activeReasoningEffort, type Settings } from '../state/settings';
 import type { Attachment } from '../state/attachments';
 import type { ChatTurn, Conversation, SkillInvocation } from '../state/conversations';
 import { fetchAgentContext } from '../agent/hostContext';
+import { probeGitProject } from '../agent/gitHost';
 import { saveConversation, titleFrom } from '../state/conversations';
 
 interface Request {
@@ -61,6 +63,7 @@ export function useAgentRun(options: Options) {
   const [confirmation, setConfirmation] = useState<ClearGraphRequest | null>(null);
   const [experimentApproval, setExperimentApproval] = useState<ExperimentApprovalRequest | null>(null);
   const [runApproval, setRunApproval] = useState<RunApprovalRequest | null>(null);
+  const [commitApproval, setCommitApproval] = useState<ProjectCommitApprovalRequest | null>(null);
   const [runStatusLine, setRunStatusLine] = useState<string | null>(null);
   const [runLossSeries, setRunLossSeries] = useState<number[]>([]);
 
@@ -96,6 +99,7 @@ export function useAgentRun(options: Options) {
     setConfirmation(null);
     setExperimentApproval(null);
     setRunApproval(null);
+    setCommitApproval(null);
     setRunStatusLine(null);
     setRunLossSeries([]);
   }, [options.conversation.id, detach]);
@@ -174,6 +178,7 @@ export function useAgentRun(options: Options) {
         setConfirmation(null);
         setExperimentApproval(null);
         setRunApproval(null);
+        setCommitApproval(null);
         setRunStatusLine(null);
         setRunLossSeries([]);
         latest.current.onBusyChange?.(false);
@@ -195,6 +200,7 @@ export function useAgentRun(options: Options) {
           setConfirmation(null);
           setExperimentApproval(null);
           setRunApproval(null);
+          setCommitApproval(null);
         }
         resolve(approved && isCurrent() && latest.current.active && !signals.some((value) => value.aborted));
       };
@@ -211,6 +217,11 @@ export function useAgentRun(options: Options) {
       const result = await runTurn({
         // Cached for 30 s; null on a host without Agent Skills (feature off).
         agentContext: () => fetchAgentContext(current.api),
+        // Project tools: only in project mode on a git repository.
+        gitProject: async () => {
+          const context = await fetchAgentContext(current.api);
+          return context !== null && context.project === null ? false : probeGitProject(current.api);
+        },
         ...(request.skills.length ? { skills: request.skills } : {}),
         api: current.api, settings: current.settings, history: request.history,
         userText: request.text, attachments: request.attachments.length ? request.attachments : undefined,
@@ -223,7 +234,7 @@ export function useAgentRun(options: Options) {
           onTurnAppended: (turn) => {
             if (run.settled) return;
             if (turn.tool_calls?.some((call) => call.name === 'apply_graph_operations')) run.mutationPossible = true;
-            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters'].includes(call.name))) {
+            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit'].includes(call.name))) {
               run.sideEffectPossible = true;
             }
             if (!isCurrent()) return;
@@ -235,6 +246,7 @@ export function useAgentRun(options: Options) {
           onOpsApplied: () => { run.mutationPossible = true; },
           onExperimentApproval: (request, signal) => requestDecision(() => setExperimentApproval(request), signal),
           onRunApproval: (request, signal) => requestDecision(() => setRunApproval(request), signal),
+          onProjectCommitApproval: (request, signal) => requestDecision(() => setCommitApproval(request), signal),
           onRunStarted: (hostRunId) => {
             if (run.settled) return;
             run.hostRunId = hostRunId;
@@ -292,7 +304,7 @@ export function useAgentRun(options: Options) {
 
   return {
     busy, streamingText, liveTurns, phase, summary, error, confirmation,
-    experimentApproval, runApproval, runStatusLine, runLossSeries,
+    experimentApproval, runApproval, commitApproval, runStatusLine, runLossSeries,
     start, stop, detach, decide, canRetry,
     retry: () => {
       const request = lastRequest.current;

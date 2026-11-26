@@ -84,6 +84,9 @@ export interface RunTurnOpts {
   agentContext?: AgentContext | null | (() => Promise<AgentContext | null>);
   /** Skills the user invoked with `/name` on this message. */
   skills?: SkillInvocation[];
+  /** Whether the host is in project mode on a git repository (the project
+   * tools need it). A reader is called and awaited like `agentContext`. */
+  gitProject?: boolean | (() => Promise<boolean>);
 }
 
 function turnToWire(turn: ChatTurn, provider: Provider): WireMessage {
@@ -138,14 +141,22 @@ function localValidation(report: ValidationReport): ValidationReport {
 
 export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
   let agentContext: AgentContext | null = null;
+  let gitProject = false;
+  const readers: Array<Promise<void>> = [];
+  // A failed or stopped read is "feature off": the turn itself reports Stop.
   if (typeof opts.agentContext === 'function') {
-    // A failed or stopped read is "no skills": the turn itself reports Stop.
-    try { agentContext = await awaitWithSignal(opts.agentContext(), opts.signal); } catch { agentContext = null; }
+    const read = opts.agentContext;
+    readers.push(awaitWithSignal(read(), opts.signal).then((value) => { agentContext = value; }, () => { agentContext = null; }));
   } else agentContext = opts.agentContext ?? null;
-  return runTurnWithContext(opts, agentContext);
+  if (typeof opts.gitProject === 'function') {
+    const read = opts.gitProject;
+    readers.push(awaitWithSignal(read(), opts.signal).then((value) => { gitProject = value === true; }, () => { gitProject = false; }));
+  } else gitProject = opts.gitProject === true;
+  if (readers.length) await Promise.all(readers);
+  return runTurnWithContext(opts, agentContext, gitProject);
 }
 
-async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext | null): Promise<TurnResult> {
+async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext | null, gitProject: boolean): Promise<TurnResult> {
   const { api, settings, callbacks, signal } = opts;
   const mode = opts.mode ?? 'edit';
   const summary: RunSummary = {
@@ -173,7 +184,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
   const experimentBudget = { remaining: MAX_EXPERIMENT_RUNS };
   const env: ToolEnvironment = {
     api, settings, mode,
-    host: { skills: agentContext !== null, gitProject: false },
+    host: { skills: agentContext !== null, gitProject },
     ...(agentContext ? { skills: skillSession(agentContext, opts.history, historyWindow(opts.history), opts.skills) } : {}),
   };
   const offeredTools = (opts.registry ?? toolRegistry).list({ mode, env });

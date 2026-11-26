@@ -42,8 +42,9 @@ export function chatRequests(state: PreviewSnapshot) {
 export function actionRequests(state: PreviewSnapshot) {
   return state.requests.filter((request) =>
     request.url !== '/api/llm/models' && request.url !== '/api/llm/codex/status' && request.url !== '/api/runs?limit=1'
-    // Agent Skills discovery (GET; 404 on an older host) is read-only too.
-    && request.url !== '/api/agent/context');
+    // Agent Skills and git-project discovery (GETs; 404 or no_project on an
+    // older or non-project host) are read-only too.
+    && request.url !== '/api/agent/context' && request.url !== '/api/git/status');
 }
 
 export async function snapshot(page: Page): Promise<PreviewSnapshot> {

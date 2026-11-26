@@ -51,7 +51,7 @@ const byId = <T extends HTMLElement>(id: string): T => {
 
 const graph = scenario.id === 'empty-graph' ? createSampleGraph(render, { nodes: [], edges: [] }) : createSampleGraph(render);
 const execution = createMockExecution(nativeRun, window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason), { serverOwned, lateInitialId });
-const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory, skills });
+const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory, skills, gitProject: params.get('project') === '1' });
 
 function snapshot(): PreviewSnapshot {
   const graphState = graph.inspect();

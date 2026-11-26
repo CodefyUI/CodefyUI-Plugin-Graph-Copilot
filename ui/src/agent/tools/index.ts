@@ -11,6 +11,14 @@ import { listRunsTool } from './list_runs';
 import { getRunTool } from './get_run';
 import { loadSkillTool } from './load_skill';
 import { readSkillFileTool } from './read_skill_file';
+import { listTabsTool } from './list_tabs';
+import { openGraphTool } from './open_graph';
+import { searchExamplesTool } from './search_examples';
+import { openExampleTool } from './open_example';
+import { projectStatusTool } from './project_status';
+import { projectDiffTool } from './project_diff';
+import { projectCommitTool } from './project_commit';
+import { projectLogTool } from './project_log';
 import { createToolRegistry } from './registry';
 import type { ToolDefinition } from './types';
 
@@ -27,6 +35,14 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   getRunTool,
   loadSkillTool,
   readSkillFileTool,
+  listTabsTool,
+  openGraphTool,
+  searchExamplesTool,
+  openExampleTool,
+  projectStatusTool,
+  projectDiffTool,
+  projectCommitTool,
+  projectLogTool,
 ];
 
 /** The registry the loop uses. */
