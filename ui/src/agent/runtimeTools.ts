@@ -3,13 +3,13 @@
  * from it on Stop. This module does not infer canvas mutation from execution. */
 import type { WireToolCall } from '../llm/client';
 import type { CodefyUIPluginAPI, GraphOp, SerializedGraph } from '../types/codefyui';
-import type { TurnCallbacks, CurrentGraphValidation } from './loop';
-import type { RunPhase, RunStatus, ToolOutcome } from './types';
+import type { RunStatus, ToolOutcome } from './types';
+import type { ToolContext } from './tools/types';
 import {
   MAX_EXPERIMENT_RUNS, experimentRunTimeoutMs, getExperimentExecutionCount,
   runGraphExperiments,
 } from './experiments';
-import type { ExperimentRuntimeHooks, GraphExperimentRequest } from './experiments';
+import type { GraphExperimentRequest } from './experiments';
 import { compileParameterOptimizer } from './optimizer';
 import { redactToolCallForHistory } from './historyRedaction';
 import {
@@ -23,12 +23,6 @@ import {
 } from './runPointer';
 import { awaitWithSignal, comparisonSnapshot, isAbortError, throwIfAborted } from './toolGuards';
 import { isPassiveDetach } from './abortReasons';
-
-export const READ_ONLY_TOOLS = new Set([
-  'get_current_graph', 'get_node_schemas', 'validate_graph', 'research', 'list_runs', 'get_run',
-]);
-const RUNTIME_TOOLS = new Set(['run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'list_runs', 'get_run']);
-export const isRuntimeTool = (name: string): boolean => RUNTIME_TOOLS.has(name);
 
 export interface ExperimentApprovalRequest {
   hypothesis: string;
@@ -53,21 +47,10 @@ export interface RuntimeToolResult { content: string; outcome: ToolOutcome }
 export class RuntimeToolExit extends Error {
   constructor(public status: RunStatus, public reason: string, message: string) { super(message); }
 }
-export interface RuntimeContext {
-  api: CodefyUIPluginAPI;
-  signal?: AbortSignal;
-  cancelSignal?: AbortSignal;
-  callbacks: TurnCallbacks;
-  budget: { remaining: number };
-  validate(): Promise<CurrentGraphValidation>;
-  phase(value: RunPhase): void;
-  /** Set conservative side-effect metadata and the unknown pending receipt. */
-  dispatched(): void;
-  hostRunStarted(id: string): void;
-  /** Journal the result BEFORE any finish observer or run-history awaits. */
-  record(content: string, outcome: ToolOutcome, terminal?: boolean): void;
-  promotionHooks: ExperimentRuntimeHooks;
-}
+/** `record` journals the result BEFORE any finish observer or run-history
+ * awaits; `dispatched` sets conservative side-effect metadata and the unknown
+ * pending receipt, and refuses unless this call's approval was granted. */
+export type RuntimeContext = ToolContext;
 function observe(fn: () => unknown): void {
   try { void Promise.resolve(fn()).catch(() => {}); } catch { /* observers do not own execution */ }
 }
@@ -169,19 +152,19 @@ async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Pro
     error: 'The current graph is not runnable — fix stable structural validation errors before executing; unavailable or stale validation cannot authorize a run.',
     errors: validation.errors, validation_status: validation.status,
   }, 'error');
-  if (!callbacks.onRunApproval) return error('Running the live graph requires an interactive user confirmation, but this client did not provide one.');
+  if (!context.canApprove('run_graph')) return error('Running the live graph requires an interactive user confirmation, but this client did not provide one.');
   const graph = structuredClone(api.graph.getGraph());
   const fingerprint = semanticFingerprint(graph);
   context.phase('awaiting_confirmation');
   throwIfAborted(signal);
   let approved: boolean;
   try {
-    approved = await awaitWithSignal(callbacks.onRunApproval({
+    approved = await context.approve({ kind: 'run_graph', request: {
       reason, nodeCount: graph.nodes.filter((node) => node.type !== 'note').length,
       edgeCount: graph.edges.length,
       nodeTypes: [...new Set(graph.nodes.map((node) => node.type).filter((type): type is string => !!type && type !== 'note'))],
       timeoutMinutes, device: device ?? 'host default',
-    }, signal), signal);
+    } });
   } catch (err) { throwIfAborted(signal); if (isAbortError(err)) throw err; return error(`Run approval failed: ${String(err)}`); }
   throwIfAborted(signal);
   if (approved !== true) declined(context, 'The run was not approved by the user.');
@@ -286,7 +269,7 @@ async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Pro
 }
 
 async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSearch = false): Promise<RuntimeToolResult> {
-  const { api, signal, callbacks, budget } = context;
+  const { api, signal, budget } = context;
   const args = call.arguments;
   if (args.search !== undefined && !trustedSearch) return error('search metadata is internal optimizer provenance; call optimize_graph_parameters instead');
   const request = args as unknown as GraphExperimentRequest;
@@ -294,7 +277,7 @@ async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSear
   try { plannedRuns = getExperimentExecutionCount(request); } catch (err) { return error(String(err)); }
   if (plannedRuns > budget.remaining) return error(`Experiment turn budget exceeded: ${plannedRuns} requested, ${budget.remaining} of ${MAX_EXPERIMENT_RUNS} executions remain.`);
   throwIfAborted(signal);
-  if (!callbacks.onExperimentApproval) return error('Experiment execution requires an interactive user confirmation, but this client did not provide one.');
+  if (!context.canApprove('experiment')) return error('Experiment execution requires an interactive user confirmation, but this client did not provide one.');
   let changed = false;
   let unsubscribe: (() => void) | undefined;
   try { unsubscribe = api.graph.onGraphChanged(() => { changed = true; }); }
@@ -307,7 +290,7 @@ async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSear
     throwIfAborted(signal);
     let approved: boolean;
     try {
-      approved = await awaitWithSignal(callbacks.onExperimentApproval({
+      approved = await context.approve({ kind: 'experiment', request: {
         hypothesis: approval.hypothesis, variantCount: request.variants.length,
         repetitions: request.repetitions ?? 1, executionCount: plannedRuns,
         concurrency: request.concurrency ?? 1, runTimeoutMinutes: Math.round(experimentRunTimeoutMs(request) / 60_000), applyBest: request.apply_best ?? false,
@@ -316,7 +299,7 @@ async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSear
           ...api.graph.getGraph().nodes.map((node) => node.type).filter((type): type is string => !!type && type !== 'note'),
           ...request.variants.flatMap((variant) => variant.operations.filter((operation): operation is Extract<GraphOp, { op: 'add_node' }> => operation.op === 'add_node').map((operation) => operation.node_type)),
         ])],
-      }, signal), signal);
+      } });
     } catch (err) { throwIfAborted(signal); if (isAbortError(err)) throw err; return error(`Experiment approval failed: ${String(err)}`); }
     throwIfAborted(signal);
     if (approved !== true) declined(context, 'Experiment execution was not approved by the user.');
@@ -354,37 +337,59 @@ async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSear
   return json(publicResult, terminal);
 }
 
-export async function executeRuntimeTool(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
+export function executeRunGraph(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
+  throwIfAborted(context.signal);
+  return liveRun(call, context);
+}
+
+export function executeExperiment(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
+  throwIfAborted(context.signal);
+  return studyRun(call, context);
+}
+
+export async function executeOptimizer(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
   const { api, signal } = context;
   throwIfAborted(signal);
-  if (call.name === 'run_graph') return liveRun(call, context);
-  if (call.name === 'run_graph_experiments') return studyRun(call, context);
-  if (call.name === 'optimize_graph_parameters') {
-    let compiled;
-    try { compiled = compileParameterOptimizer(call.arguments, api.graph.getGraph(), api.graph.getNodeDefinitions()); }
-    catch (err) { return error(String(err)); }
-    throwIfAborted(signal);
-    const result = await studyRun({ ...call, name: 'run_graph_experiments', arguments: compiled.request as unknown as Record<string, unknown> }, context, true);
-    throwIfAborted(signal);
-    return { ...result, content: JSON.stringify({ ...JSON.parse(result.content), optimizer: compiled.metadata }) };
-  }
+  let compiled;
+  try { compiled = compileParameterOptimizer(call.arguments, api.graph.getGraph(), api.graph.getNodeDefinitions()); }
+  catch (err) { return error(String(err)); }
+  throwIfAborted(signal);
+  const result = await studyRun({ ...call, name: 'run_graph_experiments', arguments: compiled.request as unknown as Record<string, unknown> }, context, true);
+  throwIfAborted(signal);
+  return { ...result, content: JSON.stringify({ ...JSON.parse(result.content), optimizer: compiled.metadata }) };
+}
+
+async function requireRunHistory(context: RuntimeContext): Promise<RuntimeToolResult | null> {
+  const { api, signal } = context;
+  throwIfAborted(signal);
   if (!(await awaitWithSignal(probeRunHistory(api, signal), signal))) return error('Run history is unavailable: this CodefyUI host does not expose /api/runs (server-owned runs). Only results returned in this conversation are known.');
   throwIfAborted(signal);
-  if (call.name === 'list_runs') {
-    const raw = call.arguments.limit;
-    const limit = typeof raw === 'number' && Number.isFinite(raw) ? Math.round(raw) : 10;
-    try {
-      const { runs, total } = await awaitWithSignal(fetchRunList(api, { limit: Math.min(Math.max(limit, 1), 20), signal }), signal);
-      throwIfAborted(signal);
-      const filtered = call.arguments.active_only === true ? runs.filter((run) => !isTerminalRunStatus(run.status)) : runs;
-      return json({ total, runs: filtered.map((run) => ({
-        run_id: run.runId, ...(run.name ? { name: run.name } : {}), status: run.status, active: run.active,
-        ...(run.queuePosition !== null ? { queue_position: run.queuePosition } : {}), ...(run.createdAt ? { created_at: run.createdAt } : {}),
-        ...(run.durationS !== null ? { duration_s: run.durationS } : {}), ...(run.error ? { error: run.error } : {}),
-        ...(Object.keys(run.finalMetrics).length ? { final_metrics: run.finalMetrics } : {}),
-      })) });
-    } catch (err) { throwIfAborted(signal); if (isAbortError(err)) throw err; return error(`Could not list runs: ${String(err)}`); }
-  }
+  return null;
+}
+
+export async function executeListRuns(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
+  const { api, signal } = context;
+  const unavailable = await requireRunHistory(context);
+  if (unavailable) return unavailable;
+  const raw = call.arguments.limit;
+  const limit = typeof raw === 'number' && Number.isFinite(raw) ? Math.round(raw) : 10;
+  try {
+    const { runs, total } = await awaitWithSignal(fetchRunList(api, { limit: Math.min(Math.max(limit, 1), 20), signal }), signal);
+    throwIfAborted(signal);
+    const filtered = call.arguments.active_only === true ? runs.filter((run) => !isTerminalRunStatus(run.status)) : runs;
+    return json({ total, runs: filtered.map((run) => ({
+      run_id: run.runId, ...(run.name ? { name: run.name } : {}), status: run.status, active: run.active,
+      ...(run.queuePosition !== null ? { queue_position: run.queuePosition } : {}), ...(run.createdAt ? { created_at: run.createdAt } : {}),
+      ...(run.durationS !== null ? { duration_s: run.durationS } : {}), ...(run.error ? { error: run.error } : {}),
+      ...(Object.keys(run.finalMetrics).length ? { final_metrics: run.finalMetrics } : {}),
+    })) });
+  } catch (err) { throwIfAborted(signal); if (isAbortError(err)) throw err; return error(`Could not list runs: ${String(err)}`); }
+}
+
+export async function executeGetRun(call: WireToolCall, context: RuntimeContext): Promise<RuntimeToolResult> {
+  const { api, signal } = context;
+  const unavailable = await requireRunHistory(context);
+  if (unavailable) return unavailable;
   const runId = typeof call.arguments.run_id === 'string' ? call.arguments.run_id.trim() : '';
   if (!runId) return error('get_run requires a non-empty "run_id".');
   try {
