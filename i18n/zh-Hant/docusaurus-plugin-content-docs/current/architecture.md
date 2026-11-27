@@ -147,6 +147,10 @@ Manifest 宣告 **`requires_codefyui = ">=1.3.0"`**，是基礎安裝契約，�
 | `api.nodes` | 無 | API v2 custom renderer registration | 選用、非必要 |
 | Run history／events／cancel | 無 `/api/runs`、socket-owned runs | Server-owned run REST surface | 僅 run awareness／reattach 必要 |
 | Rich model／effort metadata | 可能無 | Catalog 與轉送 `reasoning_effort` | 對應控制／模型必要 |
+| `api.workspace`（API 5，CodefyUI 3.2.0） | 無 | 分頁、快照、`openGraphs` | 選用：`list_tabs`、`open_graph`、`search_examples`、`open_example` |
+| 側欄（API 6） | 無 | `addPanel({dock: 'side', badge})`、`setPanelOpen` | 選用：側欄與工具列標記，否則用浮動視窗 |
+| Agent Skills（API 6） | 無 | `/api/agent/context`、`/api/skills/*` | 選用：技能頁面、技能工具、專案指令；沒有就關閉 |
+| Git（`/api/git/*`） | 無 | 專案模式的 status、diff、log、stage、commit | 選用：專案工具，只在 git 專案就緒時提供 |
 
 JavaScript 物件之外使用既有 `POST /api/graph/validate`、`GET /api/auth/bootstrap`、`/ws/execution` 與 feature-detected device／run／model surface。Graph Copilot 不註冊後端 routes。
 
@@ -164,11 +168,20 @@ JavaScript 物件之外使用既有 `POST /api/graph/validate`、`GET /api/auth/
 
 | 路徑 | 職責 |
 | --- | --- |
-| `ui/src/components/` | 工作台、mounted 聊天生命週期、Settings／History／Lab、階段與結果 |
+| `ui/src/components/` | 面板、mounted 聊天生命週期、Settings／History／Lab／技能頁面、階段與結果 |
+| `ui/src/index.tsx`、`components/CopilotApp.tsx` | 掛到 v6 側欄（`addPanel`）或浮動視窗；工具列標記 |
+| `ui/src/components/ChatWindow.tsx`、`agentStatus.ts` | 標題列、導覽與更多操作選單；agent 狀態（需要你處理 > 已完成 > 處理中 > 待命） |
+| `ui/src/components/ChatView.tsx`、`ApprovalCard.tsx` | 對話、輸入區、斜線選單、對話中的核准卡片 |
+| `ui/src/components/SkillsView.tsx`、`SlashMenu.tsx` | 技能清單、內容、開關與安裝；`/` 指令與技能 |
 | `ui/src/components/useAgentRun.ts` | 擷取 turn／conversation controller、核准與安全復原 |
 | `ui/src/components/RunResult.tsx` | 獨立 Agent／畫布／驗證／執行證據 |
 | `ui/src/components/RunReattachBanner.tsx` | 既有宿主 run 追蹤、Stop／detach、離開期間完成指標 |
-| `ui/src/agent/loop.ts`、`types.ts`、`toolGuards.ts`、`history.ts` | Tool catalog、journal、結果契約、scope／receipt／cancel guards、完整歷史群組 |
+| `ui/src/agent/loop.ts`、`types.ts`、`toolGuards.ts`、`history.ts` | Turn 迴圈與核准關卡、journal、結果契約、scope／receipt／cancel guards、完整歷史群組 |
+| `ui/src/agent/tools/` | 工具註冊表（`registry.ts`、`types.ts`、`index.ts`），每個工具一個檔：圖、執行、實驗、技能、分頁、範例與專案工具 |
+| `ui/src/agent/hostContext.ts`、`skillSession.ts`、`untrusted.ts` | Agent context 與技能主程式 API、每段對話已載入的技能、不可信文字的標示區塊與大小上限 |
+| `ui/src/agent/gitHost.ts` | 主程式 git status／diff／log、排除 dotenv 的提交候選、只暫存列出的路徑並提交 |
+| `ui/src/agent/chatBody.ts`、`validation.ts`、`runExit.ts` | Provider 請求內容、目前圖的驗證、turn 結束原因 |
+| `ui/src/i18n.ts`、`ui/src/i18n/` | `t()` 與 en、zh-TW 字典，跟著 `<html lang>` 切換 |
 | `ui/src/agent/prompt.ts`、`historyRedaction.ts` | 圖／實驗政策與 schema／fail-closed provider／display 遮蔽 |
 | `ui/src/agent/experiments.ts` | Clone／validate／execute／measure／rank、promotion、本機摘要 |
 | `ui/src/agent/runtimeTools.ts` | 已核准 live／study／optimizer 派送、宿主 run 讀取、效果 journal、取消／pointer 處理 |

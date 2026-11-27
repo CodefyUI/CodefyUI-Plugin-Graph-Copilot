@@ -10,10 +10,17 @@ This UI refinement is built on the independently delivered passive-run lifecycle
 - One model entry lives in the composer. The header contains navigation and guarded New conversation; selected navigation is idempotent.
 - Ask/Edit stays explicit. Graph unavailability is text, not fabricated zero counts; provider configuration is not called a live connection.
 - Contextual starters and the Lab comparison action draft a prompt for review, never submit it automatically.
-- Native dialogs isolate actual approval/import decisions. The main workbench remains non-modal; Escape declines only the current decision, and the composer regains focus after settlement.
-- Native reasoning selection replaces an incomplete custom menu. Settings follow Connection → Model → Behavior and explain key persistence and Refresh prerequisites.
+- Approvals (clear, run, study, commit) are cards in the conversation from 0.5.0, not modals: focus starts on the safe action, Escape declines only that card, and the composer regains focus after settlement. Study import keeps its native dialog.
+- Native reasoning selection replaces an incomplete custom menu. Settings follow Provider → Model → Behavior and explain key persistence and Refresh prerequisites.
 - Lab uses one semantic evidence table. Compact panels reflow its cells with labels, retaining accessible headers and full operation/error disclosures. Missing results stay missing, and recorded ties are not given invented positional ranks.
 - Styling stays under `gcp-*`, inherits host fonts/tokens, supports reduced motion and forced colors, and loads no external font or UI framework.
+
+## 0.5.0 general-agent panel
+
+- The panel docks at the side on hosts with the v6 side dock and keeps the floating window elsewhere. One header carries the agent state (needs you > done > working > idle, as a word and a glyph), icon navigation and a More actions menu that takes over below 320 px.
+- Colour means a role: accent, live, ok, attention, danger, neutral, each bound once to a host token in the `tokens:begin`/`tokens:end` region; `styles.test.ts` rejects colour literals elsewhere. Only the working line pulses.
+- Tool calls are one-line rows with an outcome glyph, the tool name in mono and `k=v` arguments; three or more ordinary calls fold into one row; each edit gets a "+3 nodes · 4 edges" line.
+- Layout follows the panel width through container queries (300–720 px), not the viewport. `e2e/panel.spec.ts` checks 300, 400, 640 and 720 px in English and Traditional Chinese, the floating fallback, light tokens and the toolbar badge.
 
 ## Validation record
 

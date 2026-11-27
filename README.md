@@ -1,11 +1,14 @@
-# Graph Copilot — agent workbench for CodefyUI
+# Copilot — a general agent for CodefyUI
 
-Graph Copilot is a frontend plugin that adds an AI workbench to the CodefyUI editor. It can construct and revise node graphs, run bounded experiments on isolated graph variants, rank measured metrics, safely promote a parameter-only winner, and help turn observations into testable research questions. **Edit** is the default mode; **Ask** provides executor-enforced read-only guidance.
+Copilot (formerly Graph Copilot; the plugin id stays `graph-copilot`) is a frontend plugin that adds a general agent to the CodefyUI editor. It follows Agent Skills and your project's `AGENTS.md`, opens graphs and examples in tabs, reads your project's git state and commits listed files with your approval, and it can construct and revise node graphs, run bounded experiments on isolated graph variants, rank measured metrics, safely promote a parameter-only winner, and help turn observations into testable research questions. **Edit** is the default mode; **Ask** provides executor-enforced read-only guidance.
 
-[Documentation](https://codefyui.github.io/CodefyUI-Plugin-Graph-Copilot/) · [Architecture](docs/architecture.md) · [Graph editing](docs/graph-editing.md) · [Experiments and research](docs/experiments-and-research.md) · [Backend agent contract](docs/backend-agent-contract.md) · [Roadmap](docs/roadmap.md)
+[Documentation](https://codefyui.github.io/CodefyUI-Plugin-Graph-Copilot/) · [Side panel, skills and tools](docs/general-agent.md) · [Architecture](docs/architecture.md) · [Graph editing](docs/graph-editing.md) · [Experiments and research](docs/experiments-and-research.md) · [Backend agent contract](docs/backend-agent-contract.md) · [Roadmap](docs/roadmap.md)
 
 ## What it can do
 
+- **Live in a side panel.** On a CodefyUI host with the side dock (plugin API 6), Copilot is a resizable side panel opened from the toolbar, and the toolbar toggle shows when it needs you, is working or has finished. On CodefyUI 3.2.0 and older it is the floating window, as before.
+- **Follow skills and project instructions.** The system prompt lists enabled Agent Skills by name and description; the agent loads a skill's full text with `load_skill` and reads its files with `read_skill_file`. You can also pick a skill with `/` in the message box. `AGENTS.md` is added as project instructions. Skill text and `AGENTS.md` are reference material in marked blocks: they cannot approve anything, skip an approval or widen Ask mode. A skill's `allowed-tools` is shown in the Skills view only and is not enforced. On hosts without Agent Skills, all of this is off.
+- **Work across tabs and the project.** `list_tabs`, `open_graph`, `search_examples` and `open_example` use the host's workspace API; `project_status`, `project_diff`, `project_log` and `project_commit` use its git API. A commit lists every file on its approval card, stages only those paths, and never includes `.env` or ignored files. See [Side panel, skills and tools](docs/general-agent.md).
 - **Build and tune graphs by conversation.** The agent receives an installed-node catalog and schema-redacted active-graph snapshot, looks up exact schemas, applies typed GraphOps, and self-corrects from indexed per-operation receipts. **One operation batch is one host undo step**, not a whole agent turn. Automatic structural validation/repair follows actual current-turn canvas edits, with at most two repair nudges; unrelated existing nodes are outside repair authority, although `auto_layout` can reposition the canvas. Unresolved structure is incomplete, not a successful edit.
 - **Ask or Edit.** Ask can read graphs/schemas, research, explicitly validate structure, and inspect supported host runs. Both the tool list and executor prohibit canvas writes and live/experimental execution in Ask. Edit permits those actions; clearing, live execution, and studies have separate approvals.
 - **Run the live graph on request.** When asked to run, train, or evaluate, the agent validates the canvas graph, asks for explicit confirmation, executes through the host's `/ws/execution`, and streams node status and training progress (loss, epochs, a loss sparkline). One live run at a time has a default 6-hour browser-monitored cap, adjustable to 12; detaching stops local timeout monitoring, not the host run. Results retain host outputs, metric/log tails, node errors, and supported video references or small image previews.
@@ -42,7 +45,7 @@ The manifest's **CodefyUI 1.3.0+** requirement covers baseline frontend API help
 
 ## Editing and approval boundaries
 
-The agent exposes ten tools, grouped by authority:
+The ten graph, run and experiment tools are grouped by authority (the skill, workspace and project tools are listed in [Side panel, skills and tools](docs/general-agent.md)):
 
 - **Ask / Edit reads:** `get_current_graph`, `get_node_schemas`, `validate_graph`, `research`, `list_runs`, `get_run`.
 - **Edit-only canvas writes:** `apply_graph_operations` — non-empty batches of up to 100 operations, host per-operation validation, and indexed receipts.
@@ -68,13 +71,14 @@ When the agent calls `run_graph_experiments`, it performs:
 
 Limits are 8 variants, 1–5 repetitions, 16 total executions, at most 2 concurrent executions, and a 10-minute timeout per candidate run. Studies use `record_outputs: false` and `weights_persistent: false`; live runs use `record_outputs: false` and `weights_persistent: true`.
 
-The plugin contract does not expose tab creation or opening a serialized graph in a new tab. From verified portable evidence, Experiment Lab can derive downloadable host-shaped graph JSON by reapplying redacted GraphOps to the redacted baseline. Secrets are blank; schema defaults or execution preparation may differ because the exact prepared graph is not persisted. Downloading never changes the canvas or executes a graph and is **not exact execution replay**.
+Experiment Lab does not open candidates on the canvas. (On hosts with the workspace API, the agent's `open_graph` and `open_example` open saved graphs and examples in new tabs; candidate graphs are not opened that way.) From verified portable evidence, Experiment Lab can derive downloadable host-shaped graph JSON by reapplying redacted GraphOps to the redacted baseline. Secrets are blank; schema defaults or execution preparation may differ because the exact prepared graph is not persisted. Downloading never changes the canvas or executes a graph and is **not exact execution replay**.
 
 For study design, metric selection, portable evidence, reproducibility, and responsible claims, see [Experiments and research](docs/experiments-and-research.md). Durable jobs, checkpoint/resume, adaptive optimization, complete environment/artifact provenance, confirmatory analysis, and true read-only candidate tabs require the phased [CodefyUI core roadmap](docs/roadmap.md).
 
 ## Requirements and installation
 
-- CodefyUI 1.3.0 or later for the baseline plugin contract.
+- CodefyUI 1.3.0 or later for the baseline plugin contract. On CodefyUI 3.2.0 and older, Copilot is a floating window and skills are off.
+- The side panel and Agent Skills need a host with plugin API 6 (`addPanel` side dock and `/api/skills`); the workspace tools need plugin API 5; the project tools need a project that is a git repository.
 - Rich model catalogs/reasoning controls need an updated host that exposes catalog metadata and accepts/forwards `reasoning_effort`; run awareness/reattachment needs server-owned runs and `/api/runs`. Use a host build documenting the relevant capabilities; this repository assigns no invented unreleased version number.
 - A supported remote provider, ChatGPT Codex login, or OpenAI-compatible local endpoint.
 
@@ -82,7 +86,7 @@ For study design, metric selection, portable evidence, reproducibility, and resp
 cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 ```
 
-This unpinned command installs the latest merged `main` commit, including the prebuilt UI (**0.4.0**). Existing users must update explicitly:
+This unpinned command installs the latest merged `main` commit, including the prebuilt UI (**0.5.0**). Existing users must update explicitly:
 
 ```bash
 cdui plugin update graph-copilot
@@ -102,7 +106,7 @@ With a compatible updated host, the catalog includes **GPT-5.6 Sol** (`gpt-5.6-s
 
 Codex discovery uses the protocol the host implements and auto-lists only compatible models. A model requiring a newer host/protocol still requires a CodefyUI update. OpenAI `/v1/models` supplies IDs, not reasoning metadata, so curated GPT-5.6 fallbacks supply that metadata.
 
-OpenAI and Codex default to **GPT-5.6 Sol**; Anthropic retains **Claude Sonnet 4.6**. Reasoning-capable catalogs expose controls in the composer and Settings. Supported OpenAI efforts are `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the Codex fallback offers `low` through `max`. Codex defaults to `max`, stored per provider and sent only after host capability negotiation. `ultra` is intentionally excluded because it is a product-level delegation mode, not a portable single-request effort. See [Provider setup](docs/provider-setup.md).
+OpenAI and Codex default to **GPT-5.6 Sol**; Anthropic defaults to **Claude Opus 5.5** (`claude-opus-5-5`), with Fable 5.2, Sonnet 5.5 and Haiku 5.5 as fallbacks until the live list loads. Reasoning-capable catalogs expose controls in the composer and Settings. Supported OpenAI efforts are `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the Codex fallback offers `low` through `max`. Codex defaults to `max`, stored per provider and sent only after host capability negotiation. `ultra` is intentionally excluded because it is a product-level delegation mode, not a portable single-request effort. See [Provider setup](docs/provider-setup.md).
 
 Provider settings/keys live in browser-local, namespaced storage. The local `/api/llm/chat` proxy forwards credentials per request; CodefyUI 1.3.0 is designed not to persist/log them server-side. Graph snapshots and graph-tool results redact declared secrets, credential-shaped fields, unknown schemas/parameters, and exact known secret echoes. Original provider tool arguments remain only in the active execution path; displayed/history copies are schema-redacted. Known secret echoes in assistant text are scrubbed before persistence/reuse, **not retroactively hidden from already-streamed replies**. Free-form user messages are sent/stored as written: this is not a generic credential detector, so do not paste credentials. Treat the browser profile and installed frontend plugins as trusted code because they run in the editor session.
 
@@ -138,14 +142,17 @@ MIT
 
 ---
 
-# Graph Copilot — CodefyUI 的 Agent 工作台（繁體中文）
+# Copilot：CodefyUI 的通用 agent（繁體中文）
 
-Graph Copilot 是 CodefyUI 編輯器的前端 AI 工作台：建構與修改節點圖、在隔離候選圖上執行有上限的實驗、依量測指標排名、安全套用純參數贏家，並把觀察整理成可驗證的研究問題。預設為 **Edit**；**Ask** 由執行層強制唯讀。
+Copilot（原名 Graph Copilot，插件 id 仍是 `graph-copilot`）是 CodefyUI 編輯器的前端通用 agent：依照 Agent Skills 與專案的 `AGENTS.md` 做事、在分頁開啟圖與範例、讀取專案的 git 狀態並在你核准後提交列出的檔案，也能建構與修改節點圖、在隔離候選圖上執行有上限的實驗、依量測指標排名、安全套用純參數贏家，並把觀察整理成可驗證的研究問題。預設為 **Edit**；**Ask** 由執行層強制唯讀。
 
-[完整文件](https://codefyui.github.io/CodefyUI-Plugin-Graph-Copilot/zh-Hant/) · [架構](i18n/zh-Hant/docusaurus-plugin-content-docs/current/architecture.md) · [圖編輯](i18n/zh-Hant/docusaurus-plugin-content-docs/current/graph-editing.md) · [實驗與研究](i18n/zh-Hant/docusaurus-plugin-content-docs/current/experiments-and-research.md) · [後端 Agent 契約](i18n/zh-Hant/docusaurus-plugin-content-docs/current/backend-agent-contract.md) · [路線圖](i18n/zh-Hant/docusaurus-plugin-content-docs/current/roadmap.md)
+[完整文件](https://codefyui.github.io/CodefyUI-Plugin-Graph-Copilot/zh-Hant/) · [側欄、技能與工具](i18n/zh-Hant/docusaurus-plugin-content-docs/current/general-agent.md) · [架構](i18n/zh-Hant/docusaurus-plugin-content-docs/current/architecture.md) · [圖編輯](i18n/zh-Hant/docusaurus-plugin-content-docs/current/graph-editing.md) · [實驗與研究](i18n/zh-Hant/docusaurus-plugin-content-docs/current/experiments-and-research.md) · [後端 Agent 契約](i18n/zh-Hant/docusaurus-plugin-content-docs/current/backend-agent-contract.md) · [路線圖](i18n/zh-Hant/docusaurus-plugin-content-docs/current/roadmap.md)
 
 ## 功能
 
+- **常駐側欄。** 在有側欄的 CodefyUI（插件 API 6）上，Copilot 是從工具列打開、可調寬度的側欄；面板收起時，工具列開關會標示它需要你處理、正在處理或已完成。CodefyUI 3.2.0 與更舊版本則跟以前一樣是浮動視窗。
+- **依照技能與專案指令做事。** System prompt 列出已啟用 Agent Skills 的名稱與描述；agent 用 `load_skill` 讀完整說明、用 `read_skill_file` 讀技能裡的檔案。也可以在訊息框輸入 `/` 自己挑技能。`AGENTS.md` 會作為專案指令加入。技能本文與 `AGENTS.md` 是放在標示區塊裡的參考資料：不能代替你核准、不能跳過核准、不能放寬詢問模式。技能的 `allowed-tools` 只顯示在技能頁面，不會實際限制。主程式沒有 Agent Skills 時，這些功能全部關閉。
+- **跨分頁與專案工作。** `list_tabs`、`open_graph`、`search_examples`、`open_example` 使用主程式的 workspace API；`project_status`、`project_diff`、`project_log`、`project_commit` 使用它的 git API。提交時核准卡片會列出每個檔案，只暫存這些路徑，永遠不包含 `.env` 或被忽略的檔案。見[側欄、技能與工具](i18n/zh-Hant/docusaurus-plugin-content-docs/current/general-agent.md)。
 - **對話建圖與調參。** Agent 取得已安裝節點目錄與依 schema 遮蔽敏感值的即時圖快照，查精確 schema、套用 GraphOps，並依 indexed 操作回執修正。**一批操作是一個宿主復原步驟**，不是整次 Agent turn。只有本次真正修改畫布才觸發自動結構驗證／修復，最多兩次修復提示；無關既有節點不在修復權限內，但 `auto_layout` 可重新排列畫布。未解決的結構問題會標為 incomplete。
 - **Ask／Edit。** Ask 可讀圖／schema、研究、明確驗證結構，以及讀取受支援的宿主執行紀錄；工具清單與執行層都禁止畫布修改及即時／實驗執行。Edit 可要求這些操作；清空、即時執行與研究分別需要核准。
 - **依要求執行即時圖。** run／train／evaluate 要求會先驗證畫布、取得明確確認，再透過 `/ws/execution` 執行，串流節點狀態、loss、epoch 與 loss sparkline。同時只能提交一次即時執行，瀏覽器監控的時間上限預設 6 小時、可調至 12；detach 停止本機 timeout 監控，不停止宿主 run。結果保留宿主輸出、指標／log 尾端、節點錯誤及支援的影片參照／小型圖片預覽。
@@ -182,7 +189,7 @@ Manifest 的 **CodefyUI 1.3.0+** 要求涵蓋基礎前端 API 與後端端點；
 
 ## 編輯與核准邊界
 
-十個工具依權限分組：
+原本十個建圖、執行與實驗工具依權限分組（技能、分頁與專案工具見[側欄、技能與工具](i18n/zh-Hant/docusaurus-plugin-content-docs/current/general-agent.md)）：
 
 - **Ask／Edit 唯讀：** `get_current_graph`、`get_node_schemas`、`validate_graph`、`research`、`list_runs`、`get_run`。
 - **僅 Edit 畫布修改：** `apply_graph_operations`，每批 1–100 個操作，由宿主逐操作驗證並回傳 indexed 回執。
@@ -208,13 +215,14 @@ Manifest 的 **CodefyUI 1.3.0+** 要求涵蓋基礎前端 API 與後端端點；
 
 上限為 8 個 variant、1–5 次重複、共 16 次執行、最多 2 個 concurrent execution、每次候選執行 10 分鐘。研究使用 `record_outputs: false`／`weights_persistent: false`；即時執行使用 `record_outputs: false`／`weights_persistent: true`。
 
-目前契約沒有建立分頁或在新分頁開啟序列化圖的 API。Experiment Lab 可由已驗證 portable evidence，把 redacted GraphOps 套回 redacted baseline，產生可下載的宿主格式圖 JSON。Secret 為空白；未保存 exact prepared graph，所以 schema defaults 或執行準備可能不同。下載不改畫布、不執行，也**不是精確執行重播**。
+Experiment Lab 不會把候選圖開到畫布上（有 workspace API 的主程式上，agent 的 `open_graph`、`open_example` 會在新分頁開啟已儲存的圖與範例，但候選圖不走這條路）。Experiment Lab 可由已驗證 portable evidence，把 redacted GraphOps 套回 redacted baseline，產生可下載的宿主格式圖 JSON。Secret 為空白；未保存 exact prepared graph，所以 schema defaults 或執行準備可能不同。下載不改畫布、不執行，也**不是精確執行重播**。
 
 研究設計、指標、portable evidence、重現性與負責任主張見[實驗與研究](i18n/zh-Hant/docusaurus-plugin-content-docs/current/experiments-and-research.md)。Durable jobs、checkpoint／resume、自適應搜尋、完整環境／artifact provenance、確認性分析與真正唯讀候選分頁，需分階段的 [CodefyUI core 路線圖](i18n/zh-Hant/docusaurus-plugin-content-docs/current/roadmap.md)。
 
 ## 需求與安裝
 
-- 基礎外掛契約需要 CodefyUI 1.3.0 或更新版本。
+- 基礎外掛契約需要 CodefyUI 1.3.0 或更新版本。在 CodefyUI 3.2.0 與更舊版本上，Copilot 是浮動視窗，技能功能關閉。
+- 側欄與 Agent Skills 需要插件 API 6 的主程式（`addPanel` 側欄與 `/api/skills`）；分頁工具需要插件 API 5；專案工具需要專案本身是 git repository。
 - Rich catalog／reasoning 控制需提供 metadata 並接受／轉送 `reasoning_effort` 的新版宿主；執行紀錄／reattach 需 server-owned runs 與 `/api/runs`。請使用明確記載對應能力的宿主，不自行假定未發布版本號。
 - 支援的遠端 provider、ChatGPT Codex 登入或 OpenAI 相容本機端點。
 
@@ -222,7 +230,7 @@ Manifest 的 **CodefyUI 1.3.0+** 要求涵蓋基礎前端 API 與後端端點；
 cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 ```
 
-此未指定 ref 的指令會安裝最新已合併的 `main` commit，包含預編譯 UI（**0.4.0**）。既有使用者需明確更新：
+此未指定 ref 的指令會安裝最新已合併的 `main` commit，包含預編譯 UI（**0.5.0**）。既有使用者需明確更新：
 
 ```bash
 cdui plugin update graph-copilot
@@ -242,7 +250,7 @@ cdui plugin update graph-copilot
 
 Codex discovery 依宿主已實作協定只自動列出相容模型；要求新版宿主／協定的模型仍需更新 CodefyUI。OpenAI `/v1/models` 只提供 ID，GPT-5.6 curated fallback 補足 reasoning metadata。
 
-OpenAI 與 Codex 預設 **GPT-5.6 Sol**，Anthropic 保留 **Claude Sonnet 4.6**。支援 reasoning 的 catalog 在 composer 與 Settings 提供控制；OpenAI 可用 `none`／`low`／`medium`／`high`／`xhigh`／`max`，Codex fallback 為 `low` 至 `max`。Codex 預設 `max`，依 provider 保存，只有宿主協商支援後才送出。`ultra` 是產品層級 delegation，不是可攜的單次 request effort，因此刻意排除。見[供應商設定](i18n/zh-Hant/docusaurus-plugin-content-docs/current/provider-setup.md)。
+OpenAI 與 Codex 預設 **GPT-5.6 Sol**，Anthropic 預設 **Claude Opus 5.5**（`claude-opus-5-5`），即時清單載入前以 Fable 5.2、Sonnet 5.5、Haiku 5.5 作為備援。支援 reasoning 的 catalog 在 composer 與 Settings 提供控制；OpenAI 可用 `none`／`low`／`medium`／`high`／`xhigh`／`max`，Codex fallback 為 `low` 至 `max`。Codex 預設 `max`，依 provider 保存，只有宿主協商支援後才送出。`ultra` 是產品層級 delegation，不是可攜的單次 request effort，因此刻意排除。見[供應商設定](i18n/zh-Hant/docusaurus-plugin-content-docs/current/provider-setup.md)。
 
 設定／keys 放在瀏覽器命名空間儲存，本機 `/api/llm/chat` proxy 逐 request 轉送；CodefyUI 1.3.0 設計為不在伺服器保存／記錄金鑰。圖快照與工具結果遮蔽 declared secrets、憑證型欄位、未知 schema／參數與已知 secret 的精確回聲。原始 provider 工具引數只留在目前執行路徑，顯示／歷史副本依 schema 遮蔽；助手文字的已知 secret 回聲在保存／重用前移除，**無法回溯隱藏已串流顯示的文字**。自由文字訊息仍照原樣傳送／儲存；這不是通用憑證偵測器，請勿貼上憑證。瀏覽器 profile 與前端外掛在編輯器 session 執行，必須視為可信程式碼。
 
