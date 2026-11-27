@@ -103,6 +103,13 @@ export function commitCandidates(status: GitStatusSummary): CommitCandidate[] {
   return [...seen.values()];
 }
 
+/** Paths with staged and unstaged changes at once (git status `MM`, `AM`…).
+ * Staging one adds its whole working copy, including the part left out. */
+export function partlyStaged(status: GitStatusSummary): string[] {
+  const unstaged = new Set(status.unstaged.map((file) => file.path));
+  return status.staged.map((file) => file.path).filter((path) => unstaged.has(path));
+}
+
 export interface LogEntry { sha: string; short: string; subject: string; author: string; authoredAt: string; refs: string[] }
 
 export const readLog = (api: CodefyUIPluginAPI, limit: number, signal?: AbortSignal) => call(api, `/api/git/log?limit=${limit}`, (data) => {

@@ -1,4 +1,4 @@
-import { commitCandidates, commitIndex, isDotenvPath, readStatus, stagePaths } from '../gitHost';
+import { commitCandidates, commitIndex, isDotenvPath, partlyStaged, readStatus, stagePaths } from '../gitHost';
 import { RunExit } from '../runExit';
 import { throwIfAborted } from '../toolGuards';
 import { hasGitProject } from './workspace';
@@ -8,7 +8,7 @@ const MAX_MESSAGE = 2_000;
 
 export const projectCommitTool: ToolDefinition = {
   name: 'project_commit',
-  description: 'Commit changed project files with a message, after the user approves a card that lists every file. Give the exact paths to commit (from project_status); without paths, every committable changed file is proposed. Dotenv and git-ignored files are never committable. Files the user already staged must be in the list, because git commits everything staged. Does not push.',
+  description: 'Commit changed project files with a message, after the user approves a card that lists every file. Give the exact paths to commit (from project_status); without paths, every committable changed file is proposed. Dotenv and git-ignored files are never committable. Files the user already staged must be in the list, because git commits everything staged. A file with both staged and unstaged changes is refused. Does not push.',
   input_schema: {
     type: 'object',
     properties: {
@@ -46,6 +46,13 @@ export const projectCommitTool: ToolDefinition = {
       return;
     }
     if (!requested.length) { ctx.fail('There is nothing to commit.'); return; }
+    // Staging adds a file's whole working copy, so a partly staged file would
+    // commit changes the user deliberately left out (and the card cannot show).
+    const partial = partlyStaged(status).filter((path) => requested.includes(path));
+    if (partial.length) {
+      ctx.fail(`Partly staged: ${partial.slice(0, 20).join(', ')}. The user stages the rest or discards it in the Source Control tab first; nothing was committed.`);
+      return;
+    }
     const stagedDotenv = status.staged.filter((file) => isDotenvPath(file.path));
     if (stagedDotenv.length) { ctx.fail('A dotenv file is staged. The user must unstage it in the Source Control tab; nothing was committed.'); return; }
     const unlisted = status.staged.filter((file) => !requested.includes(file.path));
@@ -69,7 +76,8 @@ export const projectCommitTool: ToolDefinition = {
     throwIfAborted(signal);
     const now = again.ok ? new Map(commitCandidates(again.value).map((candidate) => [candidate.path, candidate.status])) : null;
     const extraStaged = again.ok ? again.value.staged.filter((file) => !requested.includes(file.path)) : [];
-    if (!now || files.some((file) => now.get(file.path) !== file.status) || extraStaged.length) {
+    const partialNow = again.ok ? partlyStaged(again.value).filter((path) => requested.includes(path)) : [];
+    if (!now || files.some((file) => now.get(file.path) !== file.status) || extraStaged.length || partialNow.length) {
       ctx.record(JSON.stringify({ cancelled: true, replan: true, error: 'The project changed while the approval was open. Nothing was committed; read project_status again.' }), 'cancelled');
       throw new RunExit('cancelled', 'commit_stale', 'The project changed while the commit approval was open. Nothing was committed.');
     }

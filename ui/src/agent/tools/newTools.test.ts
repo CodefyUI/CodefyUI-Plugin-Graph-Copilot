@@ -260,6 +260,34 @@ describe('security 8: project_commit', () => {
     expect(posts(api)).toEqual([]);
   });
 
+  it('SEC1: a partly staged file is refused before any card (staging would add the unstaged part)', async () => {
+    scriptModel([{ calls: [call('c1', 'project_commit', { message: 'tidy', paths: ['train.py'] })] }, { text: 'ok' }]);
+    const onProjectCommitApproval = vi.fn(async () => true);
+    const api = commitHost(gitStatus({ staged: [file('train.py', 'modified', 'MM')], unstaged: [file('train.py', 'modified', 'MM')], untracked: [] }));
+    const result = await runTurn({ api, settings: SETTINGS, history: [], userText: 'commit what I staged', callbacks: callbacks({ onProjectCommitApproval }), gitProject: true });
+    expect(onProjectCommitApproval).not.toHaveBeenCalled();
+    expect(posts(api)).toEqual([]);
+    expect(result.turns.find((turn) => turn.role === 'tool')!.content).toContain('Partly staged: train.py');
+  });
+
+  it('SEC1: without paths, a partly staged file among the candidates is refused too', async () => {
+    scriptModel([{ calls: [call('c1', 'project_commit', { message: 'all' })] }, { text: 'ok' }]);
+    const onProjectCommitApproval = vi.fn(async () => true);
+    const api = commitHost(gitStatus({ staged: [file('train.py', 'modified', 'MM')], unstaged: [file('train.py', 'modified', 'MM'), file('graphs/train.graph.json')] }));
+    await runTurn({ api, settings: SETTINGS, history: [], userText: 'commit', callbacks: callbacks({ onProjectCommitApproval }), gitProject: true });
+    expect(onProjectCommitApproval).not.toHaveBeenCalled();
+    expect(posts(api)).toEqual([]);
+  });
+
+  it('SEC1: a file that became partly staged while the card was open is not committed', async () => {
+    scriptModel([{ calls: [call('c1', 'project_commit', { message: 'x', paths: ['graphs/train.graph.json'] })] }, { text: 'ok' }]);
+    const api = commitHost(gitStatus({ staged: [file('graphs/train.graph.json')], unstaged: [] }),
+      () => gitStatus({ staged: [file('graphs/train.graph.json', 'modified', 'MM')], unstaged: [file('graphs/train.graph.json', 'modified', 'MM')] }));
+    const result = await runTurn({ api, settings: SETTINGS, history: [], userText: 'x', callbacks: callbacks({ onProjectCommitApproval: async () => true }), gitProject: true });
+    expect(result.reason).toBe('commit_stale');
+    expect(posts(api)).toEqual([]);
+  });
+
   it('a conflict or merge in progress is left to the user', async () => {
     scriptModel([{ calls: [call('c1', 'project_commit', { message: 'x' })] }, { text: 'ok' }]);
     const api = commitHost(gitStatus({ conflicted: [file('a.py', 'conflicted', 'UU')], merge_in_progress: true }));
