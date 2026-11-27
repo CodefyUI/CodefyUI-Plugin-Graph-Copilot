@@ -2554,7 +2554,9 @@
 .gcp-install-skipped { margin: 4px 0 0; padding-left: 16px; color: var(--gcp-role-attention); }
 
 /* Narrow panels (300–720px): container queries, never the viewport. */
-@container workbench (max-width: 399px) {
+/* The host's 400 px dock leaves 396 px inside its resize handle: keep the
+   state word there; drop it only when truly narrow. */
+@container workbench (max-width: 339px) {
   .gcp-state-label { display: none; }
 }
 @container workbench (max-width: 320px) {

@@ -125,3 +125,14 @@ for (const view of ['chat', 'Skills', 'Settings'] as const) {
     expect(stops.filter((stop) => !stop.ring)).toEqual([]);
   });
 }
+
+test('U2: at the host default (400 px dock, 396 px inside the handle) the state chip keeps its word', async ({ page }) => {
+  await readyPreview(page, 'host=v6&scenario=setup-required&panelWidth=396');
+  await openCopilot(page);
+  const label = page.locator('.gcp-state-label');
+  await expect(label).toBeVisible();
+  await expect(label).toHaveText('Needs you');
+  await page.evaluate(() => { (document.querySelector('#mock-side-dock') as HTMLElement).style.width = '330px'; });
+  await expect(label).toBeHidden();
+  await expect(page.locator('.gcp-state-glyph')).toBeVisible();
+});
