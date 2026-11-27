@@ -31,7 +31,7 @@ The header shows the same state as a word and a glyph (`!`, `✓`, `⚙`, `○`)
 
 ## Approvals
 
-Clearing the canvas, removing many nodes at once (10 or more, or at least 3 that make up half the graph or more), running the graph, running a study and committing files each need your approval. The request appears as a card in the conversation, showing what will happen and what it costs. Graph cards name the tab they act on and say when Copilot opened that tab during this turn. Focus starts on **Cancel**, Escape cancels, and the main button names the action ("Run graph", "Commit 3 files").
+Clearing the canvas, removing many nodes (counted over the whole turn: 10 or more, or at least 3 that make up half of the graph the turn started with; each batch past that point asks again), running the graph, running a study and committing files each need your approval. The request appears as a card in the conversation, showing what will happen and what it costs. Graph cards name the tab they act on and say when Copilot opened that tab during this turn. Focus starts on **Cancel**, Escape cancels, and the main button names the action ("Run graph", "Commit 3 files").
 
 The agent loop checks approvals in code. A skill, `AGENTS.md`, a tool result or the model's own text cannot approve anything or skip a card.
 
