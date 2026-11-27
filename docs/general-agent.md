@@ -31,9 +31,11 @@ The header shows the same state as a word and a glyph (`!`, `✓`, `⚙`, `○`)
 
 ## Approvals
 
-Clearing the canvas, running the graph, running a study and committing files each need your approval. The request appears as a card in the conversation, showing what will happen and what it costs. Focus starts on **Cancel**, Escape cancels, and the main button names the action ("Run graph", "Commit 3 files").
+Clearing the canvas, removing many nodes at once (10 or more, or at least 3 that make up half the graph or more), running the graph, running a study and committing files each need your approval. The request appears as a card in the conversation, showing what will happen and what it costs. Graph cards name the tab they act on and say when Copilot opened that tab during this turn. Focus starts on **Cancel**, Escape cancels, and the main button names the action ("Run graph", "Commit 3 files").
 
-The agent loop checks approvals in code. A skill, `AGENTS.md`, a tool result or the model's own text cannot approve anything or skip a card. In **Ask** mode, tools that change things are not offered to the model and are refused if it calls them anyway; skills cannot change that.
+The agent loop checks approvals in code. A skill, `AGENTS.md`, a tool result or the model's own text cannot approve anything or skip a card.
+
+While a card is open, its tool row reads "Waiting for your approval". A declined card reads "Not executed", and only a call that actually finished is described in the past tense. When a run fails, one block shows the reason, the real error, what did not happen ("No graph changes · Validation not run") and Retry. A Stop you asked for is shown in a neutral colour, not as an error. In **Ask** mode, tools that change things are not offered to the model and are refused if it calls them anyway; skills cannot change that.
 
 ## Skills
 
@@ -67,9 +69,9 @@ The ten graph, run and experiment tools are unchanged (see [How the agent edits 
 | `project_log` | Ask and Edit | A git project | Recent commits |
 | `project_commit` | Edit, with approval | A git project | Stage exactly the listed files and commit them on the current branch |
 
-Large results are cut, and the cut is marked: skill text and files at 64 KB, diffs at 32 KB, lists at 200 entries.
+Large results are cut, and the cut is marked: skill text and files at 64 KB, diffs at 32 KB, lists at 200 entries. Diffs and the commit log reach the model inside quoted blocks marked as untrusted data. Saved conversations keep a reference to a loaded skill or skill file instead of its text, and Copilot fetches it again when the conversation continues; if it is gone, the model is told so. When the browser cannot save a conversation in full, the panel says so.
 
-`project_commit` lists every file on the approval card. It stages only those paths (never "add all"), refuses `.env` files and files git ignores, refuses during a merge, rebase or conflict, and checks the files again after you approve. It never pushes, pulls or switches branches; do those in CodefyUI's Source Control tab.
+`project_commit` lists every file on the approval card. It stages only those paths (never "add all"), refuses `.env` files and files git ignores, refuses files that are only partly staged (finish or discard the staging in the Source Control tab first), refuses during a merge, rebase or conflict, and checks the files again after you approve. It never pushes, pulls or switches branches; do those in CodefyUI's Source Control tab.
 
 ## Language
 
