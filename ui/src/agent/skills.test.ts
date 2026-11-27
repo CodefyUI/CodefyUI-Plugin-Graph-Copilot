@@ -322,3 +322,41 @@ describe('security 4: no tool reads arbitrary files, fetches URLs or installs sk
     expect(api.fetchLog.every((entry) => entry.url.startsWith('/api/'))).toBe(true);
   });
 });
+
+describe('security 6: the API key never leaves the provider request', () => {
+  it('not in tool results, transcripts, errors, host requests or the console, across skill and project tools', async () => {
+    const key = (SETTINGS.apiKeys as Record<string, string>).openai;
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) => vi.spyOn(console, method).mockImplementation(() => {}));
+    try {
+      const bodies = scriptModel([
+        { calls: [call('c1', 'load_skill', { name: 'build-graph' }), call('c2', 'read_skill_file', { name: 'build-graph', path: '../secrets' })] },
+        { calls: [call('c3', 'project_status'), call('c4', 'project_diff', { path: 'src/a.py' })] },
+        { text: 'done' },
+      ]);
+      const api = skillHost({}, {
+        '/api/skills/file?*': () => ({ status: 400, body: { detail: { code: 'bad_path', message: 'Path outside the skill.' } } }),
+        '/api/git/status': () => ({ body: { repo: { state: 'ready' }, status: { branch: 'main', staged: [], unstaged: [{ path: 'src/a.py', kind: 'modified' }], untracked: [], conflicted: [] } } }),
+        '/api/git/diff?*': () => ({ status: 500, body: { detail: 'git diff failed' } }),
+      });
+      const cb = callbacks();
+      await runTurn({ api, settings: SETTINGS, history: [], userText: 'look around', callbacks: cb, agentContext: context(), gitProject: true });
+
+      // The provider proxy receives the key in its own field, nowhere else.
+      for (const body of bodies) {
+        expect(body.api_key).toBe(key);
+        expect(JSON.stringify({ ...body, api_key: undefined })).not.toContain(key);
+      }
+      // Transcript, errors and every host request are key-free.
+      const committed = (cb.onTurnsCommitted as ReturnType<typeof vi.fn>).mock.calls;
+      expect(committed.length).toBeGreaterThan(0);
+      expect(JSON.stringify(committed)).not.toContain(key);
+      expect(JSON.stringify((cb.onError as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(key);
+      expect(api.fetchLog.length).toBeGreaterThan(0);
+      expect(JSON.stringify(api.fetchLog)).not.toContain(key);
+      expect(JSON.stringify((api.storage.set as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(key);
+      for (const spy of spies) expect(JSON.stringify(spy.mock.calls)).not.toContain(key);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+});
