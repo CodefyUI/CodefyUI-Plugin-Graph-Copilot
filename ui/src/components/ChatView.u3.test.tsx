@@ -47,10 +47,11 @@ function pendingRun() {
   return Object.assign(() => opts, { settle: (result: TurnResult) => resolve(result) });
 }
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 
-const css = readFileSync(path.resolve(__dirname, '../styles.css'), 'utf8');
+// Read as test data like styles.test.ts does (a CSS ?raw import is empty under
+// Vitest, and Node's types are not part of this project).
+const { readFileSync } = await vi.importActual<{ readFileSync(path: string, encoding: 'utf8'): string }>('node:fs');
+const css = readFileSync('src/styles.css', 'utf8');
 const rule = (selector: string) => css.match(new RegExp(`(^|\\n)${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`))?.[2] ?? '';
 
 async function finishWith(status: TurnResult['status'], reason: string, error?: string) {
@@ -71,6 +72,11 @@ async function finishWith(status: TurnResult['status'], reason: string, error?: 
 
 describe('U3: one failure block, neutral Stop', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('reads the real stylesheet (the CSS checks below would pass on an empty one)', () => {
+    expect(css.length).toBeGreaterThan(10_000);
+    expect(rule('.gcp-retry-btn')).toMatch(/padding/);
+  });
 
   it('a failed request shows one block: reason, real error, facts, then Retry', async () => {
     await finishWith('failed', 'stream_error', 'HTTP 502: upstream refused');

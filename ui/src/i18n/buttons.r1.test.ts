@@ -1,16 +1,15 @@
 /** R1: every approval card button is a verb phrase, never a question, in every language. */
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en } from './en';
 import { zhTW } from './zh-TW';
+// Vite's ?raw import reads the file as text without Node types.
+import source from '../components/ChatView.tsx?raw';
 
-const source = readFileSync(path.resolve(__dirname, '../components/ChatView.tsx'), 'utf8');
 /** The dictionary keys used by any confirmLabel= or cancelLabel= prop. */
-const buttonKeys = [...new Set(source.split('\n')
-  .filter((line) => /(confirmLabel|cancelLabel)=/.test(line))
-  .flatMap((line) => line.split(/(?:confirmLabel|cancelLabel)=/).slice(1))
-  .flatMap((prop) => [...prop.split(/\b(?:confirmLabel|cancelLabel|onDecide)\b/)[0].matchAll(/'((?:approve|common)\.[\w.]+)'/g)].map((m) => m[1])))].sort();
+const buttonKeys: string[] = [...new Set<string>(source.split('\n')
+  .filter((line: string) => /(confirmLabel|cancelLabel)=/.test(line))
+  .flatMap((line: string) => line.split(/(?:confirmLabel|cancelLabel)=/).slice(1))
+  .flatMap((prop: string) => [...prop.split(/\b(?:confirmLabel|cancelLabel|onDecide)\b/)[0].matchAll(/'((?:approve|common)\.[\w.]+)'/g)].map((m) => m[1])))].sort();
 
 describe('R1: approval card buttons', () => {
   it('finds the buttons of every card (clear, remove, study, run, commit)', () => {
