@@ -117,7 +117,7 @@ export function SkillsView({ api, onChanged }: SkillsViewProps) {
                 <button className="gcp-skill-open" onClick={() => setOpenId(skill.id)} aria-label={t('skills.open', { name: skill.name })}>
                   <span className="gcp-skill-name">{skill.name}</span>
                   <span className="gcp-skill-source">{sourceLabel(skill.source, t)}</span>
-                  <span className="gcp-skill-description">{skill.description}</span>
+                  <span className="gcp-skill-description" data-user-content>{skill.description}</span>
                   {!skill.valid && <span className="gcp-skill-flag">{t('skills.invalid')}</span>}
                   {skill.valid && skill.shadowed_by && <span className="gcp-skill-flag">{t('skills.shadowed', { id: skill.shadowed_by })}</span>}
                 </button>
@@ -234,7 +234,7 @@ function SkillDetailView({ api, id, summary, canDelete, onBack, onDeleted, onRef
       {error && <p className="gcp-state gcp-state--error" role="alert">{error}</p>}
       {detail && (
         <>
-          <p className="gcp-skill-description full">{detail.description}</p>
+          <p className="gcp-skill-description full" data-user-content>{detail.description}</p>
           {detail.issues.length > 0 && (
             <section className="gcp-skill-issues" aria-label={t('skills.issues')}>
               <h3 className="gcp-skill-group-title">{t('skills.issues')}</h3>

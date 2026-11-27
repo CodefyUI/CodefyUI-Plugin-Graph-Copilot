@@ -10,6 +10,8 @@
  * never touch the network or FileReader internals.
  */
 
+import { currentLocale, translate } from '../i18n';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -170,7 +172,7 @@ export async function readFileAsAttachment(
 
   if (kind === 'image') {
     if (file.size > MAX_IMAGE_BYTES) {
-      throw new Error(`Image "${file.name}" is too large (max ${formatBytes(MAX_IMAGE_BYTES)})`);
+      throw new Error(translate(currentLocale(), 'attach.imageTooLarge', { name: file.name, max: formatBytes(MAX_IMAGE_BYTES) }));
     }
     const dataUrl = await (deps.readDataUrl ?? readDataUrlDefault)(file);
     return { ...base, dataUrl };
@@ -178,21 +180,21 @@ export async function readFileAsAttachment(
 
   if (kind === 'pdf') {
     if (file.size > MAX_PDF_BYTES) {
-      throw new Error(`PDF "${file.name}" is too large (max ${formatBytes(MAX_PDF_BYTES)})`);
+      throw new Error(translate(currentLocale(), 'attach.pdfTooLarge', { name: file.name, max: formatBytes(MAX_PDF_BYTES) }));
     }
     let text: string;
     try {
       text = await (deps.loadPdfText ?? extractPdfText)(file);
     } catch (err) {
       const msg = (err as Error)?.message ?? String(err);
-      throw new Error(`Could not read PDF "${file.name}": ${msg}`);
+      throw new Error(translate(currentLocale(), 'attach.pdfUnreadable', { name: file.name, error: msg }));
     }
     return { ...base, text };
   }
 
   // text / code
   if (file.size > MAX_TEXT_BYTES) {
-    throw new Error(`Text file "${file.name}" is too large (max ${formatBytes(MAX_TEXT_BYTES)})`);
+    throw new Error(translate(currentLocale(), 'attach.textTooLarge', { name: file.name, max: formatBytes(MAX_TEXT_BYTES) }));
   }
   const text = await (deps.readText ?? ((f: File) => f.text()))(file);
   return { ...base, text };

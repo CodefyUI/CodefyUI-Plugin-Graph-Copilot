@@ -147,7 +147,7 @@ function ToolStageRow({ stage, active, awaiting = false }: { stage: ToolStage; a
                 key={m.url}
                 className="gcp-stage-clip"
                 src={m.url}
-                alt={m.node ? `${m.node} output clip` : 'run output clip'}
+                alt={m.node ? translate(currentLocale(), 'bubble.clip.node', { node: m.node }) : translate(currentLocale(), 'bubble.clip')}
               />
             ) : (
               <video
@@ -197,11 +197,11 @@ function ToolBatch({ stages, active, awaiting = false }: { stages: ToolStage[]; 
   return (
     <div className={`gcp-stage gcp-stage-batch ${status}`} aria-busy={status === 'running'}>
       <button type="button" className="gcp-stage-head" aria-expanded={open} aria-controls={open ? id : undefined}
-        aria-label={`${stages.length} tool calls: ${names} · ${facts}`} onClick={() => setOpen((v) => !v)}>
+        aria-label={`${translate(currentLocale(), 'bubble.toolCalls', { count: stages.length })}: ${names} · ${facts}`} onClick={() => setOpen((v) => !v)}>
         <span className="gcp-stage-status" aria-hidden="true">{GLYPH[status]}</span>
         <span className="gcp-stage-copy">
           <span className="gcp-stage-line">
-            <span className="gcp-stage-label">{stages.length} tool calls</span>
+            <span className="gcp-stage-label">{translate(currentLocale(), 'bubble.toolCalls', { count: stages.length })}</span>
             <code className="gcp-stage-name">{names}</code>
           </span>
           <span className="gcp-stage-summary">{facts}</span>
@@ -245,7 +245,7 @@ export function MessageBubble({
 
   return (
     <div className={`gcp-msg-row ${isUser ? 'user' : 'assistant'}${isStep ? ' step' : ''}`}>
-      {isUser && <span className="gcp-message-author">You</span>}
+      {isUser && <span className="gcp-message-author">{t('bubble.you')}</span>}
       {/* Attachments (above the text, for user turns) */}
       {attachments.length > 0 && (
         <div className="gcp-bubble-attachments">
@@ -274,7 +274,7 @@ export function MessageBubble({
       {/* Step marker — labels each tool-calling round of a multi-round run */}
       {isStep && typeof step === 'number' && (
         <div className="gcp-step-tag">
-          Step {step}
+          {t('bubble.step', { step })}
         </div>
       )}
 
@@ -300,7 +300,7 @@ export function MessageBubble({
       {/* Legacy ops summary chip — never contradict a structured run result. */}
       {!isUser && !turn.runSummary && turn.opsSummary && stages.length === 0 && (
         <div className="gcp-ops-chip">
-          <span>Applied: {turn.opsSummary}</span>
+          <span>{t('bubble.applied', { summary: turn.opsSummary })}</span>
         </div>
       )}
     </div>

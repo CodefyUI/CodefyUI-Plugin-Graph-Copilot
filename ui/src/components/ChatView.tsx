@@ -148,13 +148,19 @@ function starters(mode: AgentMode, graph: GraphStats | undefined, t: (key: Messa
 }
 
 /** Which tab an approval applies to; a warning when Copilot opened it. */
+/** A translated sentence with user data (a tab or graph name) marked as data. */
+function withData(template: string, value: string): React.ReactNode {
+  const [before, after = ''] = template.split('\u0000');
+  return <>{before}<span data-user-content>{value}</span>{after}</>;
+}
+
 function TargetLine({ target, t }: { target?: ApprovalTarget; t: (key: MessageKey, vars?: Record<string, string | number>) => string }) {
   if (!target) return null;
   return (
     <>
       <p className="gcp-approval-target">
-        {target.tab ? t('approve.target', { tab: target.tab }) : t('approve.target.canvas')}
-        {target.graph ? <span className="gcp-approval-target-graph"> · {target.graph}</span> : null}
+        {target.tab ? withData(t('approve.target', { tab: '\u0000' }), target.tab) : t('approve.target.canvas')}
+        {target.graph ? <span className="gcp-approval-target-graph"> · <span data-user-content>{target.graph}</span></span> : null}
       </p>
       {target.openedThisTurn && <p className="gcp-approval-opened" role="note">{t('approve.target.opened')}</p>}
     </>
@@ -482,7 +488,7 @@ export function ChatView({
   const handleContinue = () => {
     if (!ready || !active || busy) return;
     repin();
-    void run.start('Continue the previous request from the current graph and recorded run results. Read the graph again first; do not replay operations or executions already dispatched.', [], mode);
+    void run.start(t('chat.continue.prompt'), [], mode);
   };
 
   const handleExperimentDecision = (approved: boolean) => run.decide(approved);

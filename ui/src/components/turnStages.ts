@@ -244,10 +244,10 @@ function describeValidate(result?: ChatTurn): StageDescription {
     ? parsed.errors as string[] : null;
   if (!errors || (parsed?.status === 'invalid' && parsed.valid === true)
     || (parsed?.status === 'valid' && parsed.valid === false)) {
-    return unknownResult(label, detail, 'Validation outcome unknown');
+    return unknownResult(label, detail, tr('stage.validation.unknown'));
   }
   if (parsed?.valid === true || parsed?.status === 'valid') {
-    if (errors.length > 0) return unknownResult(label, detail, 'Validation outcome unknown');
+    if (errors.length > 0) return unknownResult(label, detail, tr('stage.validation.unknown'));
     return { label, summary: tr('stage.validation.ok'), status: 'ok' };
   }
   if (parsed?.valid === false || parsed?.status === 'invalid') {
@@ -256,7 +256,7 @@ function describeValidate(result?: ChatTurn): StageDescription {
       detail: errors.length > 0 ? truncate(errors.map((e) => `• ${e}`).join('\n'), 4000) : detail,
     };
   }
-  return unknownResult(label, detail, 'Validation outcome unknown');
+  return unknownResult(label, detail, tr('stage.validation.unknown'));
 }
 
 function describeReadGraph(result?: ChatTurn): StageDescription {

@@ -1,4 +1,5 @@
 import React, { useId, useLayoutEffect, useRef } from 'react';
+import { currentLocale, translate } from '../i18n';
 
 interface ConfirmDialogProps {
   title: string;
@@ -12,7 +13,7 @@ interface ConfirmDialogProps {
 }
 
 /** A true document-modal decision. The workbench itself remains non-modal. */
-export function ConfirmDialog({ title, children, actions, onCancel, active = true, busy = false, className = '', detailsLabel = 'Confirmation details' }: ConfirmDialogProps) {
+export function ConfirmDialog({ title, children, actions, onCancel, active = true, busy = false, className = '', detailsLabel = translate(currentLocale(), 'confirm.details') }: ConfirmDialogProps) {
   const id = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef(onCancel);

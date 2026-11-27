@@ -15,6 +15,7 @@ import type {
   ModelCatalogResult,
   ReasoningEffort,
 } from '../llm/models';
+import { currentLocale, translate } from '../i18n';
 import {
   catalogEntryForModel,
   isReasoningEffort,
@@ -263,19 +264,19 @@ export function reconcileModelCatalogSettings(
 export function readinessReason(s: Settings, codexLoggedIn: boolean): string | null {
   const hasText = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
   const providers = ['openai', 'openrouter', 'anthropic', 'openai-codex', 'custom'];
-  if (!providers.includes(s.provider)) return 'Select a supported provider in Settings.';
-  if (!hasText(s.models?.[s.provider])) return 'Enter a model ID in Settings before sending a request.';
+  if (!providers.includes(s.provider)) return translate(currentLocale(), 'settings.ready.provider');
+  if (!hasText(s.models?.[s.provider])) return translate(currentLocale(), 'settings.ready.model');
   switch (s.provider) {
     case 'openai':
-      return hasText(s.apiKeys?.openai) ? null : 'Enter an OpenAI API key in Settings.';
+      return hasText(s.apiKeys?.openai) ? null : translate(currentLocale(), 'settings.ready.openai');
     case 'openrouter':
-      return hasText(s.apiKeys?.openrouter) ? null : 'Enter an OpenRouter API key in Settings.';
+      return hasText(s.apiKeys?.openrouter) ? null : translate(currentLocale(), 'settings.ready.openrouter');
     case 'anthropic':
-      return hasText(s.apiKeys?.anthropic) ? null : 'Enter an Anthropic API key in Settings.';
+      return hasText(s.apiKeys?.anthropic) ? null : translate(currentLocale(), 'settings.ready.anthropic');
     case 'openai-codex':
-      return codexLoggedIn ? null : 'Sign in with ChatGPT Codex in Settings.';
+      return codexLoggedIn ? null : translate(currentLocale(), 'settings.ready.codex');
     case 'custom':
-      return hasText(s.customBaseUrl) ? null : 'Enter the custom API base URL in Settings.';
+      return hasText(s.customBaseUrl) ? null : translate(currentLocale(), 'settings.ready.custom');
   }
 }
 

@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Conversation } from '../state/conversations';
 import { listConversations, deleteConversation } from '../state/conversations';
+import { currentLocale, translate, useT } from '../i18n';
 
 function DeleteIcon() {
   return (
@@ -13,14 +14,15 @@ function DeleteIcon() {
 }
 
 function relativeTime(ts: number): string {
+  const tr = translate.bind(null, currentLocale());
   const sec = Math.floor((Date.now() - ts) / 1000);
-  if (sec < 60) return 'just now';
+  if (sec < 60) return tr('history.justNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return tr('history.minutesAgo', { count: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return tr('history.hoursAgo', { count: hr });
   const day = Math.floor(hr / 24);
-  return day < 7 ? `${day}d ago` : `${Math.floor(day / 7)}w ago`;
+  return day < 7 ? tr('history.daysAgo', { count: day }) : tr('history.weeksAgo', { count: Math.floor(day / 7) });
 }
 
 export interface HistoryViewProps {
@@ -35,6 +37,7 @@ export interface HistoryViewProps {
 export function HistoryView({ api, activeId, onResume, onNew, disabled = false }: HistoryViewProps) {
   const [conversations, setConversations] = useState<Conversation[]>(() => listConversations(api));
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const t = useT();
   const confirmationId = useId();
   const focusAfterDeleteRef = useRef<string | null | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
@@ -95,52 +98,53 @@ export function HistoryView({ api, activeId, onResume, onNew, disabled = false }
       }
     }}>
       <div className="gcp-view-heading">
-        <h2>Conversations</h2>
-        <p>Saved in this browser only. Deleting a conversation does not undo graph changes or stop host runs.</p>
+        <h2>{t('history.title')}</h2>
+        <p>{t('history.note')}</p>
       </div>
       <div className="gcp-history-top">
-        <button ref={newButtonRef} type="button" className="gcp-new-btn" aria-label="Start new conversation" disabled={disabled}
+        <button ref={newButtonRef} type="button" className="gcp-new-btn" aria-label={t('history.new.aria')} disabled={disabled}
           onClick={() => { if (!disabled) { setPendingDelete(null); onNew(); } }}>
-          New conversation
+          {t('history.new')}
         </button>
       </div>
       {conversations.length === 0 ? (
         <div className="gcp-history-empty">
-          <p>No conversations yet</p>
-          <p>Start a new conversation to ask about or edit the current graph.</p>
+          <p>{t('history.empty')}</p>
+          <p>{t('history.empty.hint')}</p>
         </div>
       ) : (
         <div className="gcp-history-list" ref={listRef} onClick={(e) => {
           if (e.target === e.currentTarget) cancelDelete();
         }}>
           {conversations.map((conv) => {
-            const title = conv.title || '(untitled)';
+            const title = conv.title || t('history.untitled.paren');
+            const name = conv.title || t('history.untitled');
             const confirming = pendingDelete === conv.id;
             return (
               <div key={conv.id} className={`gcp-history-item${conv.id === activeId ? ' active' : ''}`}>
                 <button type="button" className="gcp-history-resume" disabled={disabled} data-resume-id={conv.id}
-                  aria-label={`Resume conversation: ${title}`} aria-current={conv.id === activeId ? 'true' : undefined}
+                  aria-label={t('history.resume', { title })} aria-current={conv.id === activeId ? 'true' : undefined}
                   onClick={() => handleResume(conv.id)}>
                   <span className="gcp-history-info">
                     <span className="gcp-history-title" title={title}>{title}</span>
                     <span className="gcp-history-meta">
                       {relativeTime(conv.updatedAt)} · {conv.provider}/{conv.model || '—'}
-                      {conv.reasoningEffort ? ` · ${conv.reasoningEffort} effort` : ''}
+                      {conv.reasoningEffort ? ` · ${t('history.effort', { effort: conv.reasoningEffort })}` : ''}
                     </span>
                   </span>
                 </button>
-                {confirming && <span id={confirmationId} className="gcp-history-confirm-label">Delete this conversation?</span>}
+                {confirming && <span id={confirmationId} className="gcp-history-confirm-label">{t('history.delete.confirm')}</span>}
                 <button type="button" className={`gcp-history-delete${confirming ? ' confirm' : ''}`}
                   data-delete-id={conv.id} disabled={disabled} onClick={() => handleDelete(conv.id)}
                   aria-describedby={confirming ? confirmationId : undefined}
-                  aria-label={`${confirming ? 'Confirm delete' : 'Delete'} "${conv.title || 'untitled'}"`}
-                  title={confirming ? 'Delete conversation' : 'Delete'}>
-                  {confirming ? 'Delete' : <DeleteIcon />}
+                  aria-label={t(confirming ? 'history.delete.confirmAria' : 'history.delete.aria', { title: name })}
+                  title={confirming ? t('history.delete.title') : t('history.delete')}>
+                  {confirming ? t('history.delete') : <DeleteIcon />}
                 </button>
                 {confirming && (
                   <button type="button" className="gcp-history-cancel" disabled={disabled}
-                    aria-label={`Cancel delete "${conv.title || 'untitled'}"`} onClick={() => cancelDelete(true)}>
-                    Cancel
+                    aria-label={t('history.delete.cancelAria', { title: name })} onClick={() => cancelDelete(true)}>
+                    {t('common.cancel')}
                   </button>
                 )}
               </div>

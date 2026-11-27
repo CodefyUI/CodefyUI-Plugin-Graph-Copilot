@@ -9,6 +9,7 @@
 import React from 'react';
 import type { RunProgressUpdate } from '../agent/runGraph';
 import { lossFromProgress } from '../agent/wireOutputs';
+import { currentLocale, translate } from '../i18n';
 
 /** Sliding cap keeps the polyline cheap to render on long runs. */
 export const SPARKLINE_MAX_POINTS = 120;
@@ -70,7 +71,7 @@ export function RunSparkline({ series }: RunSparklineProps) {
       width={width}
       height={height}
       role="img"
-      aria-label={`Training loss trend, latest ${latest.toFixed(4)}`}
+      aria-label={translate(currentLocale(), 'sparkline.aria', { value: latest.toFixed(4) })}
     >
       <polyline
         points={points}
