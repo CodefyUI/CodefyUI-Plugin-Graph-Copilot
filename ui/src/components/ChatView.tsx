@@ -638,10 +638,14 @@ export function ChatView({
 
         {/* Approvals live in the conversation, where their context is. */}
         {run.confirmation && (
-          <ApprovalCard key="clear" danger active={active} title={t('approve.clear.title')}
-            confirmLabel={t('approve.clear.confirm')} cancelLabel={t('approve.clear.cancel')} onDecide={run.decide}>
+          <ApprovalCard key="clear" danger active={active}
+            title={run.confirmation.removeNodes ? t('approve.remove.title', { count: run.confirmation.removeNodes }) : t('approve.clear.title')}
+            confirmLabel={run.confirmation.removeNodes ? t('approve.remove.confirm', { count: run.confirmation.removeNodes }) : t('approve.clear.confirm')}
+            cancelLabel={t('approve.clear.cancel')} onDecide={run.decide}>
             <TargetLine target={run.confirmation.target} t={t} />
-            <p>{t('approve.clear.body', { nodes: run.confirmation.nodeCount, edges: run.confirmation.edgeCount })}</p>
+            <p>{run.confirmation.removeNodes
+              ? t('approve.remove.body', { count: run.confirmation.removeNodes, total: run.confirmation.nodeCount })
+              : t('approve.clear.body', { nodes: run.confirmation.nodeCount, edges: run.confirmation.edgeCount })}</p>
           </ApprovalCard>
         )}
         {experimentApproval && (

@@ -315,6 +315,20 @@ describe('ChatView', () => {
       expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
 
+    it('SEC7: a mass removal card says how many nodes go, with a Remove verb', async () => {
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        await opts.confirmClearGraph!({ runId: 'r', toolCallId: 'c', nodeCount: 12, edgeCount: 4, removeNodes: 10 });
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'tidy');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+      const card = await screen.findByRole('group', { name: 'Remove 10 nodes?' });
+      expect(card).toHaveTextContent('removes 10 of the 12 nodes');
+      expect(within(card).getByRole('button', { name: 'Remove 10 nodes' })).toHaveClass('gcp-danger-btn');
+    });
+
     it('SEC3: the run card names the tab and warns when Copilot opened it this turn', async () => {
       (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
         await opts.callbacks.onRunApproval!({ reason: 'Run your MNIST graph', nodeCount: 3, edgeCount: 2, nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu',

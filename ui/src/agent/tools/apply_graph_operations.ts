@@ -7,10 +7,22 @@ import {
 } from '../toolGuards';
 import type { ToolDefinition } from './types';
 
-/** Only a singleton `clear_graph` batch needs the user's approval. */
+/** A singleton `clear_graph` batch needs the user's approval. */
 function isClear(input: Record<string, unknown>): boolean {
   const operations = input.operations;
   return Array.isArray(operations) && isRecord(operations[0]) && operations[0].op === 'clear_graph';
+}
+
+/** Distinct nodes a batch removes. */
+export function removedNodeCount(input: Record<string, unknown>): number {
+  const operations = Array.isArray(input.operations) ? input.operations : [];
+  return new Set(operations.filter((op) => isRecord(op) && op.op === 'remove_node').map((op) => String((op as Record<string, unknown>).node_id))).size;
+}
+
+/** SEC7: emptying a graph node by node needs the same approval as clear_graph:
+ * a batch removing at least 10 nodes, or at least 3 that are half the graph or more. */
+export function isMassRemoval(removed: number, graphNodes: number): boolean {
+  return removed >= 10 || (removed >= 3 && removed * 2 >= graphNodes);
 }
 
 export const applyGraphOperationsTool: ToolDefinition = {
@@ -20,7 +32,7 @@ export const applyGraphOperationsTool: ToolDefinition = {
 - {"op":"add_node","node_type":"<exact catalog name>","ref":"<alias>","params":{...},"position":{"x":<num>,"y":<num>}} — ref/params/position optional. A ref is usable as source/target/node_id ONLY in this SAME batch. Later calls must use real node IDs from receipts/refs or get_current_graph.
 - {"op":"connect","source":"<node id or ref>","source_handle":"<output port>","target":"<node id or ref>","target_handle":"<input port>"} — use exact schema ports; control-flow trigger edges use source_handle "trigger".
 - {"op":"set_params","node_id":"<node id or ref>","params":{...}}
-- {"op":"remove_node","node_id":"<node id or ref>"}
+- {"op":"remove_node","node_id":"<node id or ref>"} — a batch removing 10 or more nodes, or 3 or more that are at least half the graph, needs the user's approval like clear_graph.
 - {"op":"remove_edge","source":"<node id or ref>","target":"<node id or ref>","source_handle":"<optional>","target_handle":"<optional>"}
 - {"op":"clear_graph"} — singleton batch only, requires fresh user confirmation. Never bypass a refusal with node removal.
 - {"op":"auto_layout"} — auto-positions nodes after structural changes.
@@ -30,7 +42,9 @@ Malformed batches are rejected in full before host dispatch. The host validates 
   },
   group: 'graph',
   readOnly: false,
-  approval: (input) => (isClear(input) ? { kind: 'clear_graph' } : null),
+  // Reading the graph may throw; the gate then refuses the call (fails closed).
+  approval: (input, env) => (isClear(input) || isMassRemoval(removedNodeCount(input), env.api.graph.getGraph().nodes.length)
+    ? { kind: 'clear_graph' } : null),
   async execute(args, ctx) {
     const { api, signal, turn, callbacks } = ctx;
     const { summary } = turn;
@@ -48,9 +62,12 @@ Malformed batches are rejected in full before host dispatch. The host validates 
       }
     }
     let approvedClearSnapshot: string | undefined;
-    if (operations[0].op === 'clear_graph') {
+    const clearing = operations[0].op === 'clear_graph';
+    const removing = clearing ? 0 : removedNodeCount({ operations });
+    const graphNow = api.graph.getGraph();
+    if (clearing || isMassRemoval(removing, graphNow.nodes.length)) {
       const before = turn.currentSnapshot();
-      const graph = api.graph.getGraph();
+      const graph = graphNow;
       if (!ctx.canApprove('clear_graph')) {
         ctx.record(JSON.stringify({ outcome: 'not_executed', error: 'clear_graph requires explicit user confirmation.' }), 'not_executed');
         throw new RunExit('incomplete', 'confirmation_unavailable', 'Clearing was not confirmed. The graph was not cleared.');
@@ -59,11 +76,16 @@ Malformed batches are rejected in full before host dispatch. The host validates 
       throwIfAborted(signal);
       const approved = await ctx.approve({ kind: 'clear_graph', request: {
         runId: summary.id, toolCallId: ctx.call.id, nodeCount: graph.nodes.length, edgeCount: graph.edges.length,
+        ...(clearing ? {} : { removeNodes: removing }),
       } });
       throwIfAborted(signal);
       if (approved !== true) {
-        ctx.record(JSON.stringify({ outcome: 'cancelled', error: 'The user declined clearing the graph. The run ended; do not bypass this decision.' }), 'cancelled');
-        throw new RunExit('cancelled', 'confirmation_declined', 'Clearing was declined. No clear operation was dispatched.');
+        ctx.record(JSON.stringify({ outcome: 'cancelled', error: clearing
+          ? 'The user declined clearing the graph. The run ended; do not bypass this decision.'
+          : `The user declined removing ${removing} nodes. The run ended; do not remove them another way.` }), 'cancelled');
+        throw new RunExit('cancelled', 'confirmation_declined', clearing
+          ? 'Clearing was declined. No clear operation was dispatched.'
+          : 'Removing the nodes was declined. Nothing was removed.');
       }
       if (turn.currentSnapshot() !== before) turn.stale('confirmation_stale');
       approvedClearSnapshot = before;

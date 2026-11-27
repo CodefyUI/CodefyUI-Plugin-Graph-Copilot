@@ -42,6 +42,8 @@ export interface ClearGraphRequest {
   edgeCount: number;
   /** Set by the loop's approval gate: which tab the action applies to. */
   target?: ApprovalTarget;
+  /** A batch removing many nodes (SEC7) rather than clear_graph: how many. */
+  removeNodes?: number;
 }
 
 /** The graph an approval card's action applies to. The agent can open and
