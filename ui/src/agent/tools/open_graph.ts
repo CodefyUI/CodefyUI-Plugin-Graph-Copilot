@@ -2,6 +2,7 @@ import { hostError } from '../hostContext';
 import { awaitWithSignal, isRecord, throwIfAborted } from '../toolGuards';
 import { hasWorkspace } from './workspace';
 import type { ToolDefinition } from './types';
+import { pathSegment } from '../urlPath';
 
 export const openGraphTool: ToolDefinition = {
   name: 'open_graph',
@@ -22,7 +23,9 @@ export const openGraphTool: ToolDefinition = {
     if (open) {
       return { content: JSON.stringify({ already_open: true, tab_id: open.tabId, title: open.title, active: open.active }), outcome: 'completed' };
     }
-    const response = await awaitWithSignal(api.http.fetch(`/api/graph/load/${encodeURIComponent(name)}`, { signal }), signal);
+    let segment: string;
+    try { segment = pathSegment(name); } catch { ctx.fail(`"${name.slice(0, 80)}" is not a saved graph name (no "/", "\\", "..", "?" or "#").`); return; }
+    const response = await awaitWithSignal(api.http.fetch(`/api/graph/load/${segment}`, { signal }), signal);
     throwIfAborted(signal);
     if (!response.ok) { ctx.fail(`Graph "${name}" could not be loaded: ${(await hostError(response)).message}`); return; }
     const graph: unknown = await awaitWithSignal(response.json(), signal);

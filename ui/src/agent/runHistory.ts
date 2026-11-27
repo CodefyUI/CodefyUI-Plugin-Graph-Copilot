@@ -10,6 +10,7 @@ import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { lossFromProgress, normalizeNodeStatus } from './wireOutputs';
 import { TERMINAL_NODE_STATUSES } from './runGraph';
 import { awaitWithSignal, throwIfAborted } from './toolGuards';
+import { pathSegment } from './urlPath';
 
 type HttpApi = Pick<CodefyUIPluginAPI, 'http'>;
 
@@ -205,7 +206,7 @@ export async function fetchRun(
   runId: string,
   signal?: AbortSignal,
 ): Promise<RunRow | null> {
-  const url = `/api/runs/${encodeURIComponent(runId)}`;
+  const url = `/api/runs/${pathSegment(runId)}`;
   const response = await api.http.fetch(url, { signal });
 
   if (response.status === 404) return null;
@@ -232,7 +233,7 @@ export async function fetchRunStrict(
   signal?: AbortSignal,
 ): Promise<RunRow | null> {
   throwIfAborted(signal);
-  const response = await awaitWithSignal(api.http.fetch(`/api/runs/${encodeURIComponent(runId)}`, { signal }), signal);
+  const response = await awaitWithSignal(api.http.fetch(`/api/runs/${pathSegment(runId)}`, { signal }), signal);
   throwIfAborted(signal);
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`fetch run failed: HTTP ${response.status}`);
@@ -252,7 +253,7 @@ export async function fetchRunArtifacts(
   signal?: AbortSignal,
 ): Promise<RunArtifact[]> {
   try {
-    const url = `/api/runs/${encodeURIComponent(runId)}/artifacts`;
+    const url = `/api/runs/${pathSegment(runId)}/artifacts`;
     const response = await api.http.fetch(url, { signal });
 
     if (!response.ok) return [];
@@ -292,7 +293,7 @@ export async function fetchRunArtifacts(
 
 export async function cancelRunById(api: HttpApi, runId: string): Promise<boolean> {
   try {
-    const url = `/api/runs/${encodeURIComponent(runId)}/cancel`;
+    const url = `/api/runs/${pathSegment(runId)}/cancel`;
     const response = await api.http.fetch(url, { method: 'POST' });
     return response.ok;
   } catch {
@@ -362,6 +363,9 @@ export async function followRun(
   const { runId, onUpdate, signal } = opts;
   const waitS = opts.waitS ?? 25;
   const retryDelayMs = opts.retryDelayMs ?? 1000;
+  // An id that cannot be a path segment is treated like an unknown run.
+  let runPath: string;
+  try { runPath = pathSegment(runId); } catch { return { status: '', row: null, aborted: false }; }
   let cursor = opts.fromCursor ?? 0;
   let lastStatus = '';
   let failures = 0;
@@ -372,7 +376,7 @@ export async function followRun(
     let page: Record<string, unknown>;
     try {
       const response = await api.http.fetch(
-        `/api/runs/${encodeURIComponent(runId)}/events?cursor=${cursor}&wait=${waitS}&limit=500`,
+        `/api/runs/${runPath}/events?cursor=${cursor}&wait=${waitS}&limit=500`,
         { signal },
       );
       if (response.status === 404) return { status: lastStatus, row: null, aborted: false };

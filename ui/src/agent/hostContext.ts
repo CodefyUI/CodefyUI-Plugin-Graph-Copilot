@@ -11,6 +11,7 @@
  * into the prompt inside marked blocks (see `untrusted.ts`). */
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { isRecord } from './toolGuards';
+import { UnsafePathSegment, pathSegments } from './urlPath';
 
 export const CONTEXT_TTL_MS = 30_000;
 
@@ -163,10 +164,16 @@ export function invalidateAgentContext(api: CodefyUIPluginAPI): void { cache.del
 
 // ── skills ────────────────────────────────────────────────────────────────
 
-/** `builtin/build-graph` → `/api/skills/builtin/build-graph`, each segment encoded. */
+/** `builtin/build-graph` → `/api/skills/builtin/build-graph`, each segment
+ * checked and encoded; throws UnsafePathSegment for `..`, empty parts and the like. */
 export function skillUrl(id: string): string {
-  return `/api/skills/${id.split('/').map(encodeURIComponent).join('/')}`;
+  return `/api/skills/${pathSegments(id)}`;
 }
+
+const badId = (id: string): Promise<HostResult<never>> => Promise.resolve({
+  ok: false, error: { status: 0, code: 'bad_id', message: new UnsafePathSegment(id).message },
+});
+const safeSkillUrl = (id: string): string | null => { try { return skillUrl(id); } catch { return null; } };
 
 export function listSkills(api: CodefyUIPluginAPI): Promise<HostResult<SkillSummary[]>> {
   return request(api, '/api/skills', (data) => (Array.isArray(data)
@@ -174,7 +181,9 @@ export function listSkills(api: CodefyUIPluginAPI): Promise<HostResult<SkillSumm
 }
 
 export function getSkill(api: CodefyUIPluginAPI, id: string, signal?: AbortSignal): Promise<HostResult<SkillDetail>> {
-  return request(api, skillUrl(id), parseSkillDetail, signal ? { signal } : undefined);
+  const url = safeSkillUrl(id);
+  if (!url) return badId(id);
+  return request(api, url, parseSkillDetail, signal ? { signal } : undefined);
 }
 
 export interface SkillFileContent { path: string; content: string; truncated: boolean }
@@ -208,6 +217,8 @@ export function installSkill(api: CodefyUIPluginAPI, source: string): Promise<Ho
 }
 
 export function deleteSkill(api: CodefyUIPluginAPI, id: string): Promise<HostResult<{ deleted: string }>> {
+  const url = safeSkillUrl(id);
+  if (!url) return badId(id);
   invalidateAgentContext(api);
-  return request(api, skillUrl(id), (data) => (isRecord(data) && typeof data.deleted === 'string' ? { deleted: data.deleted } : null), { method: 'DELETE' });
+  return request(api, url, (data) => (isRecord(data) && typeof data.deleted === 'string' ? { deleted: data.deleted } : null), { method: 'DELETE' });
 }
