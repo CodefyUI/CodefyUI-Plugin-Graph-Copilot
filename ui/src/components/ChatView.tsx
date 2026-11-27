@@ -624,7 +624,8 @@ export function ChatView({
 
         {items.map((item) => (
           <MessageBubble key={item.key} turn={item.turn} stages={item.stages}
-            step={item.step} active={busy && liveTurns.includes(item.turn)} />
+            step={item.step} active={busy && liveTurns.includes(item.turn)}
+            awaiting={busy && approvalPending} />
         ))}
 
         {/* Text currently streaming for this round */}

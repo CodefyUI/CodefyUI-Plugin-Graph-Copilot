@@ -13,6 +13,8 @@ interface MessageBubbleProps {
   stages?: ToolStage[];
   /** Only the current run's pending stages may animate. Saved history defaults off. */
   active?: boolean;
+  /** An approval card is open for this run: its pending approval tool waits on it. */
+  awaiting?: boolean;
   /** 1-based agent step number for tool-calling rounds (see groupTurns). */
   step?: number;
   streaming?: boolean;
@@ -91,16 +93,17 @@ export function useThrottledText(text: string, live: boolean, ms = 80): string {
 }
 
 /** One glyph per outcome; colour repeats it, never replaces it. */
-const GLYPH: Record<string, string> = { running: '⚙', ok: '✓', error: '✗', unknown: '?', cancelled: '○', not_executed: '○', interrupted: '○' };
+const GLYPH: Record<string, string> = { running: '⚙', waiting: '!', ok: '✓', error: '✗', unknown: '?', cancelled: '○', not_executed: '○', interrupted: '○' };
 
-function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) {
+function ToolStageRow({ stage, active, awaiting = false }: { stage: ToolStage; active: boolean; awaiting?: boolean }) {
   const [open, setOpen] = useState(false);
   const detailId = useId();
-  const d = describeStage(stage, active);
+  const d = describeStage(stage, active, awaiting);
   const expandable = !!d.detail;
   const durationMs = stage.result?.durationMs;
   const args = argSummary(stage.call.arguments);
-  const ops = stage.call.name === 'apply_graph_operations' ? opsLine(stage.call.arguments) : '';
+  // U4: the past-tense effect line only once the edit has actually happened.
+  const ops = stage.call.name === 'apply_graph_operations' && d.status === 'ok' ? opsLine(stage.call.arguments) : '';
 
   return (
     <div className={`gcp-stage ${d.status}`} aria-busy={d.status === 'running'}>
@@ -123,7 +126,7 @@ function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) 
           </span>
           {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
           {ops && <span className="gcp-stage-ops">{ops}</span>}
-          {args && !ops && <code className="gcp-stage-args" title={args}>{args}</code>}
+          {args && !ops && stage.call.name !== 'apply_graph_operations' && <code className="gcp-stage-args" title={args}>{args}</code>}
         </span>
         {typeof durationMs === 'number' && (
           <span className="gcp-stage-time">{formatDuration(durationMs)}</span>
@@ -178,10 +181,10 @@ export function batchStages(stages: ToolStage[]): (ToolStage | ToolStage[])[] {
   return out;
 }
 
-function ToolBatch({ stages, active }: { stages: ToolStage[]; active: boolean }) {
+function ToolBatch({ stages, active, awaiting = false }: { stages: ToolStage[]; active: boolean; awaiting?: boolean }) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  const described = stages.map((stage) => describeStage(stage, active));
+  const described = stages.map((stage) => describeStage(stage, active, awaiting));
   const tally = (status: string) => described.filter((d) => d.status === status).length;
   const running = tally('running');
   const failed = tally('error') + tally('unknown');
@@ -204,7 +207,7 @@ function ToolBatch({ stages, active }: { stages: ToolStage[]; active: boolean })
       </button>
       {open && (
         <div id={id} className="gcp-stage-batch-items">
-          {stages.map((stage, i) => <ToolStageRow key={`${stage.call.id}-${i}`} stage={stage} active={active} />)}
+          {stages.map((stage, i) => <ToolStageRow key={`${stage.call.id}-${i}`} stage={stage} active={active} awaiting={awaiting} />)}
         </div>
       )}
     </div>
@@ -219,6 +222,7 @@ export function MessageBubble({
   turn,
   stages = [],
   active = false,
+  awaiting = false,
   step,
   streaming = false,
   streamingText,
@@ -281,8 +285,8 @@ export function MessageBubble({
       {stages.length > 0 && (
         <div className="gcp-stages">
           {batchStages(stages).map((entry, i) => Array.isArray(entry)
-            ? <ToolBatch key={`batch-${entry[0].call.id}-${i}`} stages={entry} active={active && !turn.runSummary} />
-            : <ToolStageRow key={`${entry.call.id}-${i}`} stage={entry} active={active && !turn.runSummary} />)}
+            ? <ToolBatch key={`batch-${entry[0].call.id}-${i}`} stages={entry} active={active && !turn.runSummary} awaiting={awaiting} />
+            : <ToolStageRow key={`${entry.call.id}-${i}`} stage={entry} active={active && !turn.runSummary} awaiting={awaiting} />)}
         </div>
       )}
 

@@ -2386,6 +2386,8 @@
 .gcp-stage.ok .gcp-stage-status { color: var(--gcp-role-ok); }
 .gcp-stage.error .gcp-stage-status { color: var(--gcp-role-danger); }
 .gcp-stage.running .gcp-stage-status { color: var(--gcp-role-live); }
+.gcp-stage.waiting .gcp-stage-status,
+.gcp-stage.waiting .gcp-stage-summary { color: var(--gcp-role-attention); }
 .gcp-stage-spinner { display: inline-block; width: auto; height: auto; border: none; }
 .gcp-stage-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .gcp-stage-name { overflow: hidden; color: var(--gcp-muted); font-family: var(--gcp-mono); font-size: var(--gcp-tier-micro); text-overflow: ellipsis; white-space: nowrap; }
