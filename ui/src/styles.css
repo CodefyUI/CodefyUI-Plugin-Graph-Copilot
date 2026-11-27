@@ -684,6 +684,22 @@
 .gcp-run-result.incomplete { border-color: var(--gcp-warn); }
 .gcp-run-result-title { display: block; margin-bottom: 8px; font-size: var(--gcp-fs-lg); font-weight: 600; color: var(--gcp-text); }
 .gcp-run-result-detail { margin: 4px 0; }
+.gcp-run-result-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-bottom: 6px; }
+.gcp-run-result-head .gcp-run-result-title { display: inline; margin-bottom: 0; }
+.gcp-run-result-reason { color: var(--gcp-text); }
+.gcp-run-result-error {
+  margin: 6px 0;
+  color: var(--gcp-text);
+  font-family: var(--gcp-mono);
+  font-size: var(--gcp-fs-xs);
+  line-height: var(--gcp-lh-snug);
+  white-space: pre-wrap;
+}
+.gcp-run-result-facts { margin: 6px 0 0; color: var(--gcp-dim); font-size: var(--gcp-fs-xs); font-variant-numeric: tabular-nums; }
+.gcp-run-result-actions { margin-top: 10px; }
+.gcp-run-result-actions .gcp-recovery { gap: 6px; }
+/* A Stop the user asked for is neutral, never the error colour. */
+.gcp-run-result.cancelled { border-color: var(--gcp-border-strong); }
 .gcp-recovery { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; font-size: var(--gcp-fs-xs); color: var(--gcp-dim); }
 .gcp-recovery .gcp-retry-btn { align-self: flex-start; }
 .gcp-jump-latest {
@@ -896,22 +912,15 @@
   line-height: var(--gcp-lh-snug);
 }
 
+/* U3: Retry and Continue are not destructive: the secondary button look. */
 .gcp-retry-btn {
   padding: 5px 12px;
-  border-radius: var(--gcp-r-sm);
-  border: 1px solid var(--gcp-danger);
-  background: transparent;
-  color: var(--gcp-danger);
   font-size: var(--gcp-fs-xs);
   font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
   transition: background var(--gcp-t-fast);
-  align-self: center;
   flex-shrink: 0;
 }
-.gcp-retry-btn:hover { background: var(--gcp-danger-wash); }
-.gcp-retry-btn:focus-visible { outline: 2px solid var(--gcp-danger); outline-offset: 2px; }
+.gcp-retry-btn:focus-visible { outline: 2px solid var(--gcp-accent); outline-offset: 2px; }
 
 /* -------------------------------------------------------------------------- */
 /* Reattach banner — a background run this panel is tracking (#22)             */

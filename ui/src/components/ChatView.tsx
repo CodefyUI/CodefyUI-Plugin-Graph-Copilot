@@ -548,6 +548,24 @@ export function ChatView({
     : 0;
 
   const approvalPending = !!(run.confirmation || experimentApproval || runApproval || commitApproval);
+  // U3: the latest run's result, its real error and Retry form one block.
+  const resultKey = !busy && run.summary
+    ? [...items].reverse().find((item) => item.turn.runSummary?.id === run.summary!.id)?.key
+    : undefined;
+  const recovery = !busy && (lastError || (run.summary && run.summary.status !== 'completed')) ? (
+    run.canRetry ? (
+      <div className="gcp-recovery">
+        <button className="gcp-secondary-btn gcp-retry-btn" onClick={handleRetry} disabled={!ready} aria-label={t('chat.retry')}>{t('chat.retry')}</button>
+      </div>
+    ) : run.summary && (run.summary.mutationAttempted || run.summary.sideEffectAttempted) ? (
+      <div className="gcp-recovery">
+        <span>{t('chat.noReplay')}</span>
+        <button className="gcp-secondary-btn gcp-retry-btn" onClick={handleContinue} disabled={!ready}>
+          {t('chat.continue')}
+        </button>
+      </div>
+    ) : null
+  ) : null;
 
   // New items that arrive while the reader is scrolled up are counted, not followed.
   useEffect(() => {
@@ -625,7 +643,9 @@ export function ChatView({
         {items.map((item) => (
           <MessageBubble key={item.key} turn={item.turn} stages={item.stages}
             step={item.step} active={busy && liveTurns.includes(item.turn)}
-            awaiting={busy && approvalPending} />
+            awaiting={busy && approvalPending}
+            runError={item.key === resultKey ? lastError : undefined}
+            runActions={item.key === resultKey ? recovery : undefined} />
         ))}
 
         {/* Text currently streaming for this round */}
@@ -711,8 +731,8 @@ export function ChatView({
           </div>
         )}
 
-        {/* Failed run: standalone error row + retry */}
-        {lastError && !busy && (
+        {/* A failure with no run result in the transcript: the error alone, then recovery. */}
+        {lastError && !busy && !resultKey && (
           <div className="gcp-error-row" role="alert">
             <span className="gcp-error-icon" aria-hidden="true"><ErrorIcon /></span>
             <div className="gcp-error-body">
@@ -721,20 +741,7 @@ export function ChatView({
             </div>
           </div>
         )}
-        {!busy && (lastError || (run.summary && run.summary.status !== 'completed')) && (
-          <div className="gcp-recovery">
-            {run.canRetry ? (
-              <button className="gcp-retry-btn" onClick={handleRetry} disabled={!ready} aria-label={t('chat.retry')}>{t('chat.retry')}</button>
-            ) : run.summary && (run.summary.mutationAttempted || run.summary.sideEffectAttempted) ? (
-              <>
-                <span>{t('chat.noReplay')}</span>
-                <button className="gcp-retry-btn" onClick={handleContinue} disabled={!ready}>
-                  {t('chat.continue')}
-                </button>
-              </>
-            ) : null}
-          </div>
-        )}
+        {!resultKey && recovery}
       </div>
 
       {showLatest && !approvalPending && (

@@ -15,6 +15,9 @@ interface MessageBubbleProps {
   active?: boolean;
   /** An approval card is open for this run: its pending approval tool waits on it. */
   awaiting?: boolean;
+  /** Latest run only: its real error and recovery actions join the run result block (U3). */
+  runError?: string | null;
+  runActions?: React.ReactNode;
   /** 1-based agent step number for tool-calling rounds (see groupTurns). */
   step?: number;
   streaming?: boolean;
@@ -223,6 +226,8 @@ export function MessageBubble({
   stages = [],
   active = false,
   awaiting = false,
+  runError,
+  runActions,
   step,
   streaming = false,
   streamingText,
@@ -290,7 +295,7 @@ export function MessageBubble({
         </div>
       )}
 
-      {!isUser && turn.runSummary && <RunResult summary={turn.runSummary} />}
+      {!isUser && turn.runSummary && <RunResult summary={turn.runSummary} error={runError}>{runActions}</RunResult>}
 
       {/* Legacy ops summary chip — never contradict a structured run result. */}
       {!isUser && !turn.runSummary && turn.opsSummary && stages.length === 0 && (
