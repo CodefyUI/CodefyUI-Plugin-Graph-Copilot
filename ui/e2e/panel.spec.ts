@@ -95,3 +95,33 @@ test('light host tokens in the side dock, with an approval card', async ({ page 
   await expectFits(page);
   await capture(page, testInfo, 'side-400-light-approval');
 });
+
+for (const view of ['chat', 'Skills', 'Settings'] as const) {
+  test(`Tab through the ${view} view: every stop inside the panel shows a focus ring`, async ({ page }) => {
+    await readyPreview(page, 'host=v6&scenario=edit');
+    await openCopilot(page);
+    if (view !== 'chat') await page.getByRole('button', { name: view, exact: true }).click();
+    // Script focus shows no ring by design; start from it and measure real Tab stops.
+    await page.getByRole('button', { name: 'New conversation', exact: true }).focus();
+    const stops: Array<{ name: string; ring: boolean }> = [];
+    for (let index = 0; index < 40; index++) {
+      await page.keyboard.press('Tab');
+      const focus = await page.evaluate(() => {
+        const element = document.activeElement as HTMLElement | null;
+        if (!element || !element.closest('.gcp-root')) return null;
+        // A switch's visible ring is drawn on its track, next to the hidden input.
+        const painted = element.matches('.gcp-switch input') ? element.nextElementSibling as HTMLElement : element;
+        const style = getComputedStyle(painted);
+        const composer = element.closest('.gcp-composer');
+        const ring = (style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 1)
+          || (style.boxShadow !== 'none' && style.boxShadow.includes('inset') === false)
+          || (!!composer && getComputedStyle(composer).borderTopColor !== 'rgba(0, 0, 0, 0)' && element.tagName === 'TEXTAREA');
+        return { name: element.getAttribute('aria-label') ?? element.textContent?.trim().slice(0, 40) ?? element.tagName, ring };
+      });
+      if (!focus) break;
+      stops.push(focus);
+    }
+    expect(stops.length).toBeGreaterThan(5);
+    expect(stops.filter((stop) => !stop.ring)).toEqual([]);
+  });
+}
