@@ -586,6 +586,7 @@ export const en = {
   'bubble.applied': 'Applied: {summary}',
   'approve.commit.confirm.one': 'Commit {count} file',
   'approve.commit.confirm.many': 'Commit {count} files',
+  'approve.remove.cumulative': 'This turn already removed {done} nodes; this batch removes {count} more.',
 } as const;
 
 export type MessageKey = keyof typeof en;

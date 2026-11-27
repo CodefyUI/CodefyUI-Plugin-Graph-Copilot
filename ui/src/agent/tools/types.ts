@@ -56,6 +56,14 @@ export interface ToolEnvironment {
   host?: HostFeatures;
   /** The host's skills and what this conversation has loaded; absent when off. */
   skills?: SkillSession;
+  /** R2: nodes this turn has removed so far, and the graph size when it began. */
+  removals?: RemovalLedger;
+}
+
+export interface RemovalLedger {
+  removed: number;
+  /** Node count when the turn began; null when the graph could not be read. */
+  startNodes: number | null;
 }
 
 export interface SkillSession {

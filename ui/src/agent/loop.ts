@@ -201,8 +201,10 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
   const toolCallsBySlot = new Map<number, WireToolCall>();
   const secretContexts: Array<{ graph: SerializedGraph; definitions: NodeDefinition[] }> = [];
   const experimentBudget = { remaining: MAX_EXPERIMENT_RUNS };
+  // R2: filled in once the turn starts (never before the pre-abort check).
+  const removals = { removed: 0, startNodes: null as number | null };
   const env: ToolEnvironment = {
-    api, settings, mode,
+    api, settings, mode, removals,
     host: { skills: agentContext !== null, gitProject },
     ...(agentContext ? { skills: skillSession(agentContext, opts.history, historyWindow(opts.history), opts.skills) } : {}),
   };
@@ -473,6 +475,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     historicalCallIds(opts.history).forEach((id) => knownIds.add(id));
     throwIfAborted(signal);
     const wire = buildInitialMessages(opts, mode, agentContext, mode === 'ask' ? offeredTools.map((tool) => tool.name) : undefined);
+    try { removals.startNodes = api.graph.getGraph().nodes.length; } catch { /* then counted from the live graph */ }
     const tools = offeredTools.map(toWire);
     while (true) {
       throwIfAborted(signal);

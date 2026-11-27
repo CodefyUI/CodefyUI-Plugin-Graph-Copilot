@@ -671,7 +671,9 @@ export function ChatView({
             cancelLabel={t('approve.clear.cancel')} onDecide={run.decide}>
             <TargetLine target={run.confirmation.target} t={t} />
             <p>{run.confirmation.removeNodes
-              ? t('approve.remove.body', { count: run.confirmation.removeNodes, total: run.confirmation.nodeCount })
+              ? (run.confirmation.removedThisTurn
+                ? `${t('approve.remove.cumulative', { done: run.confirmation.removedThisTurn, count: run.confirmation.removeNodes })} `
+                : '') + t('approve.remove.body', { count: run.confirmation.removeNodes, total: run.confirmation.nodeCount })
               : t('approve.clear.body', { nodes: run.confirmation.nodeCount, edges: run.confirmation.edgeCount })}</p>
           </ApprovalCard>
         )}

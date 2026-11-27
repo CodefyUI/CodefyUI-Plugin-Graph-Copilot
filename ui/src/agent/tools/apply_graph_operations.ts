@@ -5,7 +5,7 @@ import {
   MAX_GRAPH_OPS, buildOpsSummary, guardOperations, isRecord, rememberAffectedNodes, repairScopeError, reviewReceipt,
   throwIfAborted,
 } from '../toolGuards';
-import type { ToolDefinition } from './types';
+import type { ToolDefinition, ToolEnvironment } from './types';
 
 /** A singleton `clear_graph` batch needs the user's approval. */
 function isClear(input: Record<string, unknown>): boolean {
@@ -25,6 +25,16 @@ export function isMassRemoval(removed: number, graphNodes: number): boolean {
   return removed >= 10 || (removed >= 3 && removed * 2 >= graphNodes);
 }
 
+/** R2: the threshold counts the whole turn, so splitting removals into small
+ * batches does not avoid the card. Nodes this turn already removed plus this
+ * batch's are measured against the graph size when the turn began. A batch
+ * that removes nothing never needs the card; an approval covers one batch. */
+export function needsRemovalApproval(removing: number, env: Pick<ToolEnvironment, 'api' | 'removals'>): boolean {
+  if (removing === 0) return false;
+  const base = env.removals?.startNodes ?? env.api.graph.getGraph().nodes.length;
+  return isMassRemoval((env.removals?.removed ?? 0) + removing, base);
+}
+
 export const applyGraphOperationsTool: ToolDefinition = {
   name: 'apply_graph_operations',
   description:
@@ -32,7 +42,7 @@ export const applyGraphOperationsTool: ToolDefinition = {
 - {"op":"add_node","node_type":"<exact catalog name>","ref":"<alias>","params":{...},"position":{"x":<num>,"y":<num>}} — ref/params/position optional. A ref is usable as source/target/node_id ONLY in this SAME batch. Later calls must use real node IDs from receipts/refs or get_current_graph.
 - {"op":"connect","source":"<node id or ref>","source_handle":"<output port>","target":"<node id or ref>","target_handle":"<input port>"} — use exact schema ports; control-flow trigger edges use source_handle "trigger".
 - {"op":"set_params","node_id":"<node id or ref>","params":{...}}
-- {"op":"remove_node","node_id":"<node id or ref>"} — a batch removing 10 or more nodes, or 3 or more that are at least half the graph, needs the user's approval like clear_graph.
+- {"op":"remove_node","node_id":"<node id or ref>"} — a batch removing 10 or more nodes, or 3 or more that are at least half the graph, needs the user's approval like clear_graph. Removals add up over the turn: splitting them into smaller batches does not avoid the approval.
 - {"op":"remove_edge","source":"<node id or ref>","target":"<node id or ref>","source_handle":"<optional>","target_handle":"<optional>"}
 - {"op":"clear_graph"} — singleton batch only, requires fresh user confirmation. Never bypass a refusal with node removal.
 - {"op":"auto_layout"} — auto-positions nodes after structural changes.
@@ -43,7 +53,7 @@ Malformed batches are rejected in full before host dispatch. The host validates 
   group: 'graph',
   readOnly: false,
   // Reading the graph may throw; the gate then refuses the call (fails closed).
-  approval: (input, env) => (isClear(input) || isMassRemoval(removedNodeCount(input), env.api.graph.getGraph().nodes.length)
+  approval: (input, env) => (isClear(input) || needsRemovalApproval(removedNodeCount(input), env)
     ? { kind: 'clear_graph' } : null),
   async execute(args, ctx) {
     const { api, signal, turn, callbacks } = ctx;
@@ -65,7 +75,8 @@ Malformed batches are rejected in full before host dispatch. The host validates 
     const clearing = operations[0].op === 'clear_graph';
     const removing = clearing ? 0 : removedNodeCount({ operations });
     const graphNow = api.graph.getGraph();
-    if (clearing || isMassRemoval(removing, graphNow.nodes.length)) {
+    const removedBefore = ctx.removals?.removed ?? 0;
+    if (clearing || needsRemovalApproval(removing, ctx)) {
       const before = turn.currentSnapshot();
       const graph = graphNow;
       if (!ctx.canApprove('clear_graph')) {
@@ -76,7 +87,7 @@ Malformed batches are rejected in full before host dispatch. The host validates 
       throwIfAborted(signal);
       const approved = await ctx.approve({ kind: 'clear_graph', request: {
         runId: summary.id, toolCallId: ctx.call.id, nodeCount: graph.nodes.length, edgeCount: graph.edges.length,
-        ...(clearing ? {} : { removeNodes: removing }),
+        ...(clearing ? {} : { removeNodes: removing, ...(removedBefore > 0 ? { removedThisTurn: removedBefore } : {}) }),
       } });
       throwIfAborted(signal);
       if (approved !== true) {
@@ -132,6 +143,7 @@ Malformed batches are rejected in full before host dispatch. The host validates 
     if (review.failed) ctx.markIssue();
     if (review.applied > 0) {
       rememberAffectedNodes(operations, review, turn.affectedNodes);
+      if (ctx.removals) ctx.removals.removed += operations.filter((op, index) => op.op === 'remove_node' && review.byIndex[index]?.ok).length;
       // Invalidate older validation before UI; retain receipts even when the
       // host aborts synchronously during the successful mutation.
       summary.validation = { status: 'not_run', errors: [] };

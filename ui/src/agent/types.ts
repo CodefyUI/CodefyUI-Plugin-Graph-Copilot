@@ -44,6 +44,8 @@ export interface ClearGraphRequest {
   target?: ApprovalTarget;
   /** A batch removing many nodes (SEC7) rather than clear_graph: how many. */
   removeNodes?: number;
+  /** R2: nodes this turn already removed before this batch. */
+  removedThisTurn?: number;
 }
 
 /** The graph an approval card's action applies to. The agent can open and

@@ -329,6 +329,19 @@ describe('ChatView', () => {
       expect(within(card).getByRole('button', { name: 'Remove 10 nodes' })).toHaveClass('gcp-danger-btn');
     });
 
+    it('R2: a card for a later batch says what this turn already removed', async () => {
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        await opts.confirmClearGraph!({ runId: 'r', toolCallId: 'c', nodeCount: 21, edgeCount: 4, removeNodes: 9, removedThisTurn: 9 });
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'tidy');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+      const card = await screen.findByRole('group', { name: 'Remove 9 nodes?' });
+      expect(card).toHaveTextContent('This turn already removed 9 nodes; this batch removes 9 more.');
+    });
+
     it('SEC3: the run card names the tab and warns when Copilot opened it this turn', async () => {
       (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
         await opts.callbacks.onRunApproval!({ reason: 'Run your MNIST graph', nodeCount: 3, edgeCount: 2, nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu',

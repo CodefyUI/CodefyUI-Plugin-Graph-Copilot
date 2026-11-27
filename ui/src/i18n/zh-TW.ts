@@ -579,4 +579,5 @@ export const zhTW: Record<MessageKey, string> = {
   'bubble.applied': '已套用：{summary}',
   'approve.commit.confirm.one': '提交 {count} 個檔案',
   'approve.commit.confirm.many': '提交 {count} 個檔案',
+  'approve.remove.cumulative': '這一輪已移除 {done} 個節點，這次再移除 {count} 個。',
 };
