@@ -30,6 +30,10 @@ import {
 } from '../agent/studyMaterialize';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { ConfirmDialog } from './ConfirmDialog';
+import { currentLocale, translate, useT, type MessageKey } from '../i18n';
+
+type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
+const tr: T = (key, vars) => translate(currentLocale(), key, vars);
 
 export interface ExperimentsViewProps {
   api: CodefyUIPluginAPI;
@@ -37,7 +41,6 @@ export interface ExperimentsViewProps {
   onStartStudy?: (prompt: string) => void;
 }
 
-const COMPARISON_PROMPT = 'Compare three learning-rate variants, maximize validation accuracy, and run each three times.';
 
 function safeLoad(api: CodefyUIPluginAPI): ExperimentSession[] {
   try {
@@ -49,7 +52,7 @@ function safeLoad(api: CodefyUIPluginAPI): ExperimentSession[] {
 
 function formatDate(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  if (Number.isNaN(date.getTime())) return tr('lab.dateUnavailable');
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
     day: 'numeric',
@@ -144,32 +147,40 @@ function safeFilename(value: string): string {
   return safe || 'graph-copilot-study';
 }
 
+const STATUS_KEYS: Record<string, MessageKey> = {
+  completed: 'lab.status.completed', partial: 'lab.status.partial', failed: 'lab.status.failed',
+  invalid: 'lab.status.invalid', running: 'lab.status.running',
+};
+
 function StatusBadge({ status }: { status: string }) {
-  const label = status.charAt(0).toUpperCase() + status.slice(1);
+  const t = useT();
+  const key = STATUS_KEYS[status];
+  const label = key ? t(key) : status.charAt(0).toUpperCase() + status.slice(1);
   return <span className={`gcp-lab-badge ${status}`}>{label}</span>;
 }
 
 function CandidateDisclosures({ variant }: { variant: ExperimentVariantResult }) {
+  const t = useT();
   const operations = variant.operationSummary;
   return (
     <div className="gcp-candidate-disclosures">
       {operations && operations.length > 0 ? (
         <details className="gcp-candidate-disclosure operations">
-          <summary>Operation summaries ({operations.length})</summary>
+          <summary>{t('lab.operations', { count: operations.length })}</summary>
           <ul>
-            {operations.map((operation, index) => <li key={`${index}-${operation}`}>{operation}</li>)}
+            {operations.map((operation, index) => <li key={`${index}-${operation}`} data-user-content>{operation}</li>)}
           </ul>
         </details>
       ) : (
         <span className="gcp-candidate-evidence-note">
-          {operations ? 'No graph changes recorded.' : 'Operation summaries unavailable.'}
+          {operations ? t('lab.noChanges') : t('lab.operationsUnavailable')}
         </span>
       )}
       {variant.errors.length > 0 && (
         <details className="gcp-candidate-disclosure errors">
-          <summary>Errors ({variant.errors.length})</summary>
+          <summary>{t('lab.errors', { count: variant.errors.length })}</summary>
           <ul>
-            {variant.errors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}
+            {variant.errors.map((error, index) => <li key={`${index}-${error}`} data-user-content>{error}</li>)}
           </ul>
         </details>
       )}
@@ -178,20 +189,19 @@ function CandidateDisclosures({ variant }: { variant: ExperimentVariantResult })
 }
 
 function EmptyLab({ onStartStudy }: Pick<ExperimentsViewProps, 'onStartStudy'>) {
+  const t = useT();
+  const prompt = t('lab.comparisonPrompt');
   return (
     <div className="gcp-lab-empty">
-      <h2>No experiment studies yet</h2>
-      <p>
-        Choose a numeric objective, compare graph variants, and repeat each candidate.
-        Ask in Chat or import a portable study to review its evidence here.
-      </p>
-      <p className="gcp-lab-example">{COMPARISON_PROMPT}</p>
+      <h2>{t('lab.empty.title')}</h2>
+      <p>{t('lab.empty.body')}</p>
+      <p className="gcp-lab-example">{prompt}</p>
       {onStartStudy && (
         <>
-          <button type="button" className="gcp-lab-start-study" onClick={() => onStartStudy(COMPARISON_PROMPT)}>
-            Plan a comparison
+          <button type="button" className="gcp-lab-start-study" onClick={() => onStartStudy(prompt)}>
+            {t('lab.empty.start')}
           </button>
-          <p className="gcp-lab-start-note">Opens a draft in Chat for review. Nothing is sent or run.</p>
+          <p className="gcp-lab-start-note">{t('lab.empty.startNote')}</p>
         </>
       )}
     </div>
@@ -199,6 +209,7 @@ function EmptyLab({ onStartStudy }: Pick<ExperimentsViewProps, 'onStartStudy'>) 
 }
 
 export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
+  const t = useT();
   const [sessions, setSessions] = useState<ExperimentSession[]>(() => safeLoad(api));
   const [selectedId, setSelectedId] = useState<string | null>(() => safeLoad(api)[0]?.id ?? null);
   const [portableBundle, setPortableBundle] = useState<StudyBundleV1 | null>(null);
@@ -246,7 +257,7 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
         if (active) setPortableBundle(bundle);
       })
       .catch((error) => {
-        if (active) setPortableMessage(`Portable study could not be verified: ${String(error)}`);
+        if (active) setPortableMessage(tr('lab.msg.verifyFailed', { error: String(error) }));
       })
       .finally(() => {
         if (active) setPortableLoading(false);
@@ -263,14 +274,14 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
     setPortableMessage(null);
     try {
       if (typeof file.size === 'number' && file.size > STUDY_BUNDLE_MAX_BYTES) {
-        throw new Error(`Portable study exceeds the ${STUDY_BUNDLE_MAX_BYTES} byte import limit`);
+        throw new Error(tr('lab.msg.tooLarge', { limit: STUDY_BUNDLE_MAX_BYTES }));
       }
       const preview = await parseStudyImport(await file.text());
       if (readVersion === importReadVersion.current) setImportPreview(preview);
     } catch (error) {
       if (readVersion !== importReadVersion.current) return;
       setImportPreview(null);
-      setImportError(`Import rejected before storage: ${String(error)}`);
+      setImportError(tr('lab.msg.rejected', { error: String(error) }));
     }
   };
 
@@ -284,7 +295,7 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
     try {
       if (loadExperimentSessions(api).some((session) => session.id === importPreview.payload.id)) {
         throw new Error(
-          `A local Experiment Lab report already uses study id '${importPreview.payload.id}'; import was refused to avoid overwriting local evidence.`,
+          tr('lab.msg.idTaken', { id: importPreview.payload.id }),
         );
       }
       const projected = projectStudyBundleToSession(importPreview);
@@ -295,12 +306,12 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
       setPortableBundle(importPreview);
       setImportPreview(null);
       setPortableMessage(stored.status === 'unchanged'
-        ? 'This content-integrity-checked portable study was already stored; its read-only report was added.'
-        : 'Portable study imported for read-only review. SHA-256 checks content changes only; it does not authenticate authorship. No graph was executed or applied.');
+        ? tr('lab.msg.alreadyStored')
+        : tr('lab.msg.imported'));
     } catch (error) {
       setImportError(bundleStored
-        ? `The content-integrity-checked bundle was stored, but its read-only Lab report could not be saved. Retry the import: ${String(error)}`
-        : `Portable study was not imported: ${String(error)}`);
+        ? tr('lab.msg.reportNotSaved', { error: String(error) })
+        : tr('lab.msg.notImported', { error: String(error) }));
     } finally {
       importCommitPending.current = false;
       setImporting(false);
@@ -317,9 +328,9 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
         'application/json',
         await encodeStudyBundle(bundle),
       );
-      setPortableMessage('Portable study content integrity checked before export; SHA-256 does not authenticate authorship.');
+      setPortableMessage(tr('lab.msg.exported'));
     } catch (error) {
-      setPortableMessage(`Portable study export failed: ${String(error)}`);
+      setPortableMessage(tr('lab.msg.exportFailed', { error: String(error) }));
     }
   };
 
@@ -328,7 +339,7 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
     try {
       const materialized = materializeStudyCandidate(selectedPortableBundle, variantId);
       if (materialized.status === 'error' || !materialized.graph) {
-        throw new Error(materialized.errors[0]?.message ?? 'Candidate could not be reconstructed');
+        throw new Error(materialized.errors[0]?.message ?? tr('lab.msg.notReconstructed'));
       }
       downloadText(
         `${safeFilename(selectedPortableBundle.payload.id)}-${safeFilename(label)}-graph.json`,
@@ -336,13 +347,13 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
         encodeCandidateGraphJson(materialized.graph),
       );
       const outcome = materialized.status === 'blocked'
-        ? `Candidate graph downloaded with ${materialized.missingSecretRefs.length} unresolved secret value(s) left blank.`
-        : 'Candidate graph materialized from the content-integrity-checked portable operation record and downloaded.';
+        ? tr('lab.msg.graphBlanks', { count: materialized.missingSecretRefs.length })
+        : tr('lab.msg.graphDownloaded');
       setPortableMessage(materialized.fidelityWarnings.length === 0
         ? outcome
-        : `${outcome} Fidelity warning: ${materialized.fidelityWarnings.join(' ')}`);
+        : `${outcome} ${tr('lab.msg.fidelity', { warnings: materialized.fidelityWarnings.join(' ') })}`);
     } catch (error) {
-      setPortableMessage(`Candidate graph export failed: ${String(error)}`);
+      setPortableMessage(tr('lab.msg.graphFailed', { error: String(error) }));
     }
   };
 
@@ -350,21 +361,21 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
     <section className="gcp-lab" aria-labelledby="gcp-lab-title">
       <div className="gcp-lab-heading">
         <div>
-          <h1 id="gcp-lab-title">Experiment lab</h1>
-          <p>Review candidate results, graph changes, and evidence limits.</p>
+          <h1 id="gcp-lab-title">{t('lab.title')}</h1>
+          <p>{t('lab.subtitle')}</p>
         </div>
         <div className="gcp-lab-heading-actions">
-          <span className="gcp-lab-count" aria-label={`${sessions.length} experiment ${sessions.length === 1 ? 'study' : 'studies'}`}>
-            {sessions.length} {sessions.length === 1 ? 'study' : 'studies'}
+          <span className="gcp-lab-count" aria-label={t(sessions.length === 1 ? 'lab.count.aria.one' : 'lab.count.aria.many', { count: sessions.length })}>
+            {t(sessions.length === 1 ? 'lab.count.one' : 'lab.count.many', { count: sessions.length })}
           </span>
           <button type="button" disabled={importing} onClick={() => importInputRef.current?.click()}>
-            Import portable study
+            {t('lab.import')}
           </button>
           <input
             ref={importInputRef}
             type="file"
             accept="application/json,.json"
-            aria-label="Choose portable study file"
+            aria-label={t('lab.import.choose')}
             hidden
             onChange={(event) => { void handleImportFile(event); }}
           />
@@ -378,7 +389,7 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
 
       {sessions.length === 0 || !selected ? <EmptyLab onStartStudy={onStartStudy} /> : (
         <div className="gcp-lab-layout">
-          <aside className="gcp-lab-studies" aria-label="Experiment studies">
+          <aside className="gcp-lab-studies" aria-label={t('lab.studies')}>
             {sessions.map((session) => (
               <button
                 key={session.id}
@@ -394,24 +405,24 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
                   <StatusBadge status={session.status} />
                   <time dateTime={session.createdAt}>{formatDate(session.createdAt)}</time>
                 </span>
-                <strong>{session.hypothesis || 'Untitled study'}</strong>
+                <strong data-user-content>{session.hypothesis || t('lab.untitled')}</strong>
                 <span className="gcp-study-card-meta">
-                  <span>{session.objective?.direction === 'minimize' ? 'Minimize' : 'Maximize'} {session.objective?.metric || 'metric'}</span>
-                  <span>{session.variants?.length ?? 0} {(session.variants?.length ?? 0) === 1 ? 'candidate' : 'candidates'}</span>
+                  <span>{t(session.objective?.direction === 'minimize' ? 'lab.minimize' : 'lab.maximize', { metric: session.objective?.metric || t('lab.metric') })}</span>
+                  <span>{t((session.variants?.length ?? 0) === 1 ? 'lab.candidates.one' : 'lab.candidates.many', { count: session.variants?.length ?? 0 })}</span>
                 </span>
               </button>
             ))}
           </aside>
 
-          <article className="gcp-lab-report" aria-label={`Experiment report: ${selected.hypothesis}`}>
+          <article className="gcp-lab-report" aria-label={t('lab.report', { hypothesis: selected.hypothesis })}>
             <div className="gcp-lab-report-head">
               <div>
-                <h2>{selected.hypothesis || 'Untitled study'}</h2>
+                <h2 data-user-content>{selected.hypothesis || t('lab.untitled')}</h2>
               </div>
               <StatusBadge status={selected.status} />
             </div>
 
-            <div className="gcp-lab-export-actions" aria-label="Export study evidence">
+            <div className="gcp-lab-export-actions" aria-label={t('lab.export')}>
               <button
                 type="button"
                 onClick={() => downloadText(
@@ -420,7 +431,7 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
                   encodePerRunStudyCsv(exportableStudy(selected)),
                 )}
               >
-                Export runs CSV
+                {t('lab.export.csv')}
               </button>
               <button
                 type="button"
@@ -430,23 +441,23 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
                   generateResearchMarkdownReport(exportableStudy(selected)),
                 )}
               >
-                Export research brief
+                {t('lab.export.brief')}
               </button>
               <button
                 type="button"
                 disabled={!selectedPortableBundle || portableLoading}
                 title={selectedPortableBundle
-                  ? 'Export the SHA-256 content-integrity-checked baseline, variants, provenance, and run records'
-                  : 'No portable bundle is available for this legacy summary'}
+                  ? t('lab.export.portable.title')
+                  : t('lab.export.portable.none')}
                 onClick={() => { void exportPortableStudy(); }}
               >
-                {portableLoading ? 'Verifying portable study…' : 'Export portable study'}
+                {portableLoading ? t('lab.export.verifying') : t('lab.export.portable')}
               </button>
             </div>
 
             {selectedPortableBundle && (
               <p className="gcp-lab-integrity">
-                Content integrity checked. Authorship unverified.
+                {t('lab.integrity')}
                 <span className="gcp-lab-integrity-hash">SHA-256 <code>{selectedPortableBundle.integrity.contentSha256}</code></span>
               </p>
             )}
@@ -454,38 +465,38 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
             <div className="gcp-lab-summary-grid">
               <section className="gcp-lab-summary-card" aria-labelledby="gcp-study-objective">
                 <div>
-                  <h3 id="gcp-study-objective">Study objective</h3>
-                  <strong>{selected.objective.direction === 'maximize' ? 'Maximize' : 'Minimize'} {selected.objective.metric}</strong>
-                  <span>{selected.repetitions} {selected.repetitions === 1 ? 'run' : 'runs'} per candidate</span>
+                  <h3 id="gcp-study-objective">{t('lab.objective')}</h3>
+                  <strong>{t(selected.objective.direction === 'maximize' ? 'lab.maximize' : 'lab.minimize', { metric: selected.objective.metric })}</strong>
+                  <span>{t(selected.repetitions === 1 ? 'lab.perCandidate.one' : 'lab.perCandidate.many', { count: selected.repetitions })}</span>
                 </div>
               </section>
 
               <section className="gcp-lab-summary-card" aria-labelledby="gcp-study-result">
                 <div>
-                  <h3 id="gcp-study-result">Observed result</h3>
-                  <strong>{selected.winnerLabel ?? 'No unique winner recorded'}</strong>
+                  <h3 id="gcp-study-result">{t('lab.result')}</h3>
+                  <strong>{selected.winnerLabel ?? t('lab.noWinner')}</strong>
                   <span>
                     {selected.winnerId
-                      ? `${formatMetric(selected.variants.find((item) => item.id === selected.winnerId)?.mean)} observed mean`
-                      : 'See findings and warnings for ties or missing evidence.'}
+                      ? t('lab.observedMean', { value: formatMetric(selected.variants.find((item) => item.id === selected.winnerId)?.mean) })
+                      : t('lab.seeFindings')}
                   </span>
                 </div>
               </section>
             </div>
 
             {selected.search && (
-              <section className="gcp-lab-search-plan" aria-label="Deterministic parameter search plan">
-                <h3>Parameter search plan</h3>
+              <section className="gcp-lab-search-plan" aria-label={t('lab.search.aria')}>
+                <h3>{t('lab.search.title')}</h3>
                 <strong>
-                  {selected.search.strategy === 'grid' ? 'Complete grid' : 'Seeded random'}
+                  {selected.search.strategy === 'grid' ? t('lab.search.grid') : t('lab.search.seeded')}
                 </strong>
                 <span>
-                  {selected.search.generatedCandidateCount} generated candidates · {' '}
-                  {selected.search.totalDomainAssignments} domain assignments · {' '}
-                  {selected.search.totalExecutionCount} executions
+                  {t('lab.search.generated', { count: selected.search.generatedCandidateCount })} · {' '}
+                  {t('lab.search.assignments', { count: selected.search.totalDomainAssignments })} · {' '}
+                  {t('lab.search.executions', { count: selected.search.totalExecutionCount })}
                   {selected.search.plannerSeed === undefined
                     ? ''
-                    : ` · planner seed ${selected.search.plannerSeed} (${selected.search.prngVersion})`}
+                    : ` · ${t('lab.search.seed', { seed: selected.search.plannerSeed, version: selected.search.prngVersion ?? '' })}`}
                 </span>
                 <small>{selected.search.seedDescription}</small>
               </section>
@@ -494,22 +505,21 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
             {selected.insights?.summary?.length > 0 && (
               <section className="gcp-lab-section" aria-labelledby="gcp-study-findings">
                 <div className="gcp-lab-section-title">
-                  <h3 id="gcp-study-findings">Key findings</h3>
+                  <h3 id="gcp-study-findings">{t('lab.findings')}</h3>
                 </div>
                 <ul className="gcp-lab-findings">
-                  {selected.insights.summary.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+                  {selected.insights.summary.map((item, index) => <li key={`${index}-${item}`} data-user-content>{item}</li>)}
                 </ul>
               </section>
             )}
 
             <section className="gcp-lab-section" aria-labelledby="gcp-candidate-evidence">
               <div className="gcp-lab-section-title">
-                <h3 id="gcp-candidate-evidence">Candidate evidence</h3>
-                <span>{leaderboard.length} {leaderboard.length === 1 ? 'candidate' : 'candidates'}. {selected.objective.direction === 'maximize' ? 'Higher is better' : 'Lower is better'}.</span>
+                <h3 id="gcp-candidate-evidence">{t('lab.evidence')}</h3>
+                <span>{t(leaderboard.length === 1 ? 'lab.candidates.one' : 'lab.candidates.many', { count: leaderboard.length })}. {selected.objective.direction === 'maximize' ? t('lab.higher') : t('lab.lower')}.</span>
               </div>
               <p id="gcp-candidate-evidence-note" className="gcp-candidate-evidence-note">
-                Means, standard deviations, and 95% confidence intervals are descriptive, not a hypothesis test.
-                Repetitions are not necessarily independent seeds. A dash means unavailable.
+                {t('lab.evidence.note')}
               </p>
               <div className="gcp-leaderboard-wrap">
                 <table
@@ -520,12 +530,12 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
                 >
                   <thead role="rowgroup">
                     <tr role="row">
-                      <th role="columnheader" scope="col">Candidate</th>
-                      <th role="columnheader" scope="col">Mean</th>
-                      <th role="columnheader" scope="col">Variation</th>
-                      <th role="columnheader" scope="col">Runs</th>
-                      <th role="columnheader" scope="col">Runtime</th>
-                      <th role="columnheader" scope="col">Graph</th>
+                      <th role="columnheader" scope="col">{t('lab.col.candidate')}</th>
+                      <th role="columnheader" scope="col">{t('lab.col.mean')}</th>
+                      <th role="columnheader" scope="col">{t('lab.col.variation')}</th>
+                      <th role="columnheader" scope="col">{t('lab.col.runs')}</th>
+                      <th role="columnheader" scope="col">{t('lab.col.runtime')}</th>
+                      <th role="columnheader" scope="col">{t('lab.col.graph')}</th>
                     </tr>
                   </thead>
                   <tbody role="rowgroup">
@@ -533,30 +543,30 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
                       const isWinner = variant.id === selected.winnerId;
                       return (
                         <tr role="row" key={variant.id} className={isWinner ? 'winner' : undefined}>
-                          <th role="rowheader" scope="row" aria-label={variant.label} data-label="Candidate" className="gcp-candidate-cell--candidate">
+                          <th role="rowheader" scope="row" aria-label={variant.label} data-label={t('lab.col.candidate')} className="gcp-candidate-cell--candidate">
                             <div className="gcp-candidate-cell-content">
                               <span className="gcp-candidate-name">
                                 <strong>{variant.label}</strong>
-                                {isWinner && <span className="gcp-winner-tag">Best observed</span>}
+                                {isWinner && <span className="gcp-winner-tag">{t('lab.best')}</span>}
                                 <StatusBadge status={variant.status} />
                               </span>
                               <CandidateDisclosures variant={variant} />
                             </div>
                           </th>
-                          <td role="cell" data-label="Mean" className="gcp-metric-value gcp-candidate-cell--mean">
+                          <td role="cell" data-label={t('lab.col.mean')} className="gcp-metric-value gcp-candidate-cell--mean">
                             <div className="gcp-candidate-cell-content">
                               <span>{formatMetric(variant.mean)}</span>
                               {variant.baselineComparison && (
                                 <small className="gcp-metric-detail">
-                                  Improvement {formatSignedMetric(variant.baselineComparison.objectiveImprovement)} vs baseline
+                                  {t('lab.improvement', { value: formatSignedMetric(variant.baselineComparison.objectiveImprovement) })}
                                   {variant.baselineComparison.hedgesG === undefined
                                     ? ''
-                                    : `; Hedges g ${formatSignedMetric(variant.baselineComparison.hedgesG)}`}
+                                    : `; ${t('lab.hedges', { value: formatSignedMetric(variant.baselineComparison.hedgesG) })}`}
                                 </small>
                               )}
                             </div>
                           </td>
-                          <td role="cell" data-label="Variation" className="gcp-metric-value gcp-candidate-cell--variation">
+                          <td role="cell" data-label={t('lab.col.variation')} className="gcp-metric-value gcp-candidate-cell--variation">
                             <div className="gcp-candidate-cell-content">
                               <span>{variant.stddev === undefined ? '—' : `± ${formatMetric(variant.stddev)}`}</span>
                               {variant.confidenceInterval95 && (
@@ -566,35 +576,35 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
                               )}
                             </div>
                           </td>
-                          <td role="cell" data-label="Runs" className="gcp-candidate-cell--runs">
+                          <td role="cell" data-label={t('lab.col.runs')} className="gcp-candidate-cell--runs">
                             <div className="gcp-candidate-cell-content">
-                              <span>{variant.metricValues.length}/{selected.repetitions} objective values</span>
+                              <span>{t('lab.objectiveValues', { count: variant.metricValues.length, total: selected.repetitions })}</span>
                               <small className="gcp-metric-detail">
                                 {variant.runs
-                                  ? `${variant.runs.filter((run) => run.status === 'completed').length}/${variant.runs.length} recorded runs completed`
-                                  : 'Per-run records unavailable'}
+                                  ? t('lab.runsCompleted', { count: variant.runs.filter((run) => run.status === 'completed').length, total: variant.runs.length })
+                                  : t('lab.runsUnavailable')}
                               </small>
                             </div>
                           </td>
-                          <td role="cell" data-label="Runtime" className="gcp-candidate-cell--runtime">
+                          <td role="cell" data-label={t('lab.col.runtime')} className="gcp-candidate-cell--runtime">
                             <div className="gcp-candidate-cell-content">
                               <span>{formatRuntime(variant.runtimeMs)}</span>
-                              <small className="gcp-metric-detail">Mean per run</small>
+                              <small className="gcp-metric-detail">{t('lab.meanPerRun')}</small>
                             </div>
                           </td>
-                          <td role="cell" data-label="Graph" className="gcp-candidate-cell--graph">
+                          <td role="cell" data-label={t('lab.col.graph')} className="gcp-candidate-cell--graph">
                             <div className="gcp-candidate-cell-content">
                               <button
                                 type="button"
                                 className="gcp-candidate-download"
                                 disabled={!selectedPortableBundle}
-                                aria-label={`Download graph for ${variant.label}`}
+                                aria-label={t('lab.download.aria', { label: variant.label })}
                                 title={selectedPortableBundle
-                                  ? 'Materialize a graph JSON without changing the canvas; recorded fidelity warnings will be shown'
-                                  : 'This legacy summary has no portable candidate specification'}
+                                  ? t('lab.download.title')
+                                  : t('lab.download.none')}
                                 onClick={() => exportCandidateGraph(variant.id, variant.label)}
                               >
-                                Download graph
+                                {t('lab.download')}
                               </button>
                             </div>
                           </td>
@@ -609,12 +619,12 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
             {(selected.insights?.warnings?.length > 0 || selected.applyConflict) && (
               <section className="gcp-lab-section" aria-labelledby="gcp-study-warnings">
                 <div className="gcp-lab-section-title">
-                  <h3 id="gcp-study-warnings">Evidence warnings</h3>
+                  <h3 id="gcp-study-warnings">{t('lab.warnings')}</h3>
                 </div>
                 <div className="gcp-lab-warnings">
                   {selected.applyConflict && <p role="alert">{selected.applyConflict}</p>}
                   {selected.insights?.warnings?.map((warning, index) => (
-                    <p key={`${index}-${warning}`} role="alert">{warning}</p>
+                    <p key={`${index}-${warning}`} role="alert" data-user-content>{warning}</p>
                   ))}
                 </div>
               </section>
@@ -623,16 +633,16 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
             {selected.insights?.paperIdeas?.length > 0 && (
               <section className="gcp-lab-section" aria-labelledby="gcp-paper-ideas">
                 <div className="gcp-lab-section-title">
-                  <h3 id="gcp-paper-ideas">Paper ideas</h3>
-                  <span>Research leads, not final claims</span>
+                  <h3 id="gcp-paper-ideas">{t('lab.ideas')}</h3>
+                  <span>{t('lab.ideas.note')}</span>
                 </div>
                 <div className="gcp-paper-grid">
                   {selected.insights.paperIdeas.map((idea, index) => (
                     <article className="gcp-paper-card" key={`${index}-${idea.title}`}>
                       <h4>{idea.title}</h4>
                       <dl>
-                        <div><dt>Evidence</dt><dd>{idea.evidence}</dd></div>
-                        <div><dt>Next step</dt><dd>{idea.nextStep}</dd></div>
+                        <div><dt>{t('lab.idea.evidence')}</dt><dd>{idea.evidence}</dd></div>
+                        <div><dt>{t('lab.idea.next')}</dt><dd>{idea.nextStep}</dd></div>
                       </dl>
                     </article>
                   ))}
@@ -646,28 +656,28 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
       {importPreview && (
         <ConfirmDialog
           className="gcp-study-import-dialog"
-          title="Import portable study?"
+          title={t('lab.import.title')}
           busy={importing}
           onCancel={() => { if (!importing) setImportPreview(null); }}
           actions={(
             <div className="gcp-study-import-actions">
               <button type="button" data-autofocus="true" onClick={() => { if (!importing) setImportPreview(null); }} disabled={importing}>
-                Cancel
+                {t('common.cancel')}
               </button>
               <button type="button" className="primary" onClick={() => { void commitImport(); }} disabled={importing}>
-                {importing ? 'Importing…' : 'Import read-only'}
+                {importing ? t('lab.import.busy') : t('lab.import.confirm')}
               </button>
             </div>
           )}
         >
-          <p>Content integrity checked. Authorship unverified.</p>
-          <p>{importPreview.payload.spec.hypothesis}</p>
+          <p>{t('lab.integrity')}</p>
+          <p data-user-content>{importPreview.payload.spec.hypothesis}</p>
           <dl>
-            <div><dt>Study ID</dt><dd>{importPreview.payload.id}</dd></div>
-            <div><dt>Candidates</dt><dd>{importPreview.payload.spec.variants.length}</dd></div>
-            <div><dt>Run records</dt><dd>{importPreview.payload.runs.length}</dd></div>
+            <div><dt>{t('lab.import.id')}</dt><dd>{importPreview.payload.id}</dd></div>
+            <div><dt>{t('lab.import.candidates')}</dt><dd>{importPreview.payload.spec.variants.length}</dd></div>
+            <div><dt>{t('lab.import.runs')}</dt><dd>{importPreview.payload.runs.length}</dd></div>
             <div>
-              <dt>Secrets required</dt>
+              <dt>{t('lab.import.secrets')}</dt>
               <dd>{importPreview.payload.redactionReport.secretRequirements.length}</dd>
             </div>
             <div>
@@ -676,9 +686,7 @@ export function ExperimentsView({ api, onStartStudy }: ExperimentsViewProps) {
             </div>
           </dl>
           <p className="gcp-study-import-safety">
-            SHA-256 detects content changes only; it does not authenticate the author or evidence
-            source. Import stores the bundle for read-only review and does not execute, replay,
-            apply, or open any graph.
+            {t('lab.import.safety')}
           </p>
           {importError && (
             <p className="gcp-lab-portable-message error" role="alert">{importError}</p>

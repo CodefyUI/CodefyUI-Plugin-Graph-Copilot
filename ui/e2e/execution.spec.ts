@@ -4,7 +4,7 @@ import { MOCK_RUN_ID } from '../preview/execution';
 import { test, expect, readyPreview, openCopilot, send, snapshot, capture, chatRequests } from './fixtures';
 
 const workbench = (page: Page) => page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
-const approval = (page: Page) => page.getByRole('dialog', { name: 'Run the current graph?', exact: true });
+const approval = (page: Page) => page.getByRole('group', { name: 'Run the current graph?', exact: true });
 
 async function summary(page: Page): Promise<RunSummary | undefined> {
   const state = await snapshot(page);
@@ -139,11 +139,12 @@ for (const size of [
       expect(box!.y).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(size.width);
       expect(box!.y + box!.height).toBeLessThanOrEqual(size.height);
-      // Outer modal bounds alone can pass while autofocus scrolls its title
+      // Outer card bounds alone can pass while autofocus scrolls its title
       // behind a clipped ancestor. Keep identity/actions fixed and scroll only
       // the accessible details region to reach the real-side-effects warning.
       const details = approval(page).getByRole('region', { name: 'Execution approval details', exact: true });
-      const stop = approval(page).getByRole('button', { name: 'Stop generation', exact: true });
+      // Stop lives in the composer, beside the card, not inside it.
+      const stop = page.getByRole('button', { name: 'Stop generation', exact: true });
       const fixedContent = [
         approval(page).getByRole('heading', { name: 'Run the current graph?', exact: true }),
         stop,
@@ -206,7 +207,7 @@ for (const [scenario, tool] of [
     expect(state.receipts).toEqual([]);
     expect(state.executions).toEqual([]);
     await expect(approval(page)).toHaveCount(0);
-    await expect(page.getByRole('dialog', { name: /^Run \d+ graph execution/ })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: /^Run \d+ graph execution/ })).toHaveCount(0);
     expect(await summary(page)).toMatchObject({ mode: 'ask', status: 'incomplete', reason: 'ask_mutation_denied', mutation: 'none', mutationAttempted: false, sideEffectAttempted: false });
     const conversation = state.conversations[0] as { messages: Array<{ role: string; content: string; toolOutcome?: string }> };
     const denied = conversation.messages.find((turn) => turn.role === 'tool');

@@ -19,6 +19,8 @@ import {
 } from '../agent/runPointer';
 import { RunSparkline, SPARKLINE_MAX_POINTS } from './RunSparkline';
 import { notifyRunFinished } from './notify';
+import { currentLocale, translate, useT } from '../i18n';
+import { runStatusWord } from './runStatus';
 
 export interface RunReattachBannerProps {
   api: CodefyUIPluginAPI;
@@ -50,13 +52,15 @@ export function metricsSummary(row: RunRow): string {
     parts.push(`${name} ${Number.isInteger(value) ? value : value.toFixed(4)}`);
   }
   if (row.durationS !== null) {
-    parts.push(row.durationS < 90 ? `${row.durationS}s` : `${Math.round(row.durationS / 60)} min`);
+    parts.push(translate(currentLocale(), row.durationS < 90 ? 'reattach.seconds' : 'reattach.minutes',
+      { count: row.durationS < 90 ? row.durationS : Math.round(row.durationS / 60) }));
   }
   return parts.join(' · ');
 }
 
 export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBannerProps): React.JSX.Element | null {
   const [state, setState] = useState<BannerState>({ kind: 'hidden' });
+  const t = useT();
   const [stopping, setStopping] = useState<StopState>('idle');
   const [observationGeneration, setObservationGeneration] = useState(0);
   const [checking, setChecking] = useState(false);
@@ -138,10 +142,11 @@ export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBann
               const lossSeries = update.lossPoint !== undefined
                 ? [...prev.lossSeries, update.lossPoint].slice(-SPARKLINE_MAX_POINTS)
                 : prev.lossSeries;
-              const parts = [update.runStatus || 'running'];
-              if (update.nodeId && update.nodeStatus) parts.push(`${update.nodeId} ${update.nodeStatus}`);
-              if (update.lossPoint !== undefined) parts.push(`loss ${update.lossPoint.toFixed(4)}`);
-              if (update.completedNodes > 0) parts.push(`${update.completedNodes} nodes done`);
+              const tr = translate.bind(null, currentLocale());
+              const parts = [runStatusWord(update.runStatus || 'running')];
+              if (update.nodeId && update.nodeStatus) parts.push(`${update.nodeId} ${runStatusWord(update.nodeStatus)}`);
+              if (update.lossPoint !== undefined) parts.push(tr('reattach.loss', { value: update.lossPoint.toFixed(4) }));
+              if (update.completedNodes > 0) parts.push(tr('reattach.nodesDone', { count: update.completedNodes }));
               return { ...prev, lossSeries, statusText: parts.join(' · '), connectionLost: update.connectionLost };
             });
           },
@@ -205,7 +210,7 @@ export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBann
 
   const handleAskAgent = () => {
     if (state.kind !== 'finished') return;
-    onAskAgent(`Summarize run ${state.runId} with get_run and report its metrics exactly.`);
+    onAskAgent(translate(currentLocale(), 'reattach.askPrompt', { runId: state.runId }));
     handleDismiss();
   };
 
@@ -229,34 +234,34 @@ export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBann
   const reason = state.kind === 'unidentified' ? state.pointer.reason : state.reason;
 
   return (
-    <div className="gcp-reattach" role="status" aria-label="Background graph run">
+    <div className="gcp-reattach" role="status" aria-label={t('reattach.aria')}>
       <div className="gcp-reattach-body">
         <div className="gcp-reattach-title">
-          {state.kind === 'live' ? 'Run in progress (reattached)'
-            : state.kind === 'unavailable' ? 'Run status unavailable'
-            : state.kind === 'unidentified' ? 'Submitted run identity unavailable'
-            : `Run ${state.row.status} while you were away`}
+          {state.kind === 'live' ? t('reattach.live')
+            : state.kind === 'unavailable' ? t('reattach.unavailable')
+            : state.kind === 'unidentified' ? t('reattach.unidentified')
+            : t('reattach.finished', { status: runStatusWord(state.row.status) })}
         </div>
         <div className="gcp-reattach-detail">
           {state.kind === 'live'
-            ? `${state.connectionLost ? 'Connection lost — retrying… · ' : ''}${state.statusText}`
+            ? `${state.connectionLost ? `${t('reattach.connectionLost')} · ` : ''}${state.statusText}`
             : state.kind === 'unavailable'
-              ? 'Run status could not be confirmed. The run may still be active.'
+              ? t('reattach.unavailable.detail')
               : state.kind === 'unidentified'
-                ? 'The host submission may still be running. Inspect host runs before starting another.'
-                : (metricsSummary(state.row) || state.row.error || 'No recorded metrics.')}
+                ? t('reattach.unidentified.detail')
+                : (metricsSummary(state.row) || state.row.error || t('reattach.noMetrics'))}
           {reason ? <span className="gcp-reattach-reason"> — {reason}</span> : null}
         </div>
         {(observing || state.kind === 'unidentified') && (
-          <div className="gcp-reattach-detail">Local timeout monitoring is no longer active.</div>
+          <div className="gcp-reattach-detail">{t('reattach.noTimeout')}</div>
         )}
         {observing && stopping === 'uncertain' && (
-          <div className="gcp-reattach-detail">Cancellation could not be confirmed. The run may still be active.</div>
+          <div className="gcp-reattach-detail">{t('reattach.cancelUncertain')}</div>
         )}
         {state.kind === 'live' && state.lossSeries.length >= 2 && <RunSparkline series={state.lossSeries} />}
         {state.kind === 'unidentified' && state.confirmingRelease && (
           <div className="gcp-reattach-detail">
-            This only releases the local reservation. It does not stop a host run or verify its status.
+            {t('reattach.release.note')}
           </div>
         )}
       </div>
@@ -264,33 +269,33 @@ export function RunReattachBanner({ api, settings, onAskAgent }: RunReattachBann
         {observing && (
           <button className="gcp-reattach-btn gcp-reattach-stop"
             disabled={checking || stopping === 'pending' || stopping === 'requested'} onClick={handleStop}>
-            {stopping === 'pending' ? 'Stopping…' : stopping === 'requested' ? 'Cancellation requested…' : 'Stop run'}
+            {stopping === 'pending' ? t('reattach.stopping') : stopping === 'requested' ? t('reattach.cancelRequested') : t('reattach.stop')}
           </button>
         )}
         {state.kind === 'unavailable' && (
           <button className="gcp-reattach-btn" onClick={retryStatus} disabled={checking}>
-            {checking ? 'Checking status…' : 'Retry status'}
+            {checking ? t('reattach.checking') : t('reattach.retryStatus')}
           </button>
         )}
         {state.kind === 'finished' && (
-          <button className="gcp-reattach-btn" onClick={handleAskAgent}>Ask the agent to summarize</button>
+          <button className="gcp-reattach-btn" onClick={handleAskAgent}>{t('reattach.ask')}</button>
         )}
         {state.kind === 'unidentified' && (
           <>
             <button className="gcp-reattach-btn" onClick={handleRelease}>
-              {state.confirmingRelease ? 'Release reservation' : 'I checked the host; no run is active'}
+              {state.confirmingRelease ? t('reattach.release') : t('reattach.release.check')}
             </button>
             {state.confirmingRelease && (
               <button className="gcp-reattach-btn" onClick={() => setState({ ...state, confirmingRelease: false })}>
-                Keep reservation
+                {t('reattach.keep')}
               </button>
             )}
           </>
         )}
         <button className="gcp-reattach-btn gcp-reattach-dismiss" onClick={handleDismiss}
           {...(observing || state.kind === 'unidentified'
-            ? { title: 'Stop watching. Any host run keeps running.' } : {})}>
-          Dismiss
+            ? { title: t('reattach.dismiss.title') } : {})}>
+          {t('reattach.dismiss')}
         </button>
       </div>
     </div>

@@ -35,7 +35,7 @@ function setup() {
       onConversationChange={update} onOpenSettings={vi.fn()} onOpenHistory={vi.fn()} />;
   }
   render(<Harness />);
-  return { input: screen.getByRole('textbox', { name: 'Message input' }), latest: () => latest };
+  return { input: screen.getByRole('combobox', { name: 'Message input' }), latest: () => latest };
 }
 
 function pendingRun() {

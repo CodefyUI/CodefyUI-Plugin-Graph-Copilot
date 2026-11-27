@@ -141,7 +141,7 @@ describe('ChatView', () => {
   describe('disabled state (no provider key)', () => {
     it('textarea is disabled when provider is not ready', () => {
       renderChatView({ settings: EMPTY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       expect(textarea).toBeDisabled();
     });
 
@@ -185,7 +185,7 @@ describe('ChatView', () => {
 
     it('typing in the textarea updates the input value', async () => {
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'Hello graph');
       expect((textarea as HTMLTextAreaElement).value).toBe('Hello graph');
     });
@@ -194,7 +194,7 @@ describe('ChatView', () => {
       const onConversationChange = vi.fn();
       renderChatView({ settings: READY_SETTINGS, onConversationChange });
 
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'add a Conv2d node');
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -213,7 +213,7 @@ describe('ChatView', () => {
       };
       renderChatView({ settings: READY_SETTINGS, onConversationChange });
 
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'test message');
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -244,7 +244,7 @@ describe('ChatView', () => {
         onConversationChange: (conversation) => conversationUpdates.push(conversation),
       });
 
-      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'reason');
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'reason');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
       await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
@@ -255,7 +255,7 @@ describe('ChatView', () => {
     it('saveConversation called after user turn is appended', async () => {
       renderChatView({ settings: READY_SETTINGS });
 
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'save test');
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -266,7 +266,7 @@ describe('ChatView', () => {
 
     it('Shift+Enter does not send and adds newline', async () => {
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'line1');
       // Shift+Enter should not trigger send
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
@@ -275,7 +275,7 @@ describe('ChatView', () => {
 
     it('clicking the Send button also sends', async () => {
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'click send test');
 
       const sendBtn = screen.getByRole('button', { name: /send message/i });
@@ -297,11 +297,11 @@ describe('ChatView', () => {
         opts.callbacks.onFinished();
       });
       renderChatView({ settings: READY_SETTINGS });
-      const textarea = screen.getByRole('textbox', { name: /message input/i });
+      const textarea = screen.getByRole('combobox', { name: /message input/i });
       await userEvent.type(textarea, 'run the comparison');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      const dialog = await screen.findByRole('dialog', { name: /run 6 graph executions/i });
+      const dialog = await screen.findByRole('group', { name: /run 6 graph executions/i });
       expect(dialog).toHaveTextContent('3 variants');
       expect(dialog).toHaveTextContent('2 repetitions');
       expect(dialog).toHaveTextContent('write files');
@@ -312,7 +312,50 @@ describe('ChatView', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /approve and run/i }));
       await waitFor(() => expect(decision).toBe(true));
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
+    });
+
+    it('SEC7: a mass removal card says how many nodes go, with a Remove verb', async () => {
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        await opts.confirmClearGraph!({ runId: 'r', toolCallId: 'c', nodeCount: 12, edgeCount: 4, removeNodes: 10 });
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'tidy');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+      const card = await screen.findByRole('group', { name: 'Remove 10 nodes?' });
+      expect(card).toHaveTextContent('removes 10 of the 12 nodes');
+      expect(within(card).getByRole('button', { name: 'Remove 10 nodes' })).toHaveClass('gcp-danger-btn');
+    });
+
+    it('R2: a card for a later batch says what this turn already removed', async () => {
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        await opts.confirmClearGraph!({ runId: 'r', toolCallId: 'c', nodeCount: 21, edgeCount: 4, removeNodes: 9, removedThisTurn: 9 });
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'tidy');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+      const card = await screen.findByRole('group', { name: 'Remove 9 nodes?' });
+      expect(card).toHaveTextContent('This turn already removed 9 nodes; this batch removes 9 more.');
+    });
+
+    it('SEC3: the run card names the tab and warns when Copilot opened it this turn', async () => {
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        await opts.callbacks.onRunApproval!({ reason: 'Run your MNIST graph', nodeCount: 3, edgeCount: 2, nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu',
+          target: { tab: 'MNIST CNN', graph: 'Classical/MNIST', openedThisTurn: true } });
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'run it');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+      const card = await screen.findByRole('group', { name: 'Run the current graph?' });
+      expect(card).toHaveTextContent('On tab: MNIST CNN');
+      expect(card).toHaveTextContent('Classical/MNIST');
+      expect(within(card).getByRole('note')).toHaveTextContent('Copilot opened this tab during this turn');
     });
 
     it('defaults focus to Cancel and records an explicit rejection', async () => {
@@ -323,16 +366,16 @@ describe('ChatView', () => {
         opts.callbacks.onFinished();
       });
       renderChatView({ settings: READY_SETTINGS });
-      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      await screen.findByRole('dialog');
+      await screen.findByRole('group', { name: /run 6 graph executions/i });
       const cancel = screen.getByRole('button', { name: /^cancel$/i });
       expect(cancel).toHaveFocus();
       await userEvent.click(cancel);
 
       await waitFor(() => expect(decision).toBe(false));
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
 
     it('resolves a pending approval as rejected when Stop aborts the run', async () => {
@@ -345,17 +388,18 @@ describe('ChatView', () => {
         opts.callbacks.onFinished();
       });
       renderChatView({ settings: READY_SETTINGS });
-      await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'compare');
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      const dialog = await screen.findByRole('dialog');
-      const stop = within(dialog).getByRole('button', { name: /stop generation/i });
+      await screen.findByRole('group', { name: /run 6 graph executions/i });
+      // Stop stays in the composer while an approval card waits in the conversation.
+      const stop = screen.getByRole('button', { name: /stop generation/i });
       expect(screen.getAllByRole('button', { name: /stop generation/i })).toHaveLength(1);
       await userEvent.click(stop);
 
       await waitFor(() => expect(decision).toBe(false));
       expect(aborted).toBe(true);
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
   });
 });

@@ -132,7 +132,7 @@ describe('ChatView attachments', () => {
     (readFileAsAttachment as Mock).mockReturnValue(new Promise<Attachment>(() => { /* never */ }));
 
     const { container } = renderChatView();
-    await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'hi');
+    await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'hi');
 
     fireEvent.change(fileInputOf(container), {
       target: { files: [new File(['x'], 'a.txt', { type: 'text/plain' })] },
@@ -149,7 +149,7 @@ describe('ChatView attachments', () => {
     );
 
     const { container } = renderChatView();
-    await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'review this');
+    await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'review this');
 
     fireEvent.change(fileInputOf(container), {
       target: { files: [new File(['hello'], 'a.txt', { type: 'text/plain' })] },

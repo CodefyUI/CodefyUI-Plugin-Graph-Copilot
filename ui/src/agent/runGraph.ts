@@ -25,6 +25,7 @@ import {
 import { finiteNumber, normalizeNodeStatus, type MediaOutput } from './wireOutputs';
 import { isPassiveDetach } from './abortReasons';
 import { awaitWithSignal, isAbortError, throwIfAborted } from './toolGuards';
+import { currentLocale, translate } from '../i18n';
 
 function observe(fn: () => unknown): void {
   try { void Promise.resolve(fn()).catch(() => {}); } catch { /* progress is not execution */ }
@@ -164,10 +165,11 @@ export async function fetchDefaultDevice(
 
 /** One-line human status for the composer bar while a run streams. */
 export function formatRunStatusLine(update: RunProgressUpdate): string {
-  if (update.phase === 'connecting') return 'Starting graph run…';
-  if (update.phase === 'cancelling') return 'Cancelling run…';
+  const tr = translate.bind(null, currentLocale());
+  if (update.phase === 'connecting') return tr('runline.starting');
+  if (update.phase === 'cancelling') return tr('runline.cancelling');
   const parts: string[] = [
-    `Running graph ${update.completedNodes}/${update.totalNodes}`,
+    tr('runline.running', { completed: update.completedNodes, total: update.totalNodes }),
   ];
   if (update.nodeType) parts.push(update.nodeType);
   const progress = update.progress ?? {};

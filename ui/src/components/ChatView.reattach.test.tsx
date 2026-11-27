@@ -155,13 +155,13 @@ describe('ChatView reattach banner integration', () => {
     const props = { api, settings: READY_SETTINGS, codexLoggedIn: false, conversation,
       onConversationChange: vi.fn(), onOpenSettings: vi.fn(), onOpenHistory: vi.fn() };
     const view = render(<ChatView {...props} />);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Message input' }), { target: { value: 'Run graph' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Message input' }), { target: { value: 'Run graph' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     view.rerender(<ChatView {...props} active={false} />);
     expect(opts.signal?.reason).toBe(PASSIVE_DETACH_REASON);
     expect(opts.cancelSignal?.aborted).toBe(false);
     view.rerender(<ChatView {...props} active />);
-    expect(screen.getByRole('textbox', { name: 'Message input' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Message input' })).toBeDisabled();
     expect(api.http.fetch).not.toHaveBeenCalled();
     expect(screen.queryByText('Run in progress (reattached)')).toBeNull();
 
@@ -169,7 +169,7 @@ describe('ChatView reattach banner integration', () => {
       mutation: 'none', mutationAttempted: false, sideEffectAttempted: true, hostRunId: 'run-1',
       appliedOps: 0, failedOps: 0, validation: { status: 'not_run', errors: [] }, turns: [] };
     act(() => opts.callbacks.onFinished(detached));
-    expect(screen.getByRole('textbox', { name: 'Message input' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Message input' })).toBeDisabled();
     expect(api.http.fetch).not.toHaveBeenCalled();
     writeActiveRun(api, POINTER);
     await act(async () => resolve(detached));
@@ -197,7 +197,7 @@ describe('ChatView reattach banner integration', () => {
 
     fireEvent.click(screen.getByText('Ask the agent to summarize'));
 
-    const textarea = screen.getByRole('textbox', { name: /message input/i }) as HTMLTextAreaElement;
+    const textarea = screen.getByRole('combobox', { name: /message input/i }) as HTMLTextAreaElement;
     expect(textarea.value).toContain('run-1');
     expect(runTurn).not.toHaveBeenCalled();
   });

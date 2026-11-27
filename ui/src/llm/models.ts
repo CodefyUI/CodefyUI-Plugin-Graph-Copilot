@@ -191,7 +191,17 @@ function effortOptions(efforts: readonly ReasoningEffort[]): ModelReasoningEffor
   return efforts.filter((effort) => effort !== 'ultra').map((effort) => ({ effort }));
 }
 
+/** Current Claude models, used until `/api/llm/models` answers. The first is
+ * the default. */
+export const ANTHROPIC_MODELS: ReadonlyArray<{ id: string; label: string; description: string }> = [
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Most capable; the default' },
+  { id: 'claude-fable-5-2', label: 'Claude Fable 5.2', description: 'Strong reasoning at lower cost' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', description: 'Balanced speed and quality' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', description: 'Fastest and cheapest' },
+];
+
 export function builtInModelCatalog(provider: Provider): ModelCatalogEntry[] {
+  if (provider === 'anthropic') return ANTHROPIC_MODELS.map((model) => ({ ...model, reasoningEfforts: [] }));
   if (provider !== 'openai' && provider !== 'openai-codex') return [];
   const efforts = provider === 'openai' ? OPENAI_GPT56_EFFORTS : CODEX_GPT56_EFFORTS;
   return GPT56_MODELS.map((model) => ({

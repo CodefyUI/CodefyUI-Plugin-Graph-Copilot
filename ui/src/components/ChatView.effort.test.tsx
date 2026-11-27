@@ -189,7 +189,7 @@ describe('ChatView live run bar', () => {
       return new Promise<TurnResult>((done) => { resolve = done; });
     });
     render(<Harness />);
-    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    const textarea = screen.getByRole('combobox', { name: /message input/i });
     await userEvent.type(textarea, 'build it');
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
     await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));

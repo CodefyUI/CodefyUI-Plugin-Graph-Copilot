@@ -5,6 +5,7 @@ import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import { DEFAULT_SETTINGS } from '../state/settings';
 import type { Conversation } from '../state/conversations';
+import { saveConversation } from '../state/conversations';
 
 // Stub child views so these tests focus on ChatWindow's workbench and lifecycle.
 // Each child is covered by its own suite.
@@ -83,6 +84,15 @@ function renderWindow(over: Partial<React.ComponentProps<typeof ChatWindow>> = {
 
 describe('ChatWindow', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('SEC4: a save that lost data shows an alert in the panel', () => {
+    renderWindow();
+    const failing = { storage: { get: () => null, set: () => { throw new DOMException('full', 'QuotaExceededError'); }, remove: () => {} } };
+    act(() => { saveConversation(failing as never, makeConv()); });
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
 
   it('shows the chat view by default', () => {
     renderWindow();

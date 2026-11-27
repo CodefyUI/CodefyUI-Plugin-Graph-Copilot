@@ -1,5 +1,5 @@
 import './host.css';
-import type { CodefyUIPluginAPI } from '../src/types/codefyui';
+import type { CodefyUIPluginAPI, PluginPanelOptions, SerializedGraph, WorkspaceOpenEntry } from '../src/types/codefyui';
 import { createSampleGraph } from './graph';
 import { createMockHttp } from './http';
 import { createMockExecution } from './execution';
@@ -7,6 +7,7 @@ import { seededConversations } from './history';
 import { seededLabEvidence } from './lab';
 import { LIGHT_HOST_TOKENS } from './hostTokens';
 import { isNativeRunScenario, scenarioById, SCENARIOS } from './scenarios';
+import { createMockSkills } from './skills';
 import type { PreviewSnapshot } from './types';
 
 const params = new URLSearchParams(window.location.search);
@@ -20,6 +21,16 @@ const nativeRun = isNativeRunScenario(scenario);
 const serverOwned = nativeRun && params.get('serverOwned') === '1';
 const lateInitialId = serverOwned && params.get('lateInitialId') === '1';
 const unreadableRunHistory = serverOwned && params.get('runHistory') === 'unreadable';
+// `host=v6`: CodefyUI with Agent Skills and the side dock (apiVersion 6).
+// `host=v5`: CodefyUI 3.2.0 (apiVersion 5, no skills, floating widget only).
+// Neither: the original apiVersion 1 fixture.
+const hostVersion = params.get('host') === 'v6' || scenario.needsSkills ? 6 : params.get('host') === 'v5' ? 5 : 1;
+const skills = hostVersion >= 6 ? createMockSkills({
+  install: params.get('skillInstall') === 'refused' ? 'refused' : 'ok',
+  instructions: scenario.instructions ?? null,
+}) : undefined;
+// `lang=zh-TW`: the host's UI language, as CodefyUI sets it on <html lang>.
+if (params.get('lang')) document.documentElement.lang = params.get('lang')!;
 if (lightTokens) {
   for (const [key, value] of Object.entries(LIGHT_HOST_TOKENS)) document.documentElement.style.setProperty(key, value);
 }
@@ -32,6 +43,57 @@ const memory = new Map<string, string>([['settings', JSON.stringify({
 if (scenario.id === 'seed') memory.set('conversations', JSON.stringify(seededConversations()));
 if (scenario.id === 'lab-evidence') memory.set('experiment-sessions-v1', JSON.stringify(seededLabEvidence()));
 const widgets = new Map<string, HTMLElement>();
+
+// v6 side dock: a toolbar toggle with a state badge, and a right-hand dock
+// that attaches the panel element only while it is open (as the host does).
+// `panelWidth=` sets the dock width; `panelOpen=1` opens it on load.
+interface SidePanel { element: HTMLElement; options: PluginPanelOptions; open: boolean }
+const sidePanels = new Map<string, SidePanel>();
+const dockWidth = Number(params.get('panelWidth')) || 0;
+function renderDock(): void {
+  const dock = byId('mock-side-dock');
+  const toolbar = byId('mock-toolbar');
+  const open = [...sidePanels.values()].find((panel) => panel.open);
+  dock.hidden = !open;
+  // The host's own widgets move left of the dock instead of covering it.
+  document.body.style.setProperty('--mock-dock-width', open ? `${dockWidth || open.options.side?.defaultWidth || 400}px` : '0px');
+  if (open) {
+    dock.style.width = `${dockWidth || open.options.side?.defaultWidth || 400}px`;
+    if (open.element.parentElement !== dock) dock.replaceChildren(open.element);
+  } else dock.replaceChildren();
+  toolbar.replaceChildren(...[...sidePanels.entries()].map(([id, panel]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mock-toolbar-toggle';
+    button.setAttribute('aria-pressed', String(panel.open));
+    button.setAttribute('aria-label', panel.options.title);
+    button.dataset.badge = panel.options.badge ?? '';
+    button.textContent = `${panel.options.icon ?? ''} ${panel.options.title}`;
+    if (panel.options.badge) {
+      const badge = document.createElement('span');
+      badge.className = `mock-badge mock-badge--${panel.options.badge}`;
+      badge.setAttribute('aria-label', `badge ${panel.options.badge}`);
+      badge.textContent = panel.options.badge === 'attention' ? '!' : panel.options.badge === 'working' ? '⚙' : '✓';
+      button.append(badge);
+    }
+    button.addEventListener('click', () => setPanelOpen(id, !panel.open));
+    return button;
+  }));
+}
+function setPanelOpen(id: string, open: boolean): boolean {
+  const panel = sidePanels.get(id);
+  if (!panel) return false;
+  if (open) for (const [other, candidate] of sidePanels) if (other !== id && candidate.open) setPanelOpen(other, false);
+  if (panel.open === open) return true;
+  panel.open = open;
+  renderDock();
+  if (open) panel.options.onShow?.(); else panel.options.onHide?.();
+  render();
+  return true;
+}
+
+// v5 workspace: the sample graph is the active tab; opened graphs become tabs.
+const extraTabs: Array<{ tabId: string; title: string; graph: SerializedGraph; transient: boolean }> = [];
 let ready = false;
 
 const byId = <T extends HTMLElement>(id: string): T => {
@@ -42,18 +104,21 @@ const byId = <T extends HTMLElement>(id: string): T => {
 
 const graph = scenario.id === 'empty-graph' ? createSampleGraph(render, { nodes: [], edges: [] }) : createSampleGraph(render);
 const execution = createMockExecution(nativeRun, window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason), { serverOwned, lateInitialId });
-const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory });
+const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory, skills, gitProject: params.get('project') === '1' });
 
 function snapshot(): PreviewSnapshot {
   const graphState = graph.inspect();
   return {
     ready, scenario: scenario.id, entry: bundle ? 'bundle' : 'source', manual,
     serverOwned, lateInitialId, unreadableRunHistory,
+    hostVersion, skills: skills?.inspect() ?? null,
     ...graphState, ...http.inspect(), ...execution.inspect(),
     activeRun: JSON.parse(memory.get('active_run') ?? 'null') as unknown,
     conversations: JSON.parse(memory.get('conversations') ?? '[]') as unknown[],
     experimentSessions: JSON.parse(memory.get('experiment-sessions-v1') ?? '[]') as unknown[],
     widgets: [...widgets.keys()],
+    panels: [...sidePanels.entries()].map(([id, panel]) => ({ id, open: panel.open, badge: panel.options.badge ?? null })),
+    tabs: hostVersion >= 5 ? [{ title: 'Sample graph' }, ...extraTabs.map((tab) => ({ title: tab.title }))] : [],
   };
 }
 
@@ -86,7 +151,7 @@ function render(): void {
 }
 
 const api: CodefyUIPluginAPI = {
-  apiVersion: 1,
+  apiVersion: hostVersion,
   pluginId: 'graph-copilot-preview',
   ui: {
     addFloatingWidget({ id }) {
@@ -97,6 +162,22 @@ const api: CodefyUIPluginAPI = {
       byId('plugin-widgets').append(container);
       return container;
     },
+    ...(hostVersion >= 6 ? {
+      addPanel(options: PluginPanelOptions) {
+        const existing = sidePanels.get(options.id);
+        if (existing) { existing.options = { ...existing.options, ...options }; renderDock(); render(); return existing.element; }
+        const element = document.createElement('div');
+        element.dataset.panelId = options.id;
+        element.className = 'mock-side-panel';
+        sidePanels.set(options.id, { element, options, open: false });
+        renderDock();
+        if (params.get('panelOpen') === '1') queueMicrotask(() => setPanelOpen(options.id, true));
+        return element;
+      },
+      removePanel(id: string) { setPanelOpen(id, false); sidePanels.delete(id); renderDock(); },
+      setPanelOpen,
+      isPanelOpen: (id: string) => sidePanels.get(id)?.open ?? false,
+    } : {}),
     toast(message) {
       const toast = byId('mock-toast');
       toast.textContent = `Mock host: ${message}`;
@@ -107,6 +188,27 @@ const api: CodefyUIPluginAPI = {
     ? { ...graph, getGraph() { throw new Error('Mock graph context unavailable'); } }
     : graph,
   http: { fetch: http.fetch },
+  ...(hostVersion >= 5 ? { workspace: {
+    tabs: () => [
+      { tabId: 'tab-sample', title: 'Sample graph', revision: graph.inspect().revision, readOnly: false, transient: false, source: null, active: extraTabs.length === 0 },
+      ...extraTabs.map((tab, index) => ({ tabId: tab.tabId, title: tab.title, revision: 0, readOnly: false, transient: tab.transient, source: null, active: index === extraTabs.length - 1 })),
+    ],
+    snapshot(tabId?: string) {
+      if (!tabId || tabId === 'tab-sample') return { tabId: 'tab-sample', title: 'Sample graph', revision: graph.inspect().revision, readOnly: false, transient: false, source: null, active: extraTabs.length === 0, graph: graph.getGraph() };
+      const tab = extraTabs.find((candidate) => candidate.tabId === tabId);
+      return tab ? { tabId: tab.tabId, title: tab.title, revision: 0, readOnly: false, transient: tab.transient, source: null, active: false, graph: tab.graph } : { error: 'unknown_tab' as const };
+    },
+    openGraphs(entries: WorkspaceOpenEntry[]) {
+      const results = entries.map((entry) => {
+        const tabId = `tab-${extraTabs.length + 1}`;
+        extraTabs.push({ tabId, title: entry.title, graph: entry.graph, transient: entry.persist === false });
+        return { tabId, revision: 0 };
+      });
+      render();
+      return results;
+    },
+    onChanged: () => () => {},
+  } } : {}),
   storage: {
     get: (key) => memory.get(key) ?? null,
     set(key, value) { memory.set(key, value); },

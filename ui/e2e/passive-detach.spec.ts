@@ -4,7 +4,7 @@ import { MOCK_RUN_ID } from '../preview/execution';
 import type { PreviewSnapshot } from '../preview/types';
 import { test, expect, readyPreview, openCopilot, send, snapshot, capture, chatRequests } from './fixtures';
 
-const approval = (page: Page) => page.getByRole('dialog', { name: 'Run the current graph?', exact: true });
+const approval = (page: Page) => page.getByRole('group', { name: 'Run the current graph?', exact: true });
 const banner = (page: Page) => page.getByRole('status', { name: 'Background graph run', exact: true });
 const workbench = (page: Page) => page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
 const cancelRequests = (state: PreviewSnapshot) => state.requests.filter((request) => request.url.endsWith('/cancel'));
@@ -103,7 +103,7 @@ test('fast reopen waits for a late initial run ID before mounting its reattach f
   await page.getByRole('button', { name: 'Close panel', exact: true }).click();
   await openCopilot(page);
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Message input', exact: true })).toBeDisabled();
   await expect(banner(page)).toHaveCount(0);
   let state = await snapshot(page);
   expect(state.activeRun).toBeNull();

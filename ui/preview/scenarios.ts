@@ -1,7 +1,7 @@
 import type { GraphOp } from '../src/types/codefyui';
 import type { WireToolCall } from '../src/llm/client';
 
-export type ScenarioId = 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history' | 'setup-required' | 'empty-graph' | 'unavailable-context' | 'lab-evidence';
+export type ScenarioId = 'skills' | 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history' | 'setup-required' | 'empty-graph' | 'unavailable-context' | 'lab-evidence';
 
 export interface ChatReply {
   text: string;
@@ -18,6 +18,10 @@ export interface Scenario {
   mode: 'ask' | 'edit';
   validation: 'actual' | 'invalid' | 'unavailable';
   replies: ChatReply[];
+  /** Needs a host with Agent Skills (apiVersion 6). */
+  needsSkills?: boolean;
+  /** The project's AGENTS.md, for a project-mode host. */
+  instructions?: string;
 }
 
 const tool = (id: string, name: string, args: Record<string, unknown> = {}): WireToolCall => ({ id, name, arguments: args });
@@ -40,6 +44,17 @@ const editReplies = (operations: GraphOp[] = EDIT_OPERATIONS): ChatReply[] => [
 ];
 
 export const SCENARIOS: Scenario[] = [
+  {
+    id: 'skills', label: 'Skills: load and read a skill file (v6 host)', mode: 'edit', validation: 'actual', needsSkills: true,
+    instructions: 'Seed every run with 7. The evaluation graph is called serve.',
+    prompt: 'Use the build-graph skill to explain how ports connect.',
+    replies: [
+      { text: 'I’ll try the port reference first.', tools: [tool('mock-early-file', 'read_skill_file', { name: 'build-graph', path: 'references/ports.md' })] },
+      { text: 'I need to load the skill first.', tools: [tool('mock-load-skill', 'load_skill', { name: 'build-graph' })] },
+      { text: 'The skill points to its port reference.', tools: [tool('mock-read-file', 'read_skill_file', { name: 'build-graph', path: 'references/ports.md' })] },
+      { text: 'Ports connect only to the same type, per the **build-graph** skill’s reference.' },
+    ],
+  },
   {
     id: 'setup-required', label: 'Provider setup required', mode: 'edit', validation: 'actual',
     prompt: 'Explain the current graph after I configure a provider.',

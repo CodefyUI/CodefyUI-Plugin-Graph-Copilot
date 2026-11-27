@@ -148,6 +148,10 @@ The manifest declares **`requires_codefyui = ">=1.3.0"`**. That is the baseline 
 | `api.nodes` | Absent | API v2 custom renderer registration | Optional, not required |
 | Run history/events/cancel | `/api/runs` absent; socket-owned runs | Server-owned run REST surface | Required only for run awareness/reattach |
 | Rich model/effort metadata | May be absent | Catalog and forwarded `reasoning_effort` | Required for corresponding controls/models |
+| `api.workspace` (API 5, CodefyUI 3.2.0) | Absent | Tabs, snapshots, `openGraphs` | Optional: `list_tabs`, `open_graph`, `search_examples`, `open_example` |
+| Side dock (API 6) | Absent | `addPanel({dock: 'side', badge})`, `setPanelOpen` | Optional: side panel and toolbar badge; floating widget otherwise |
+| Agent Skills (API 6) | Absent | `/api/agent/context`, `/api/skills/*` | Optional: Skills view, skill tools, project instructions; off when absent |
+| Git (`/api/git/*`) | Absent | Status, diff, log, stage, commit in project mode | Optional: project tools, only for a ready git project |
 
 Existing core endpoints used outside the JavaScript object include `POST /api/graph/validate`, `GET /api/auth/bootstrap`, `/ws/execution`, and feature-detected device/run/model surfaces. Graph Copilot registers no backend routes.
 
@@ -165,11 +169,20 @@ Existing core endpoints used outside the JavaScript object include `POST /api/gr
 
 | Path | Responsibility |
 | --- | --- |
-| `ui/src/components/` | Workbench, mounted chat lifecycle, settings/history/Lab, stages and results |
+| `ui/src/components/` | Panel, mounted chat lifecycle, settings/history/Lab/Skills views, stages and results |
+| `ui/src/index.tsx`, `components/CopilotApp.tsx` | Mount in the v6 side dock (`addPanel`) or the floating widget; toolbar badge |
+| `ui/src/components/ChatWindow.tsx`, `agentStatus.ts` | Header, navigation and More actions menu; agent state (needs you > done > working > idle) |
+| `ui/src/components/ChatView.tsx`, `ApprovalCard.tsx` | Conversation, composer, slash menu, inline approval cards |
+| `ui/src/components/SkillsView.tsx`, `SlashMenu.tsx` | Skills list, detail, enable switches and install; `/` commands and skills |
 | `ui/src/components/useAgentRun.ts` | Captured turn/conversation controller, approvals and safe recovery |
 | `ui/src/components/RunResult.tsx` | Independent agent/canvas/validation/execution evidence |
 | `ui/src/components/RunReattachBanner.tsx` | Existing host-run following, Stop/detach, finished-while-away metrics |
-| `ui/src/agent/loop.ts`, `types.ts`, `toolGuards.ts`, `history.ts` | Tool catalog, journal, result contract, scope/receipt/cancel guards, whole-group history |
+| `ui/src/agent/loop.ts`, `types.ts`, `toolGuards.ts`, `history.ts` | Turn loop and approval gate, journal, result contract, scope/receipt/cancel guards, whole-group history |
+| `ui/src/agent/tools/` | Tool registry (`registry.ts`, `types.ts`, `index.ts`) and one file per tool: graph, run, experiment, skill, workspace, example and project tools |
+| `ui/src/agent/hostContext.ts`, `skillSession.ts`, `untrusted.ts` | Agent context and skills host API, skills loaded per conversation, marked blocks and size caps for untrusted text |
+| `ui/src/agent/gitHost.ts` | Host git status/diff/log, commit candidates without dotenv files, stage-listed-paths and commit |
+| `ui/src/agent/chatBody.ts`, `validation.ts`, `runExit.ts` | Provider request body, current-graph validation, turn exit reasons |
+| `ui/src/i18n.ts`, `ui/src/i18n/` | `t()` with en and zh-TW dictionaries, following `<html lang>` |
 | `ui/src/agent/prompt.ts`, `historyRedaction.ts` | Graph/experiment policy and schema/fail-closed provider/display redaction |
 | `ui/src/agent/experiments.ts` | Clone/validate/execute/measure/rank, promotion, local summaries |
 | `ui/src/agent/runtimeTools.ts` | Approved live/study/optimizer dispatch, host-run reads, effect journaling, and cancellation/pointer handling |

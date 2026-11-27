@@ -10,10 +10,17 @@
 - 模型入口集中在 composer。Header 提供導覽與受 busy guard 保護的 New conversation；再次點擊已選分頁不跳頁。
 - 明確保留 Ask／Edit。無法讀圖顯示文字而不虛構零節點；設定完成不宣稱已連線。
 - 情境化起始任務與 Lab 比較動作只預填草稿，不自動送出。
-- 原生 dialog 隔離真正核准／匯入決策，主工作台仍 non-modal。Escape 只拒絕目前決策，結束後還原 composer 焦點。
-- 原生 reasoning 選單取代不完整的自訂 menu。Settings 依 Connection → Model → Behavior 分組，說明 key 保存方式與 Refresh 前提。
+- 從 0.5.0 起，核准（清空、執行、研究、提交）是對話中的卡片，不是 modal：焦點預設在安全選項，Escape 只拒絕這張卡片，結束後還原 composer 焦點。研究匯入仍用原生 dialog。
+- 原生 reasoning 選單取代不完整的自訂 menu。Settings 依 Provider → Model → Behavior 分組，說明 key 保存方式與 Refresh 前提。
 - Lab 使用單一語意表格，依窄面板寬度重排欄位並保留 accessible headers；操作／錯誤可完整展開，缺資料不變成零，平手不虛構名次。
 - CSS 保持 `gcp-*` 範圍，繼承宿主字體／tokens，支援 reduced motion／forced colors，不載入外部字型或新 UI 框架。
+
+## 0.5.0 通用 agent 面板
+
+- 有 v6 側欄的主程式上，面板停靠在側邊；其他主程式維持浮動視窗。標題列集中顯示 agent 狀態（需要你處理 > 已完成 > 處理中 > 待命，文字加符號）、圖示導覽，以及寬度低於 320 px 時接手的更多操作選單。
+- 顏色代表角色：accent、live、ok、attention、danger、neutral，各自在 `tokens:begin`／`tokens:end` 區塊綁定一次主程式 token；`styles.test.ts` 會擋下區塊外的顏色字面值。只有「處理中」那一行會閃動。
+- 工具呼叫是一行式列：結果符號、等寬工具名與 `k=v` 參數；連續三個以上的一般呼叫收成一列；每次改圖附一行「+3 nodes · 4 edges」摘要。
+- 版面依面板寬度用 container query 調整（300–720 px），不看 viewport。`e2e/panel.spec.ts` 檢查 300、400、640、720 px 的英文與繁體中文、浮動視窗退回、淺色 tokens 與工具列標記。
 
 ## 驗證紀錄
 

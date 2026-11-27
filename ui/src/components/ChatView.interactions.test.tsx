@@ -81,7 +81,7 @@ describe('ChatView interactions', () => {
       return new Promise(() => {}); // never resolves -> stays busy
     });
     renderChatView(makeFakeApi());
-    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    const textarea = screen.getByRole('combobox', { name: /message input/i });
     await userEvent.type(textarea, 'hi');
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -98,7 +98,7 @@ describe('ChatView interactions', () => {
       return new Promise<TurnResult>(() => {});
     });
     const view = renderChatView(makeFakeApi());
-    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    const textarea = screen.getByRole('combobox', { name: /message input/i });
     await userEvent.type(textarea, 'run it');
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
     await screen.findByRole('button', { name: /stop generation/i });
@@ -135,7 +135,7 @@ describe('ChatView interactions', () => {
       readyAttachment({ kind: 'image', name: 'p.png', mime: 'image/png', text: undefined, dataUrl: 'data:image/png;base64,AAAA' }),
     );
     renderChatView(makeFakeApi());
-    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    const textarea = screen.getByRole('combobox', { name: /message input/i });
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'p.png', { type: 'image/png' });
 
     fireEvent.paste(textarea, { clipboardData: { types: ['Files'], files: [file] } });
@@ -145,7 +145,7 @@ describe('ChatView interactions', () => {
   it('removes a staged attachment when its remove button is clicked', async () => {
     vi.mocked(readFileAsAttachment).mockResolvedValue(readyAttachment({ name: 'r.txt' }));
     renderChatView(makeFakeApi());
-    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    const textarea = screen.getByRole('combobox', { name: /message input/i });
     const file = new File(['abc'], 'r.txt', { type: 'text/plain' });
 
     fireEvent.paste(textarea, { clipboardData: { types: ['Files'], files: [file] } });
@@ -157,7 +157,7 @@ describe('ChatView interactions', () => {
   it('marks an attachment failed when reading rejects', async () => {
     vi.mocked(readFileAsAttachment).mockRejectedValue(new Error('too big'));
     renderChatView(makeFakeApi());
-    const textarea = screen.getByRole('textbox', { name: /message input/i });
+    const textarea = screen.getByRole('combobox', { name: /message input/i });
     const file = new File(['x'], 'bad.txt', { type: 'text/plain' });
 
     fireEvent.paste(textarea, { clipboardData: { types: ['Files'], files: [file] } });

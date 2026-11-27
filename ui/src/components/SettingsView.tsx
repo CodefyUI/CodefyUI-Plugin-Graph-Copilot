@@ -21,6 +21,7 @@ import {
   invalidateCodexStatusGeneration,
   isCurrentCodexStatusGeneration,
 } from '../llm/codexStatusEpoch';
+import { useT } from '../i18n';
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   openai: 'OpenAI API',
@@ -29,6 +30,9 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: 'Claude API',
   custom: 'Custom (OpenAI-compatible)',
 };
+const KEY_LABEL = {
+  openai: 'settings.key.openai', anthropic: 'settings.key.anthropic', openrouter: 'settings.key.openrouter', custom: 'settings.key.custom',
+} as const;
 const KEY_PROVIDERS: Array<'openai' | 'openrouter' | 'anthropic' | 'custom'> = [
   'openai', 'openrouter', 'anthropic', 'custom',
 ];
@@ -57,6 +61,7 @@ function PasswordInput({ id, value, onBlur, onEdit, placeholder, 'aria-label': a
   'aria-label': string;
   'aria-describedby'?: string;
 }) {
+  const t = useT();
   const [show, setShow] = useState(false);
   const [local, setLocal] = useState(value);
   useEffect(() => { setLocal(value); }, [value]);
@@ -65,7 +70,7 @@ function PasswordInput({ id, value, onBlur, onEdit, placeholder, 'aria-label': a
       <input
         id={id} type={show ? 'text' : 'password'} className="gcp-input" value={local}
         onChange={(e) => { setLocal(e.target.value); onEdit(e.target.value); }}
-        onBlur={() => onBlur(local)} placeholder={placeholder ?? 'API key'}
+        onBlur={() => onBlur(local)} placeholder={placeholder ?? t('settings.key.placeholder')}
         onKeyDown={(event) => {
           // The shell may close on Escape without blurring the focused input.
           if (event.key === 'Escape' && !event.nativeEvent.isComposing) onBlur(local);
@@ -73,8 +78,8 @@ function PasswordInput({ id, value, onBlur, onEdit, placeholder, 'aria-label': a
         aria-label={ariaLabel} aria-describedby={describedBy} autoComplete="off" spellCheck={false}
       />
       <button type="button" className="gcp-show-btn" onClick={() => setShow((s) => !s)}
-        aria-label={show ? 'Hide key' : 'Show key'} title={show ? 'Hide' : 'Show'}>
-        {show ? 'Hide' : 'Show'}
+        aria-label={show ? t('settings.key.hideAria') : t('settings.key.showAria')} title={show ? t('settings.key.hide') : t('settings.key.show')}>
+        {show ? t('settings.key.hide') : t('settings.key.show')}
       </button>
     </div>
   );
@@ -83,6 +88,7 @@ function PasswordInput({ id, value, onBlur, onEdit, placeholder, 'aria-label': a
 export function SettingsView({
   api, settings, codexLoggedIn, codexEmail, onCodexStatusChange, onChange,
 }: SettingsViewProps) {
+  const t = useT();
   const provider = settings.provider;
   const savedKey = provider === 'openai-codex' ? undefined : settings.apiKeys[provider];
   const activeApiKey = typeof savedKey === 'string' ? savedKey : undefined;
@@ -381,7 +387,7 @@ export function SettingsView({
       codexActionRef.current = 'idle';
       clearCodexTimers();
       setCodexPending(false);
-      setCodexError('Sign-in timed out. Try again to open a new browser sign-in.');
+      setCodexError(t('settings.codex.timeout'));
     }, CODEX_POLL_MAX_MS);
 
     async function poll() {
@@ -456,75 +462,73 @@ export function SettingsView({
   const setupReason = readinessReason(settings, codexLoggedIn);
   const modelMissing = !selectedModel.trim();
   const refreshPrerequisite = provider === 'openai-codex'
-    ? codexSigningOut ? 'Wait for sign-out to finish before refreshing models.'
-      : codexLoggedIn ? null : 'Sign in above to refresh available models.'
+    ? codexSigningOut ? t('settings.refresh.waitSignOut')
+      : codexLoggedIn ? null : t('settings.refresh.signIn')
     : provider === 'custom'
-      ? activeBaseUrl?.trim() ? null : 'Enter a base URL above to refresh models. An API key is optional.'
-      : draftKeyRef.current?.trim() ? null : 'Enter an API key above to refresh available models.';
+      ? activeBaseUrl?.trim() ? null : t('settings.refresh.baseUrl')
+      : draftKeyRef.current?.trim() ? null : t('settings.refresh.key');
   const modelCatalogHint = refreshPrerequisite ?? (provider === 'custom'
-    ? 'Refresh queries this endpoint only when you ask. A model ID can also be typed directly.'
-    : 'Refresh loads available models. A model ID can also be typed directly.');
+    ? t('settings.refresh.customHint')
+    : t('settings.refresh.hint'));
 
   return (
     <div className="gcp-settings">
       <div className="gcp-view-heading">
-        <h2>Settings</h2>
-        <p>Connect a provider, choose a model, and set how Graph Copilot works.</p>
+        <h2>{t('settings.title')}</h2>
+        <p>{t('settings.intro')}</p>
       </div>
 
       <section className="gcp-settings-section" aria-labelledby="gcp-settings-connection">
-        <h3 id="gcp-settings-connection">Connection</h3>
+        <h3 id="gcp-settings-connection">{t('settings.provider')}</h3>
         <div className="gcp-settings-section-body">
           <div className="gcp-field">
-            <label className="gcp-label" htmlFor="gcp-provider-select">Provider</label>
+            <label className="gcp-label" htmlFor="gcp-provider-select">{t('settings.provider')}</label>
             <select id="gcp-provider-select" className="gcp-select" value={provider}
               onChange={(e) => { resetModels(); updateSettings({ provider: e.target.value as Provider }); }}
-              aria-label="Select LLM provider">
-              {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+              aria-label={t('settings.provider.aria')}>
+              {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => <option key={p} value={p}>{p === 'custom' ? t('settings.provider.custom') : PROVIDER_LABELS[p]}</option>)}
             </select>
           </div>
           {provider === 'custom' && (
             <div className="gcp-field">
-              <label className="gcp-label" htmlFor="gcp-base-url">Base URL</label>
+              <label className="gcp-label" htmlFor="gcp-base-url">{t('settings.baseUrl')}</label>
               <input id="gcp-base-url" className="gcp-input" type="url" value={activeBaseUrl ?? ''}
                 onChange={(e) => { resetModels(); updateSettings({ customBaseUrl: e.target.value }); }}
-                placeholder="http://127.0.0.1:11434/v1" aria-label="Custom API base URL" spellCheck={false} />
+                placeholder="http://127.0.0.1:11434/v1" aria-label={t('settings.baseUrl.aria')} spellCheck={false} />
             </div>
           )}
           {provider !== 'openai-codex' && KEY_PROVIDERS.filter((p) => p === provider).map((p) => (
             <div className="gcp-field" key={p}>
-              <label className="gcp-label" htmlFor={`gcp-${p}-api-key`}>{p === 'openai' ? 'OpenAI API key' : p === 'anthropic'
-                ? 'Anthropic API key' : p === 'openrouter' ? 'OpenRouter API key' : 'Custom API key'}</label>
+              <label className="gcp-label" htmlFor={`gcp-${p}-api-key`}>{t(KEY_LABEL[p])}</label>
               <PasswordInput id={`gcp-${p}-api-key`} value={typeof settings.apiKeys[p] === 'string' ? settings.apiKeys[p]! : ''}
                 onEdit={(value) => { draftKeyRef.current = value; resetModels(); }}
-                onBlur={(v) => updateKey(p, v)} placeholder={p === 'custom' ? 'API key (optional)' : 'sk-...'}
-                aria-label={p === 'openai' ? 'OpenAI API key' : p === 'anthropic'
-                  ? 'Anthropic API key' : p === 'openrouter' ? 'OpenRouter API key' : 'Custom API key'}
+                onBlur={(v) => updateKey(p, v)} placeholder={p === 'custom' ? t('settings.key.optional') : 'sk-...'}
+                aria-label={t(KEY_LABEL[p])}
                 aria-describedby="gcp-key-save-hint gcp-key-privacy"
               />
-              <span id="gcp-key-save-hint" className="gcp-field-hint">Saved when you leave this field.</span>
+              <span id="gcp-key-save-hint" className="gcp-field-hint">{t('settings.key.saveHint')}</span>
             </div>
           ))}
           {provider === 'openai-codex' ? (
             <div className="gcp-field" role="group" aria-labelledby="gcp-codex-auth-label">
-              <span id="gcp-codex-auth-label" className="gcp-label">ChatGPT Codex sign-in</span>
+              <span id="gcp-codex-auth-label" className="gcp-label">{t('settings.codex.label')}</span>
               <div className="gcp-codex-section">
                 <div className={`gcp-codex-status${codexLoggedIn ? ' signed-in' : codexPending ? ' pending' : ''}`}
                   role="status" aria-live="polite">
-                  {codexLoggedIn ? `Signed in${codexEmail ? ` as ${codexEmail}` : ''}` : codexPending
-                    ? 'Sign-in pending... (waiting for browser auth)' : 'Not signed in'}
+                  {codexLoggedIn ? codexEmail ? t('settings.codex.signedInAs', { email: codexEmail }) : t('settings.codex.signedIn') : codexPending
+                    ? t('settings.codex.pending') : t('settings.codex.signedOut')}
                 </div>
                 <div className="gcp-codex-btns">
                   {!codexLoggedIn && (
                     <button type="button" className="gcp-codex-btn" onClick={handleCodexSignIn}
-                      disabled={codexPending || codexSigningOut} aria-label="Sign in with ChatGPT Codex">
-                      {codexPending ? 'Waiting...' : 'Sign in'}
+                      disabled={codexPending || codexSigningOut} aria-label={t('settings.codex.signInAria')}>
+                      {codexPending ? t('settings.codex.waiting') : t('settings.codex.signIn')}
                     </button>
                   )}
                   {codexLoggedIn && (
                     <button type="button" className="gcp-codex-btn danger" onClick={handleCodexSignOut}
-                      disabled={codexSigningOut} aria-label="Sign out from ChatGPT Codex">
-                      {codexSigningOut ? 'Signing out...' : 'Sign out'}
+                      disabled={codexSigningOut} aria-label={t('settings.codex.signOutAria')}>
+                      {codexSigningOut ? t('settings.codex.signingOut') : t('settings.codex.signOut')}
                     </button>
                   )}
                 </div>
@@ -533,22 +537,21 @@ export function SettingsView({
             </div>
           ) : (
             <p id="gcp-key-privacy" className="gcp-field-hint">
-              Keys are stored in this browser's localStorage, not encrypted by Graph Copilot.
-              Your local CodefyUI backend forwards them to the selected provider or custom endpoint. Use a trusted endpoint.
+              {t('settings.key.privacy')}
             </p>
           )}
         </div>
       </section>
 
       <section className="gcp-settings-section" aria-labelledby="gcp-settings-model">
-        <h3 id="gcp-settings-model">Model</h3>
+        <h3 id="gcp-settings-model">{t('settings.model')}</h3>
         <div className="gcp-settings-section-body">
           <div className="gcp-field">
-            <label className="gcp-label" htmlFor="gcp-model-input">Model ID</label>
+            <label className="gcp-label" htmlFor="gcp-model-input">{t('settings.modelId')}</label>
             <div className="gcp-model-row">
               <input id="gcp-model-input" className="gcp-input" list={datalistId}
                 value={selectedModel} onChange={(e) => updateModel(e.target.value)}
-                placeholder="model id" aria-label="Model ID"
+                placeholder={t('settings.modelId.placeholder')} aria-label={t('settings.modelId')}
                 aria-invalid={modelMissing ? 'true' : undefined}
                 aria-describedby={modelMissing ? 'gcp-settings-readiness' : undefined}
                 autoComplete="off" spellCheck={false}
@@ -558,8 +561,8 @@ export function SettingsView({
               </datalist>
               <button type="button" className="gcp-load-btn" onClick={handleLoadModels}
                 disabled={modelLoading || refreshPrerequisite !== null}
-                aria-label="Load available models from provider" aria-describedby="gcp-model-refresh-hint" title="Refresh model list">
-                {modelLoading ? 'Refreshing...' : 'Refresh'}
+                aria-label={t('settings.refresh.aria')} aria-describedby="gcp-model-refresh-hint" title={t('settings.refresh.title')}>
+                {modelLoading ? t('settings.refresh.loading') : t('settings.refresh')}
               </button>
             </div>
             <span id="gcp-model-refresh-hint" className="gcp-field-hint">{modelCatalogHint}</span>
@@ -567,12 +570,12 @@ export function SettingsView({
           </div>
           {reasoningOptions.length > 0 && (
             <div className="gcp-field">
-              <label className="gcp-label" htmlFor="gcp-reasoning-effort">Reasoning effort</label>
+              <label className="gcp-label" htmlFor="gcp-reasoning-effort">{t('settings.effort')}</label>
               <select id="gcp-reasoning-effort" className="gcp-select"
                 value={settings.reasoningEfforts?.[provider] ?? ''}
-                onChange={(event) => updateReasoningEffort(event.target.value)} aria-label="Reasoning effort">
-                <option value="">Model default{selectedCatalogEntry?.defaultReasoningEffort
-                  ? ` (${selectedCatalogEntry.defaultReasoningEffort})` : ''}</option>
+                onChange={(event) => updateReasoningEffort(event.target.value)} aria-label={t('settings.effort')}>
+                <option value="">{selectedCatalogEntry?.defaultReasoningEffort
+                  ? t('settings.effort.defaultIs', { effort: selectedCatalogEntry.defaultReasoningEffort }) : t('settings.effort.default')}</option>
                 {reasoningOptions.map((option) => (
                   <option key={option.effort} value={option.effort} title={option.description}>{option.effort}</option>
                 ))}
@@ -584,14 +587,14 @@ export function SettingsView({
       </section>
 
       <section className="gcp-settings-section" aria-labelledby="gcp-settings-behavior">
-        <h3 id="gcp-settings-behavior">Behavior</h3>
+        <h3 id="gcp-settings-behavior">{t('settings.behavior')}</h3>
         <div className="gcp-settings-section-body">
           <div className="gcp-field">
             <label htmlFor="gcp-run-notifications">
               <input id="gcp-run-notifications" type="checkbox" checked={settings.notifyOnRunCompletion !== false}
                 onChange={(e) => updateSettings({ notifyOnRunCompletion: e.target.checked })}
-                aria-label="Notify when a graph run finishes while this tab is in the background" />
-              Notify when a graph run finishes while this tab is in the background
+                aria-label={t('settings.notify')} />
+              {t('settings.notify')}
             </label>
           </div>
         </div>

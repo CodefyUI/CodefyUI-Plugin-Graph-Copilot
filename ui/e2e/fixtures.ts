@@ -41,7 +41,10 @@ export function chatRequests(state: PreviewSnapshot) {
  * native auth/execute requests, or an accidental model dispatch. */
 export function actionRequests(state: PreviewSnapshot) {
   return state.requests.filter((request) =>
-    request.url !== '/api/llm/models' && request.url !== '/api/llm/codex/status' && request.url !== '/api/runs?limit=1');
+    request.url !== '/api/llm/models' && request.url !== '/api/llm/codex/status' && request.url !== '/api/runs?limit=1'
+    // Agent Skills and git-project discovery (GETs; 404 or no_project on an
+    // older or non-project host) are read-only too.
+    && request.url !== '/api/agent/context' && request.url !== '/api/git/status');
 }
 
 export async function snapshot(page: Page): Promise<PreviewSnapshot> {
@@ -61,12 +64,19 @@ export async function readyPreview(page: Page, query = ''): Promise<void> {
 }
 
 export async function openCopilot(page: Page): Promise<void> {
+  // A v6 host docks Copilot at the side, opened from the host toolbar.
+  const toggle = page.getByRole('navigation', { name: 'Mock host toolbar' }).getByRole('button', { name: 'Copilot', exact: true });
+  if (await toggle.count()) {
+    await toggle.click();
+    await expect(page.getByRole('region', { name: 'Copilot', exact: true })).toBeVisible();
+    return;
+  }
   await page.getByRole('button', { name: 'Graph Copilot', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true })).toBeVisible();
 }
 
 export async function send(page: Page, text: string): Promise<void> {
-  await page.getByRole('textbox', { name: 'Message input', exact: true }).fill(text);
+  await page.getByRole('combobox', { name: 'Message input', exact: true }).fill(text);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
 }
 

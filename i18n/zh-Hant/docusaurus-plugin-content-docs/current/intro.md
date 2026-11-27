@@ -5,11 +5,11 @@ slug: /
 sidebar_label: 介紹
 ---
 
-# Graph Copilot Agent 工作台
+# Copilot：CodefyUI 的通用 agent
 
-**Graph Copilot** 是 [CodefyUI](https://github.com/CodefyUI/CodefyUI) 的 Agent 工作台：建構與編輯圖、在隔離候選上執行有上限的實驗、依數值排名、選擇性套用純參數贏家，並把觀察整理成可驗證的研究後續問題。
+**Copilot**（原名 Graph Copilot）是 [CodefyUI](https://github.com/CodefyUI/CodefyUI) 的通用 agent：依照 Agent Skills 與專案的 `AGENTS.md` 做事、在分頁開啟圖與範例、讀取專案並在你核准後提交，也能建構與編輯圖、在隔離候選上執行有上限的實驗、依數值排名、選擇性套用純參數贏家，並把觀察整理成可驗證的研究後續問題。
 
-安裝後，編輯器右下角會出現懸浮助手按鈕。工作台呈現目前模型與圖脈絡、聊天／工具進度、Experiment Lab、歷史與設定。預設 **Edit**；**Ask** 由執行層強制唯讀，不能啟動執行。每批已套用 GraphOps 是**一個宿主復原步驟**（Ctrl+Z），不是整次 Agent turn。Stop 不撤銷先前修改或節點的外部副作用。
+在有側欄的 CodefyUI（插件 API 6）上，Copilot 是從工具列打開的側欄；在 CodefyUI 3.2.0 與更舊版本上，則是右下角的浮動按鈕。見[側欄、技能與工具](./general-agent.md)。面板呈現目前模型與圖脈絡、聊天／工具進度、Experiment Lab、歷史與設定。預設 **Edit**；**Ask** 由執行層強制唯讀，不能啟動執行。每批已套用 GraphOps 是**一個宿主復原步驟**（Ctrl+Z），不是整次 Agent turn。Stop 不撤銷先前修改或節點的外部副作用。
 
 :::important 目前「Agent」的範圍
 規劃與研究協調在瀏覽器執行。CodefyUI 既有後端驗證並執行提交的圖；本外掛沒有 durable Agent server 或背景 job queue。研究期間請保持頁面開啟。Server-owned 宿主執行可能在重整後繼續並可重新追蹤，但 reattach 不接續瀏覽器 Agent 或整份研究。見[架構與 CodefyUI 相容性](./architecture.md)。

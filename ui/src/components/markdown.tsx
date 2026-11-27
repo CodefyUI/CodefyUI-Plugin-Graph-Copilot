@@ -5,7 +5,9 @@
  * still-open fence mid-stream), inline code, bold, italic, #/##/### headings,
  * bullet & numbered lists, horizontal rules, and http(s) links. Everything is
  * built as React nodes — no dangerouslySetInnerHTML — so raw HTML in the text
- * stays inert. Emphasis parsing is deliberately conservative (delimiters must
+ * stays inert. Images are never loaded: `![alt](url)` becomes link text,
+ * because a remote image URL is a way to carry data out in its query string.
+ * Links open in a new tab without an opener and show their full URL on hover. Emphasis parsing is deliberately conservative (delimiters must
  * sit on word boundaries) to avoid mangling identifiers like 2*3*4.
  */
 
@@ -15,12 +17,25 @@ import React from 'react';
 // Inline parsing (code > link > bold > italic, recursive for nesting)
 // ---------------------------------------------------------------------------
 
-const CODE_RE = /`([^`\n]+)`/;
-const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/;
-const BOLD_RE = /\*\*([^\n]+?)\*\*/;
+// Every capture is length-capped and every rule is searched with a moving
+// start position, so a hostile text costs a linear number of regex steps:
+// re-running all rules over the remaining text after each token made
+// `x`![a]( repeated a few thousand times take seconds.
+const CODE_RE = /`([^`\n]{1,2048})`/g;
+const IMAGE_RE = /!\[([^\]\n]{0,512})\]\(([^)\s]{1,2048})\)/g;
+const LINK_RE = /\[([^\]\n]{1,512})\]\(([^)\s]{1,2048})\)/g;
+const SAFE_URL = /^https?:\/\//i;
+
+function SafeLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer" title={href}>{children}</a>;
+}
+const BOLD_RE = /\*\*([^\n]{1,2048}?)\*\*/g;
 // Opening * must follow start/whitespace/'('; content must not start or end
 // with whitespace or '*' (so '**bold**' is left for the bold rule).
-const ITALIC_RE = /(^|[\s(])\*([^\s*](?:[^*\n]*?[^\s*])?)\*(?=[\s).,!?:;]|$)/;
+const ITALIC_BODY = String.raw`\*([^\s*](?:[^*\n]{0,2046}?[^\s*])?)\*(?=[\s).,!?:;]|$)`;
+const ITALIC_RE = new RegExp(String.raw`([\s(])` + ITALIC_BODY, 'g');
+// Where the previous token ended counts as a boundary too (`code`*it*).
+const ITALIC_AT = new RegExp(ITALIC_BODY, 'y');
 
 type InlineMatch = {
   index: number;
@@ -29,76 +44,60 @@ type InlineMatch = {
   prefix?: string; // consumed boundary char to re-emit as text (italic)
 };
 
-function findInline(text: string): InlineMatch | null {
-  let best: InlineMatch | null = null;
+type Rule = (m: RegExpExecArray) => InlineMatch;
 
-  const consider = (m: InlineMatch | null) => {
-    if (m && (best === null || m.index < best.index)) best = m;
-  };
-
-  const code = CODE_RE.exec(text);
-  if (code) {
-    consider({
-      index: code.index,
-      length: code[0].length,
-      node: (key) => <code key={key}>{code[1]}</code>,
-    });
-  }
-
-  const link = LINK_RE.exec(text);
-  if (link) {
-    const href = link[2];
-    consider({
-      index: link.index,
-      length: link[0].length,
-      node: (key) =>
-        /^https?:\/\//i.test(href) ? (
-          <a key={key} href={href} target="_blank" rel="noopener noreferrer">
-            {link[1]}
-          </a>
-        ) : (
-          link[0] // unsafe protocol -> keep the raw text inert
-        ),
-    });
-  }
-
-  const bold = BOLD_RE.exec(text);
-  if (bold) {
-    consider({
-      index: bold.index,
-      length: bold[0].length,
-      node: (key) => <strong key={key}>{parseInline(bold[1])}</strong>,
-    });
-  }
-
-  const italic = ITALIC_RE.exec(text);
-  if (italic) {
-    consider({
-      index: italic.index,
-      length: italic[0].length,
-      prefix: italic[1],
-      node: (key) => <em key={key}>{parseInline(italic[2])}</em>,
-    });
-  }
-
-  return best;
-}
+const RULES: Array<[RegExp, Rule]> = [
+  [CODE_RE, (m) => ({ index: m.index, length: m[0].length, node: (key) => <code key={key}>{m[1]}</code> })],
+  [IMAGE_RE, (m) => {
+    const href = m[2];
+    const label = m[1].trim() || href;
+    // Never an <img>: a link the user may choose to open.
+    return { index: m.index, length: m[0].length, node: (key) => SAFE_URL.test(href)
+      ? <SafeLink key={key} href={href}>{`[image: ${label}]`}</SafeLink> : m[0] };
+  }],
+  [LINK_RE, (m) => {
+    const href = m[2];
+    return { index: m.index, length: m[0].length, node: (key) => SAFE_URL.test(href)
+      ? <SafeLink key={key} href={href}>{m[1]}</SafeLink>
+      : m[0] }; // unsafe protocol -> keep the raw text inert
+  }],
+  [BOLD_RE, (m) => ({ index: m.index, length: m[0].length, node: (key) => <strong key={key}>{parseInline(m[1])}</strong> })],
+  [ITALIC_RE, (m) => ({ index: m.index, length: m[0].length, prefix: m[1], node: (key) => <em key={key}>{parseInline(m[2])}</em> })],
+];
 
 function parseInline(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  let rest = text;
+  // Per rule: its next match at or after `searchedFrom`, or null for none.
+  const next: Array<{ searchedFrom: number; match: RegExpExecArray | null }> = RULES.map(() => ({ searchedFrom: -1, match: null }));
+  let pos = 0;
   let key = 0;
+  const italicAt = (at: number): InlineMatch | null => {
+    if (text[at] !== '*') return null;
+    ITALIC_AT.lastIndex = at;
+    const m = ITALIC_AT.exec(text);
+    return m ? { index: at, length: m[0].length, node: (k) => <em key={k}>{parseInline(m[1])}</em> } : null;
+  };
 
-  while (rest.length > 0) {
-    const m = findInline(rest);
-    if (!m) {
-      nodes.push(rest);
-      break;
-    }
-    const before = rest.slice(0, m.index) + (m.prefix ?? '');
+  while (pos < text.length) {
+    let best: InlineMatch | null = null;
+    RULES.forEach(([re, build], index) => {
+      const slot = next[index];
+      if (slot.searchedFrom < 0 || (slot.match && slot.match.index < pos)) {
+        re.lastIndex = pos;
+        slot.match = re.exec(text);
+        slot.searchedFrom = pos;
+      }
+      if (slot.match && (best === null || slot.match.index < best.index)) best = build(slot.match);
+    });
+    // The token boundary rule: an italic right where the last token ended.
+    const at = italicAt(pos);
+    if (at && (best === null || at.index <= (best as InlineMatch).index)) best = at;
+    if (!best) { nodes.push(text.slice(pos)); break; }
+    const found = best as InlineMatch;
+    const before = text.slice(pos, found.index) + (found.prefix ?? '');
     if (before) nodes.push(before);
-    nodes.push(m.node(key++));
-    rest = rest.slice(m.index + m.length);
+    nodes.push(found.node(key++));
+    pos = found.index + found.length;
   }
 
   return nodes;
@@ -197,7 +196,11 @@ function parseBlocks(text: string, keyBase: string): React.ReactNode[] {
 
 const FENCE_RE = /```[^\n]*\n?([\s\S]*?)(?:```|$)/g;
 
+/** Past this size the text is shown as written, without markdown. */
+export const MARKDOWN_LIMIT = 32 * 1024;
+
 export function Markdown({ text }: { text: string }): React.ReactElement {
+  if (text.length > MARKDOWN_LIMIT) return <pre className="gcp-md-plain">{text}</pre>;
   const nodes: React.ReactNode[] = [];
   let last = 0;
   let key = 0;

@@ -14,7 +14,7 @@ for (const navigation of ['Close panel', 'Settings', 'Conversation history'] as 
     expect((await snapshot(page)).receipts).toEqual([]);
     if (navigation === 'Close panel') await openCopilot(page);
     else await page.getByRole('button', { name: 'Agent chat', exact: true }).click();
-    await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Message input', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toHaveCount(0);
     expect(requestCount(await snapshot(page))).toBe(1);
   });
@@ -43,7 +43,7 @@ test('failed attachments block Send until removed, and multi-line keyboard input
   await readyPreview(page, 'scenario=ask');
   await openCopilot(page);
   await page.getByRole('radio', { name: 'Ask', exact: true }).click();
-  const composer = page.getByRole('textbox', { name: 'Message input', exact: true });
+  const composer = page.getByRole('combobox', { name: 'Message input', exact: true });
   await composer.fill('Explain the sample graph.');
   await composer.press('Shift+Enter');
   await expect(composer).toHaveValue('Explain the sample graph.\n');

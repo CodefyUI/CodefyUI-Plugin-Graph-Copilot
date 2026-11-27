@@ -11,6 +11,8 @@ export interface PreviewSnapshot {
   serverOwned: boolean;
   lateInitialId: boolean;
   unreadableRunHistory: boolean;
+  hostVersion: number;
+  skills: Array<{ id: string; enabled: boolean }> | null;
   graph: SampleGraph;
   revision: number;
   receipts: GraphReceipt[];
@@ -24,6 +26,8 @@ export interface PreviewSnapshot {
   conversations: unknown[];
   experimentSessions: unknown[];
   widgets: string[];
+  panels: Array<{ id: string; open: boolean; badge: string | null }>;
+  tabs: Array<{ title: string }>;
 }
 
 export interface PreviewControl {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runTurn, type ExperimentApprovalRequest, type RunApprovalRequest } from '../agent/loop';
+import type { ProjectCommitApprovalRequest } from '../agent/tools/types';
 import { isPassiveDetach, PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { formatRunStatusLine } from '../agent/runGraph';
 import { appendLossPoint } from './RunSparkline';
@@ -8,12 +9,15 @@ import type { AgentMode, ClearGraphRequest, RunPhase, RunSummary } from '../agen
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import { activeReasoningEffort, type Settings } from '../state/settings';
 import type { Attachment } from '../state/attachments';
-import type { ChatTurn, Conversation } from '../state/conversations';
+import type { ChatTurn, Conversation, SkillInvocation } from '../state/conversations';
+import { fetchAgentContext } from '../agent/hostContext';
+import { probeGitProject } from '../agent/gitHost';
 import { saveConversation, titleFrom } from '../state/conversations';
 
 interface Request {
   text: string;
   attachments: Attachment[];
+  skills: SkillInvocation[];
   history: ChatTurn[];
   mode: AgentMode;
   conversationId: string;
@@ -59,6 +63,7 @@ export function useAgentRun(options: Options) {
   const [confirmation, setConfirmation] = useState<ClearGraphRequest | null>(null);
   const [experimentApproval, setExperimentApproval] = useState<ExperimentApprovalRequest | null>(null);
   const [runApproval, setRunApproval] = useState<RunApprovalRequest | null>(null);
+  const [commitApproval, setCommitApproval] = useState<ProjectCommitApprovalRequest | null>(null);
   const [runStatusLine, setRunStatusLine] = useState<string | null>(null);
   const [runLossSeries, setRunLossSeries] = useState<number[]>([]);
 
@@ -94,29 +99,31 @@ export function useAgentRun(options: Options) {
     setConfirmation(null);
     setExperimentApproval(null);
     setRunApproval(null);
+    setCommitApproval(null);
     setRunStatusLine(null);
     setRunLossSeries([]);
   }, [options.conversation.id, detach]);
 
   const decide = useCallback((approve: boolean) => pendingDecision.current?.(approve), []);
 
-  const start = useCallback(async (text: string, attachments: Attachment[], mode: AgentMode, retry = false) => {
+  const start = useCallback(async (text: string, attachments: Attachment[], mode: AgentMode, retry = false, skills: SkillInvocation[] = []) => {
     const current = latest.current;
     if (runRef.current || !current.active) return;
     const previous = lastRequest.current;
     if (retry && (!previous || previous.conversationId !== current.conversation.id)) return;
     const request: Request = retry && previous ? previous : {
-      text: text.trim(), attachments: [...attachments], history: [...current.conversation.messages],
+      text: text.trim(), attachments: [...attachments], skills: [...skills], history: [...current.conversation.messages],
       mode, conversationId: current.conversation.id,
     };
-    if (!request.text && request.attachments.length === 0) return;
+    if (!request.text && request.attachments.length === 0 && request.skills.length === 0) return;
 
     const id = crypto.randomUUID();
     const userTurn: ChatTurn = { role: 'user', content: request.text, runId: id };
     if (request.attachments.length) userTurn.attachments = request.attachments;
+    if (request.skills.length) userTurn.skills = request.skills;
     const conversation: Conversation = {
       ...current.conversation,
-      title: current.conversation.title || titleFrom(request.text || request.attachments[0]?.name || 'Attachment'),
+      title: current.conversation.title || titleFrom(request.text || request.attachments[0]?.name || (request.skills[0] ? `/${request.skills[0].name}` : 'Attachment')),
       provider: current.settings.provider, model: current.settings.models[current.settings.provider] ?? '',
       mode: request.mode,
       messages: retry ? current.conversation.messages : [...current.conversation.messages, userTurn],
@@ -171,6 +178,7 @@ export function useAgentRun(options: Options) {
         setConfirmation(null);
         setExperimentApproval(null);
         setRunApproval(null);
+        setCommitApproval(null);
         setRunStatusLine(null);
         setRunLossSeries([]);
         latest.current.onBusyChange?.(false);
@@ -192,6 +200,7 @@ export function useAgentRun(options: Options) {
           setConfirmation(null);
           setExperimentApproval(null);
           setRunApproval(null);
+          setCommitApproval(null);
         }
         resolve(approved && isCurrent() && latest.current.active && !signals.some((value) => value.aborted));
       };
@@ -206,6 +215,14 @@ export function useAgentRun(options: Options) {
     try {
       publish(conversation);
       const result = await runTurn({
+        // Cached for 30 s; null on a host without Agent Skills (feature off).
+        agentContext: () => fetchAgentContext(current.api),
+        // Project tools: only in project mode on a git repository.
+        gitProject: async () => {
+          const context = await fetchAgentContext(current.api);
+          return context !== null && context.project === null ? false : probeGitProject(current.api);
+        },
+        ...(request.skills.length ? { skills: request.skills } : {}),
         api: current.api, settings: current.settings, history: request.history,
         userText: request.text, attachments: request.attachments.length ? request.attachments : undefined,
         runId: id, mode: request.mode, signal: run.abort.signal, cancelSignal: run.cancel.signal,
@@ -217,7 +234,7 @@ export function useAgentRun(options: Options) {
           onTurnAppended: (turn) => {
             if (run.settled) return;
             if (turn.tool_calls?.some((call) => call.name === 'apply_graph_operations')) run.mutationPossible = true;
-            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters'].includes(call.name))) {
+            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit'].includes(call.name))) {
               run.sideEffectPossible = true;
             }
             if (!isCurrent()) return;
@@ -229,6 +246,7 @@ export function useAgentRun(options: Options) {
           onOpsApplied: () => { run.mutationPossible = true; },
           onExperimentApproval: (request, signal) => requestDecision(() => setExperimentApproval(request), signal),
           onRunApproval: (request, signal) => requestDecision(() => setRunApproval(request), signal),
+          onProjectCommitApproval: (request, signal) => requestDecision(() => setCommitApproval(request), signal),
           onRunStarted: (hostRunId) => {
             if (run.settled) return;
             run.hostRunId = hostRunId;
@@ -286,11 +304,11 @@ export function useAgentRun(options: Options) {
 
   return {
     busy, streamingText, liveTurns, phase, summary, error, confirmation,
-    experimentApproval, runApproval, runStatusLine, runLossSeries,
+    experimentApproval, runApproval, commitApproval, runStatusLine, runLossSeries,
     start, stop, detach, decide, canRetry,
     retry: () => {
       const request = lastRequest.current;
-      if (request && canRetry) return start(request.text, request.attachments, request.mode, true);
+      if (request && canRetry) return start(request.text, request.attachments, request.mode, true, request.skills);
     },
   };
 }

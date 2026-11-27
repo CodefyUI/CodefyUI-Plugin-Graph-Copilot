@@ -8,6 +8,8 @@
  */
 
 import type { Settings } from '../state/settings';
+import { currentLocale, translate } from '../i18n';
+import { runStatusWord } from './runStatus';
 
 function enabled(settings: Settings): boolean {
   return settings.notifyOnRunCompletion !== false && typeof Notification !== 'undefined';
@@ -27,11 +29,12 @@ export function notifyRunFinished(
   if (!enabled(settings)) return;
   if (Notification.permission !== 'granted') return;
   if (typeof document === 'undefined' || !document.hidden) return;
-  const body = [info.detail, info.runId ? `run ${info.runId.slice(0, 8)}` : '']
+  const tr = translate.bind(null, currentLocale());
+  const body = [info.detail, info.runId ? tr('notify.run', { id: info.runId.slice(0, 8) }) : '']
     .filter(Boolean)
     .join(' · ');
   try {
-    const notification = new Notification(`Graph run ${info.status}`, body ? { body } : undefined);
+    const notification = new Notification(tr('notify.title', { status: runStatusWord(info.status) }), body ? { body } : undefined);
     notification.onclick = () => {
       try { window.focus(); } catch { /* focus can be refused */ }
       notification.close();

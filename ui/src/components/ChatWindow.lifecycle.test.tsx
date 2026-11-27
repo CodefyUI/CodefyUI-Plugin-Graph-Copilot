@@ -24,7 +24,7 @@ function setup() {
   const utils = render(<CopilotApp api={api} />);
   const fab = screen.getByRole('button', { name: 'Graph Copilot' });
   fireEvent.click(fab);
-  return { ...utils, fab, input: screen.getByRole('textbox', { name: 'Message input' }) };
+  return { ...utils, fab, input: screen.getByRole('combobox', { name: 'Message input' }) };
 }
 
 function controlled() {
@@ -62,7 +62,7 @@ describe('panel navigation owns running work', () => {
     fireEvent.change(input, { target: { value: 'Keep my dataset constraints.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Experiments lab' }));
     fireEvent.click(screen.getByRole('button', { name: 'Plan a comparison' }));
-    const composer = screen.getByRole('textbox', { name: 'Message input' });
+    const composer = screen.getByRole('combobox', { name: 'Message input' });
     expect(composer).toHaveValue('Keep my dataset constraints.\n\nCompare three learning-rate variants, maximize validation accuracy, and run each three times.');
     expect(composer).toHaveFocus();
     expect(runTurn).not.toHaveBeenCalled();
@@ -79,7 +79,7 @@ describe('panel navigation owns running work', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })));
     expect(screen.getByRole('combobox', { name: 'Select LLM provider' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
-    expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('Keep this draft');
+    expect(screen.getByRole('combobox', { name: 'Message input' })).toHaveValue('Keep this draft');
     fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
     fireEvent.click(screen.getByRole('button', { name: 'Agent chat' }));
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -108,7 +108,7 @@ describe('panel navigation owns running work', () => {
     await waitFor(() => expect(newButton).toBeEnabled());
     expect(shellNew).toBeEnabled();
     fireEvent.click(resume);
-    expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Message input' })).toHaveValue('');
   });
 
   it.each(['Close panel', 'Settings', 'Experiments lab', 'Model settings', 'Graph Copilot'])('detaches immediately when using %s', async (name) => {
@@ -132,7 +132,7 @@ describe('panel navigation owns running work', () => {
       decision = control.opts().callbacks.onRunApproval!({ reason: 'Train', nodeCount: 1, edgeCount: 0,
         nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu' });
     });
-    expect(screen.getByRole('dialog', { name: 'Run the current graph?' })).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Run the current graph?' })).toBeVisible();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name }));
       await expect(decision).resolves.toBe(false);
@@ -152,7 +152,7 @@ describe('panel navigation owns running work', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     fireEvent.click(fab);
     fireEvent.click(fab);
-    expect(screen.getByRole('textbox', { name: 'Message input' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Message input' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Stop generation' }));
     expect(control.opts().signal?.reason).toBe(PASSIVE_DETACH_REASON);
     expect(control.opts().cancelSignal?.aborted).toBe(true);

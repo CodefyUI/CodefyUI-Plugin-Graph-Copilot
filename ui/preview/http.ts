@@ -5,6 +5,7 @@ import type { SampleGraph } from './graph';
 import { validateSampleGraph } from './graph';
 import { MOCK_EXECUTION_TOKEN, MOCK_RUN_ID, mockHistoryRow } from './execution';
 import type { MockRunRoutes } from './execution';
+import type { MockSkills } from './skills';
 
 export interface MockRequest {
   id: number;
@@ -14,6 +15,10 @@ export interface MockRequest {
   tools?: string[];
   messageRoles?: string[];
   toolResultIds?: string[];
+  /** The system prompt sent with a chat request. */
+  system?: string;
+  /** Each tool result's text, in order. */
+  toolResults?: string[];
 }
 
 export interface PendingResponse { id: number; url: string; kind: 'response' | 'stream' | 'run-events' }
@@ -23,6 +28,11 @@ export interface MockHttpOptions {
   // Only the native, explicitly server-owned fixture may simulate unreadable
   // history. The feature probe stays valid; the run row itself is unparseable.
   unreadableRunHistory?: boolean;
+  /** A host with Agent Skills. Without it the skills URLs answer 404, as
+   * CodefyUI 3.2.0 does, and the plugin turns the feature off. */
+  skills?: MockSkills;
+  /** A project-mode host on a git repository (`project=1`). */
+  gitProject?: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -142,6 +152,30 @@ export function createMockHttp(
     const request: MockRequest = { id: ++requestId, url, method: (init?.method ?? 'GET').toUpperCase(), status: 'pending' };
     requests.push(request);
     onChange();
+    if (url === '/api/agent/context' || url === '/api/skills' || url.startsWith('/api/skills/')) {
+      if (init?.signal?.aborted) { request.status = 'aborted'; onChange(); throw abortError(); }
+      let payload: unknown;
+      if (init?.body != null) {
+        try { payload = JSON.parse(String(init.body)); } catch { return reject(request, `${url} requires a JSON body`); }
+      }
+      request.status = 'complete';
+      onChange();
+      if (!options.skills) return json({ detail: 'Not Found' }, 404);
+      const answer = options.skills.handle(request.method, url, payload);
+      return answer ? json(answer[1], answer[0]) : reject(request, `unexpected skills route ${request.method} ${url}`);
+    }
+    if (url === '/api/git/status' && request.method === 'GET') {
+      request.status = 'complete';
+      onChange();
+      return json(options.gitProject
+        ? { repo: { state: 'ready', project_dir: '/mock/project' }, status: {
+          branch: 'main', detached: false, head: 'abc1234def', upstream: null, ahead: null, behind: null,
+          staged: [], unstaged: [{ path: 'graphs/train.graph.json', kind: 'modified', xy: ' M' }],
+          untracked: [{ path: 'notes.md', kind: 'untracked', xy: '??' }, { path: '.env', kind: 'untracked', xy: '??' }],
+          conflicted: [], merge_in_progress: false, rebase_in_progress: false,
+        } }
+        : { repo: { state: 'no_project' }, status: null });
+    }
     const listMatch = /^\/api\/runs\?limit=([1-9]\d?)$/.exec(url);
     const runMatch = /^\/api\/runs\/(mock-history-run|mock-native-run)(\/artifacts)?$/.exec(url);
     // Match canonical, bounded query fields only. No arbitrary run IDs, extra
@@ -178,6 +212,9 @@ export function createMockHttp(
       request.tools = (body.tools ?? []).map((tool) => tool.name);
       request.messageRoles = body.messages.map((message) => message.role);
       request.toolResultIds = body.messages.filter((message) => message.role === 'tool').map((message) => message.tool_call_id ?? '');
+      const first = body.messages[0];
+      if (first?.role === 'system' && typeof first.content === 'string') request.system = first.content;
+      request.toolResults = body.messages.filter((message) => message.role === 'tool').map((message) => String(message.content));
       const reply = replyAt(scenario, chatIndex++);
       if (manual) await waitForRelease(request, init?.signal);
       if (init?.signal?.aborted) { request.status = 'aborted'; onChange(); throw abortError(); }

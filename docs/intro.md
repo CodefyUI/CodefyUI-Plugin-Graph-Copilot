@@ -5,11 +5,11 @@ slug: /
 sidebar_label: Introduction
 ---
 
-# Graph Copilot agent workbench
+# Copilot — a general agent for CodefyUI
 
-**Graph Copilot** is an agent workbench for [CodefyUI](https://github.com/CodefyUI/CodefyUI). It can build and edit a graph, run bounded experiments on isolated candidates, rank numeric results, optionally promote a parameter-only winner, and turn observations into testable research follow-ups.
+**Copilot** (formerly Graph Copilot) is a general agent for [CodefyUI](https://github.com/CodefyUI/CodefyUI). It follows Agent Skills and your project's `AGENTS.md`, opens graphs and examples in tabs, reads your project and commits it with your approval, and it can build and edit a graph, run bounded experiments on isolated candidates, rank numeric results, optionally promote a parameter-only winner, and turn observations into testable research follow-ups.
 
-Installing the plugin adds a floating assistant button at the bottom-right of the editor. The workbench presents the active model and graph context, chat/tool progress, Experiment Lab, history, and settings. **Edit** is the default; **Ask** is executor-enforced read-only and cannot start execution. Each applied GraphOp batch is **one host undo step** (Ctrl+Z), not a whole agent turn. Stop does not undo earlier changes or external node effects.
+On a CodefyUI host with the side dock (plugin API 6), Copilot is a side panel opened from the toolbar; on CodefyUI 3.2.0 and older it is a floating button at the bottom-right. See [Side panel, skills and tools](./general-agent.md). The panel presents the active model and graph context, chat/tool progress, Experiment Lab, history, and settings. **Edit** is the default; **Ask** is executor-enforced read-only and cannot start execution. Each applied GraphOp batch is **one host undo step** (Ctrl+Z), not a whole agent turn. Stop does not undo earlier changes or external node effects.
 
 :::important What “agent” means today
 Planning and study coordination run in your browser. CodefyUI's existing backend validates and executes submitted graphs; this plugin installs no durable agent server or background job queue. Keep the page open during a study. A server-owned host run may survive reload and be followed again, but reattachment does not resume the browser agent or an entire study. See [Architecture and CodefyUI compatibility](./architecture.md).

@@ -15,6 +15,7 @@ const sidebars: SidebarsConfig = {
       label: 'Agent Workbench',
       collapsed: false,
       items: [
+        'general-agent',
         'graph-editing',
         'experiments-and-research',
         'llm-training-research',
