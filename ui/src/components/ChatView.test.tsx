@@ -315,6 +315,22 @@ describe('ChatView', () => {
       expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
 
+    it('SEC3: the run card names the tab and warns when Copilot opened it this turn', async () => {
+      (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {
+        await opts.callbacks.onRunApproval!({ reason: 'Run your MNIST graph', nodeCount: 3, edgeCount: 2, nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu',
+          target: { tab: 'MNIST CNN', graph: 'Classical/MNIST', openedThisTurn: true } });
+        opts.callbacks.onTurnsCommitted([]);
+        opts.callbacks.onFinished();
+      });
+      renderChatView({ settings: READY_SETTINGS });
+      await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'run it');
+      await userEvent.click(screen.getByRole('button', { name: /send message/i }));
+      const card = await screen.findByRole('group', { name: 'Run the current graph?' });
+      expect(card).toHaveTextContent('On tab: MNIST CNN');
+      expect(card).toHaveTextContent('Classical/MNIST');
+      expect(within(card).getByRole('note')).toHaveTextContent('Copilot opened this tab during this turn');
+    });
+
     it('defaults focus to Cancel and records an explicit rejection', async () => {
       let decision: boolean | undefined;
       (runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RunTurnOpts) => {

@@ -271,7 +271,9 @@ describe('clear confirmation boundary', () => {
   it('accepted confirmation binds run/call/counts without disclosing the graph', async () => {
     const t = setup(); t.script([done([clear]), done()]); const confirm = vi.fn(async () => true);
     const result = await t.run({ confirmClearGraph: confirm });
-    expect(confirm).toHaveBeenCalledExactlyOnceWith({ runId: 'run-test', toolCallId: 'clear', nodeCount: 1, edgeCount: 0 }, undefined);
+    // SEC3: the card also names the tab (here no workspace API: the current canvas), still no graph content.
+    expect(confirm).toHaveBeenCalledExactlyOnceWith({ runId: 'run-test', toolCallId: 'clear', nodeCount: 1, edgeCount: 0,
+      target: { tab: null, graph: null, openedThisTurn: false } }, undefined);
     expect(result).toMatchObject({ status: 'completed', appliedOps: 1 });
     expect(t.callbacks.onPhase).toHaveBeenCalledWith('awaiting_confirmation');
   });

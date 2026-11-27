@@ -19,6 +19,7 @@ import type { MessageKey } from '../i18n/en';
 import { HISTORY_TURN_LIMIT, historyWindow } from '../agent/history';
 import { ApprovalCard } from './ApprovalCard';
 import type { AgentActivity } from './agentStatus';
+import type { ApprovalTarget } from '../agent/types';
 import { RunSparkline } from './RunSparkline';
 import { MessageBubble } from './MessageBubble';
 import { describeStage, groupTurns } from './turnStages';
@@ -144,6 +145,20 @@ function starters(mode: AgentMode, graph: GraphStats | undefined, t: (key: Messa
     starter('starter.improve', 'starter.improve.desc', 'starter.improve.prompt'),
     starter('starter.compare', 'starter.compare.desc', 'starter.compare.prompt'),
   ];
+}
+
+/** Which tab an approval applies to; a warning when Copilot opened it. */
+function TargetLine({ target, t }: { target?: ApprovalTarget; t: (key: MessageKey, vars?: Record<string, string | number>) => string }) {
+  if (!target) return null;
+  return (
+    <>
+      <p className="gcp-approval-target">
+        {target.tab ? t('approve.target', { tab: target.tab }) : t('approve.target.canvas')}
+        {target.graph ? <span className="gcp-approval-target-graph"> · {target.graph}</span> : null}
+      </p>
+      {target.openedThisTurn && <p className="gcp-approval-opened" role="note">{t('approve.target.opened')}</p>}
+    </>
+  );
 }
 
 /** Unsent text per conversation, for this page's lifetime. */
@@ -625,6 +640,7 @@ export function ChatView({
         {run.confirmation && (
           <ApprovalCard key="clear" danger active={active} title={t('approve.clear.title')}
             confirmLabel={t('approve.clear.confirm')} cancelLabel={t('approve.clear.cancel')} onDecide={run.decide}>
+            <TargetLine target={run.confirmation.target} t={t} />
             <p>{t('approve.clear.body', { nodes: run.confirmation.nodeCount, edges: run.confirmation.edgeCount })}</p>
           </ApprovalCard>
         )}
@@ -632,6 +648,7 @@ export function ChatView({
           <ApprovalCard key="experiment" active={active} detailsLabel={t('approve.details')}
             title={plural(experimentApproval.executionCount, 'approve.study.title.one', 'approve.study.title.many')}
             confirmLabel={t('approve.study.confirm')} cancelLabel={t('common.cancel')} onDecide={handleExperimentDecision}>
+            <TargetLine target={experimentApproval.target} t={t} />
             <p className="gcp-approval-lead">{experimentApproval.hypothesis}</p>
             <p className="gcp-approval-facts">
               {[t('approve.study.variants', { count: experimentApproval.variantCount }),
@@ -656,6 +673,7 @@ export function ChatView({
         {runApproval && (
           <ApprovalCard key="run" active={active} detailsLabel={t('approve.details')} title={t('approve.run.title')}
             confirmLabel={t('approve.run.confirm')} cancelLabel={t('common.cancel')} onDecide={handleRunDecision}>
+            <TargetLine target={runApproval.target} t={t} />
             <p className="gcp-approval-lead">{runApproval.reason}</p>
             <p className="gcp-approval-facts">
               {[plural(runApproval.nodeCount, 'approve.run.nodes.one', 'approve.run.nodes.many'),

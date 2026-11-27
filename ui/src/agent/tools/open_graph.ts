@@ -31,6 +31,7 @@ export const openGraphTool: ToolDefinition = {
       title: name, graph: graph as never, persist: true, source: { kind: 'copilot-open-graph', pluginId: api.pluginId },
     }], { activate: 'first' });
     if (!result || 'error' in result) { ctx.fail(`The editor did not open "${name}": ${result ? result.error : 'no answer'}`); return; }
+    ctx.turn.openedTabs.add(result.tabId);
     return { content: JSON.stringify({ opened: true, tab_id: result.tabId, title: name }), outcome: 'completed' };
   },
 };

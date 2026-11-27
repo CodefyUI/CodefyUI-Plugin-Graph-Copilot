@@ -25,7 +25,7 @@ import type { ExperimentApprovalRequest, RunApprovalRequest } from './runtimeToo
 import type { RunGraphOutcome, RunProgressUpdate } from './runGraph';
 import { MAX_EXPERIMENT_RUNS } from './experiments';
 import type {
-  AgentMode, ClearGraphRequest, RunPhase, RunSummary, ToolOutcome, TurnResult, ValidationReport,
+  AgentMode, ApprovalTarget, ClearGraphRequest, RunPhase, RunSummary, ToolOutcome, TurnResult, ValidationReport,
 } from './types';
 import { buildChatBody, copy, observe } from './chatBody';
 import { RunExit } from './runExit';
@@ -139,6 +139,19 @@ function localValidation(report: ValidationReport): ValidationReport {
   };
 }
 
+/** The active tab, as the approval card names it. */
+export function approvalTarget(api: CodefyUIPluginAPI, openedTabs: ReadonlySet<string>): ApprovalTarget {
+  try {
+    const active = api.workspace?.tabs?.().find((tab) => tab.active);
+    if (!active) return { tab: null, graph: null, openedThisTurn: false };
+    const source = active.source as Record<string, unknown> | null;
+    const named = source && typeof source.name === 'string' ? source.name : source && typeof source.example === 'string' ? source.example : null;
+    return { tab: active.title, graph: named && named !== active.title ? named : null, openedThisTurn: openedTabs.has(active.tabId) };
+  } catch {
+    return { tab: null, graph: null, openedThisTurn: false };
+  }
+}
+
 export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
   let agentContext: AgentContext | null = null;
   let gitProject = false;
@@ -176,6 +189,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
   // was corrected. Preserve observed failure obligations for this run.
   const issues = new Set<string>();
   const affectedNodes = new Set<string>();
+  const openedTabs = new Set<string>();
   const knownIds = new Set<string>();
   const rawCalls: WireToolCall[] = [];
   const rawReceipts = new Map<number, string>();
@@ -306,6 +320,8 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         throw new Error(`${call.name} did not declare a ${request.kind} approval.`);
       }
       let answer: boolean;
+      // Name the tab the action applies to (the agent may have switched it).
+      if (request.kind !== 'project_commit') request = { ...request, request: { ...request.request, target: approvalTarget(api, openedTabs) } } as ApprovalRequest;
       switch (request.kind) {
         case 'clear_graph':
           if (!opts.confirmClearGraph) return false;
@@ -394,6 +410,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       currentSnapshot, assertRepairSnapshot, stale,
       rawReceipt: () => rawReceipts.get(slot.index),
       addRoundOps: (text) => { roundOps.push(text); },
+      openedTabs,
     };
     const context: ToolContext = {
       ...env, call, signal, cancelSignal: opts.cancelSignal, callbacks, turn: turnState, budget: experimentBudget, phase,

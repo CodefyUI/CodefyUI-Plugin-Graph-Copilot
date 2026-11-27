@@ -2576,3 +2576,6 @@
 }
 /* Text past the markdown size limit, shown as written. */
 .gcp-md-plain { max-height: 60vh; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--gcp-mono); font-size: var(--gcp-tier-caption); }
+.gcp-approval-target { color: var(--gcp-text); font-weight: 600; overflow-wrap: anywhere; }
+.gcp-approval-target-graph { color: var(--gcp-muted); font-weight: 400; font-family: var(--gcp-mono); }
+.gcp-approval-opened { color: var(--gcp-role-attention); }

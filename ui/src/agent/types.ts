@@ -40,4 +40,18 @@ export interface ClearGraphRequest {
   toolCallId: string;
   nodeCount: number;
   edgeCount: number;
+  /** Set by the loop's approval gate: which tab the action applies to. */
+  target?: ApprovalTarget;
+}
+
+/** The graph an approval card's action applies to. The agent can open and
+ * activate tabs without approval, so the card names the tab instead of
+ * leaving the user to assume it is the one they were looking at. */
+export interface ApprovalTarget {
+  /** The active tab's title; null on a host without the workspace API. */
+  tab: string | null;
+  /** The saved graph or example the tab came from, when the host says. */
+  graph: string | null;
+  /** Copilot opened this tab during the current turn. */
+  openedThisTurn: boolean;
 }

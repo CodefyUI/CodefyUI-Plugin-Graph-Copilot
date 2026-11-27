@@ -13,7 +13,8 @@ import { runTurn } from '../loop';
 import { commitCandidates, isDotenvPath, parseStatus, probeGitProject } from '../gitHost';
 import { exampleTags } from './search_examples';
 import { SETTINGS, callbacks, fakeApi, scriptModel } from '../../test/agentHarness';
-import type { ProjectCommitApprovalRequest } from './types';
+import type { ProjectCommitApprovalRequest, ToolDefinition } from './types';
+import { createToolRegistry, toolRegistry } from './index';
 import type { SerializedGraph } from '../../types/codefyui';
 
 const call = (id: string, name: string, args: Record<string, unknown> = {}) => ({ id, name, arguments: args });
@@ -294,5 +295,74 @@ describe('security 8: project_commit', () => {
     const result = await runTurn({ api, settings: SETTINGS, history: [], userText: 'x', callbacks: callbacks({ onProjectCommitApproval: async () => true }), gitProject: true });
     expect(result.turns.find((turn) => turn.role === 'tool')!.content).toContain('Source Control tab');
     expect(posts(api)).toEqual([]);
+  });
+});
+
+describe('SEC3: approval cards name the tab the action applies to', () => {
+  /** A workspace where opening a graph makes the new tab the active one. */
+  function switchingWorkspace() {
+    const tabs = [{ tabId: 'mine', title: 'my experiment', revision: 1, readOnly: false, transient: false, source: null as Record<string, unknown> | null, active: true }];
+    return {
+      tabs: vi.fn(() => tabs),
+      snapshot: vi.fn(() => ({ error: 'unknown_tab' })),
+      openGraphs: vi.fn((entries: Array<{ title: string; source?: Record<string, unknown> }>) => {
+        for (const tab of tabs) tab.active = false;
+        tabs.push({ tabId: 'opened', title: entries[0].title, revision: 0, readOnly: false, transient: false, source: entries[0].source ?? null, active: true });
+        return [{ tabId: 'opened', revision: 0 }];
+      }),
+      onChanged: vi.fn(() => () => {}),
+    };
+  }
+  const exampleRoute = { '/api/examples/load?path=Classical%2FMNIST': () => ({ body: { name: 'MNIST CNN', nodes: [], edges: [] } }) };
+
+  it('run_graph after open_example: the card names the opened tab and says Copilot opened it', async () => {
+    scriptModel([
+      { calls: [call('c1', 'open_example', { path: 'Classical/MNIST' })] },
+      { calls: [call('c2', 'run_graph', { reason: 'Run your MNIST graph' })] },
+      { text: 'ok' },
+    ]);
+    const onRunApproval = vi.fn(async () => false);
+    const api = fakeApi({ extra: { workspace: switchingWorkspace() }, routes: exampleRoute });
+    await runTurn({ api, settings: SETTINGS, history: [], userText: 'run my graph', callbacks: callbacks({ onRunApproval }) });
+    expect(onRunApproval).toHaveBeenCalledTimes(1);
+    expect((onRunApproval.mock.calls[0] as unknown[])[0]).toMatchObject({ target: { tab: 'MNIST CNN', graph: 'Classical/MNIST', openedThisTurn: true } });
+  });
+
+  it('clear_graph and experiments carry the target too; a tab the user had open is not flagged', async () => {
+    scriptModel([
+      { calls: [call('c1', 'apply_graph_operations', { operations: [{ op: 'clear_graph' }] })] },
+      { text: 'ok' },
+    ]);
+    const confirmClearGraph = vi.fn(async () => false);
+    await runTurn({ api: fakeApi({ extra: { workspace: switchingWorkspace() } }), settings: SETTINGS, history: [], userText: 'clear', callbacks: callbacks(), confirmClearGraph });
+    expect((confirmClearGraph.mock.calls[0] as unknown[])[0]).toMatchObject({ target: { tab: 'my experiment', graph: null, openedThisTurn: false } });
+
+
+    // Experiments and parameter searches share the gate's 'experiment' kind.
+    const study: ToolDefinition = {
+      name: 'study', description: 'study', input_schema: { type: 'object' }, group: 'experiment', readOnly: false,
+      approval: () => ({ kind: 'experiment' }),
+      async execute(_input, ctx) {
+        await ctx.approve({ kind: 'experiment', request: { hypothesis: 'h', variantCount: 2, repetitions: 1, executionCount: 2, concurrency: 1, runTimeoutMinutes: 10, applyBest: false, variants: [], nodeTypes: [] } });
+        return { content: 'x', outcome: 'cancelled' };
+      },
+    };
+    scriptModel([
+      { calls: [call('c1', 'open_example', { path: 'Classical/MNIST' })] },
+      { calls: [call('c2', 'study')] },
+      { text: 'ok' },
+    ]);
+    const onExperimentApproval = vi.fn(async () => false);
+    await runTurn({ api: fakeApi({ extra: { workspace: switchingWorkspace() }, routes: exampleRoute }), settings: SETTINGS, history: [], userText: 'compare',
+      callbacks: callbacks({ onExperimentApproval }), registry: createToolRegistry([toolRegistry.get('open_example')!, study]) });
+    expect(onExperimentApproval).toHaveBeenCalledTimes(1);
+    expect((onExperimentApproval.mock.calls[0] as unknown[])[0]).toMatchObject({ target: { tab: 'MNIST CNN', openedThisTurn: true } });
+  });
+
+  it('a host without the workspace API gets a target that says "current canvas"', async () => {
+    scriptModel([{ calls: [call('c1', 'run_graph', { reason: 'r' })] }, { text: 'ok' }]);
+    const onRunApproval = vi.fn(async () => false);
+    await runTurn({ api: fakeApi(), settings: SETTINGS, history: [], userText: 'run', callbacks: callbacks({ onRunApproval }) });
+    expect((onRunApproval.mock.calls[0] as unknown[])[0]).toMatchObject({ target: { tab: null, openedThisTurn: false } });
   });
 });

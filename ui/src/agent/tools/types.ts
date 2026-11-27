@@ -79,6 +79,8 @@ export interface TurnState {
   /** The exact receipt last journaled for this call. */
   rawReceipt(): string | undefined;
   addRoundOps(text: string): void;
+  /** Tabs this turn opened (open_graph, open_example); approval cards say so. */
+  readonly openedTabs: Set<string>;
 }
 
 export interface ToolContext extends ToolEnvironment {

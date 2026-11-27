@@ -3,7 +3,7 @@
  * from it on Stop. This module does not infer canvas mutation from execution. */
 import type { WireToolCall } from '../llm/client';
 import type { CodefyUIPluginAPI, GraphOp, SerializedGraph } from '../types/codefyui';
-import type { RunStatus, ToolOutcome } from './types';
+import type { ApprovalTarget, RunStatus, ToolOutcome } from './types';
 import type { ToolContext } from './tools/types';
 import {
   MAX_EXPERIMENT_RUNS, experimentRunTimeoutMs, getExperimentExecutionCount,
@@ -34,6 +34,8 @@ export interface ExperimentApprovalRequest {
   applyBest: boolean;
   variants: Array<{ label: string; operations: string[] }>;
   nodeTypes: string[];
+  /** Set by the loop's approval gate. */
+  target?: ApprovalTarget;
 }
 export interface RunApprovalRequest {
   reason: string;
@@ -42,6 +44,8 @@ export interface RunApprovalRequest {
   nodeTypes: string[];
   timeoutMinutes: number;
   device: string;
+  /** Set by the loop's approval gate. */
+  target?: ApprovalTarget;
 }
 export interface RuntimeToolResult { content: string; outcome: ToolOutcome }
 export class RuntimeToolExit extends Error {

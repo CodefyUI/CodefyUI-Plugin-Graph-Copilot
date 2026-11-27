@@ -29,6 +29,7 @@ export const openExampleTool: ToolDefinition = {
       title, graph: graph as never, persist: true, source: { kind: 'copilot-example', pluginId: api.pluginId, example: path },
     }], { activate: 'first' });
     if (!result || 'error' in result) { ctx.fail(`The editor did not open "${title}": ${result ? result.error : 'no answer'}`); return; }
+    ctx.turn.openedTabs.add(result.tabId);
     return { content: JSON.stringify({ opened: true, tab_id: result.tabId, title, example: path }), outcome: 'completed' };
   },
 };

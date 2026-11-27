@@ -79,6 +79,9 @@ export const en = {
   // Approval cards
   'approve.details': 'Execution approval details',
   'approve.noTypes': 'No typed nodes detected',
+  'approve.target': 'On tab: {tab}',
+  'approve.target.canvas': 'On the current canvas',
+  'approve.target.opened': 'Copilot opened this tab during this turn. It may not be the graph you were looking at.',
   'approve.clear.title': 'Clear the current graph?',
   'approve.clear.body': 'This removes {nodes} nodes and {edges} edges. Changes are not automatically undone.',
   'approve.clear.confirm': 'Clear graph',
