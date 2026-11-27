@@ -55,13 +55,30 @@ export function redactSensitiveFields(value: unknown): unknown {
   );
 }
 
-function collectStringLeaves(value: unknown, output: Set<string>): void {
+/**
+ * R3: where a value to scrub from free text came from. Field-level redaction
+ * (secret params never reach the model) does not depend on this; it only
+ * decides which values are also cut out of the rest of the text.
+ * - explicit: a `secret` param or a credential-shaped key. Scrubbed everywhere
+ *   when at least 6 characters long; shorter ones only in their own field.
+ * - presumed: a param without a schema, or a preset string. Scrubbed everywhere
+ *   only when it looks like a credential: 16+ characters, no whitespace, and
+ *   not just lowercase letters or just digits ("train" or "mnist" never are).
+ */
+type SecretKind = 'explicit' | 'presumed';
+
+export function scrubWorthy(value: string, kind: SecretKind): boolean {
+  if (kind === 'explicit') return value.length >= 6;
+  return value.length >= 16 && !/\s/.test(value) && !/^[a-z]+$/.test(value) && !/^\d+$/.test(value);
+}
+
+function collectStringLeaves(value: unknown, output: Set<string>, kind: SecretKind = 'explicit'): void {
   if (typeof value === 'string') {
-    if (value.length > 0) output.add(value);
+    if (value.length > 0 && scrubWorthy(value, kind)) output.add(value);
   } else if (Array.isArray(value)) {
-    value.forEach((item) => collectStringLeaves(item, output));
+    value.forEach((item) => collectStringLeaves(item, output, kind));
   } else if (isRecord(value)) {
-    Object.values(value).forEach((item) => collectStringLeaves(item, output));
+    Object.values(value).forEach((item) => collectStringLeaves(item, output, kind));
   }
 }
 
@@ -104,7 +121,7 @@ function collectOperationSecretValues(
     for (const [name, paramValue] of Object.entries(item.params)) {
       const param = paramsByName?.get(name);
       if (!param || param.param_type === 'secret' || isSensitiveKey(name)) {
-        collectStringLeaves(paramValue, output);
+        collectStringLeaves(paramValue, output, param?.param_type === 'secret' || isSensitiveKey(name) ? 'explicit' : 'presumed');
       }
     }
   }
@@ -125,7 +142,7 @@ function collectSearchSpaceRedactedValues(
     const definition = nodeType ? definitions.get(nodeType) : undefined;
     const param = definition?.params.find((candidate) => candidate.name === paramName);
     if (!param || param.param_type === 'secret' || (paramName && isSensitiveKey(paramName))) {
-      collectStringLeaves(item.values, output);
+      collectStringLeaves(item.values, output, param?.param_type === 'secret' || (paramName && isSensitiveKey(paramName)) ? 'explicit' : 'presumed');
     }
   }
 }
@@ -165,7 +182,7 @@ function collectKnownSecretValues(
     // `search` is private optimizer provenance and is rejected on this public
     // tool. Any caller-supplied value therefore fails closed in history.
     if (toolCall.arguments.search !== undefined) {
-      collectStringLeaves(toolCall.arguments.search, output);
+      collectStringLeaves(toolCall.arguments.search, output, 'presumed');
     }
   } else if (toolCall.name === 'optimize_graph_parameters') {
     collectSearchSpaceRedactedValues(
@@ -188,7 +205,7 @@ function collectGraphRedactedValues(
   // Preset schemas are not exposed through the plugin contract. Treat every
   // preset string as sensitive for exact-echo scrubbing, while continuing to
   // omit presets themselves from model graph snapshots.
-  collectStringLeaves(graph.presets, output);
+  collectStringLeaves(graph.presets, output, 'presumed');
   for (const node of graph.nodes) {
     const params = node.data?.params;
     if (!isRecord(params)) continue;
@@ -199,10 +216,29 @@ function collectGraphRedactedValues(
     for (const [name, value] of Object.entries(params)) {
       const param = byName?.get(name);
       if (!param || param.param_type === 'secret' || isSensitiveKey(name)) {
-        collectStringLeaves(value, output);
+        collectStringLeaves(value, output, param?.param_type === 'secret' || isSensitiveKey(name) ? 'explicit' : 'presumed');
       }
     }
   }
+}
+
+const patternCache = new Map<string, RegExp>();
+
+/** R3: match a secret only where it is not part of a longer word or number:
+ * "train" must not cut "trained" apart. A secret that starts or ends with
+ * punctuation is matched there without a boundary. */
+function boundedPattern(secret: string): RegExp {
+  let pattern = patternCache.get(secret);
+  if (!pattern) {
+    const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const before = /^[A-Za-z0-9]/.test(secret) ? '(?<![A-Za-z0-9])' : '';
+    const after = /[A-Za-z0-9]$/.test(secret) ? '(?![A-Za-z0-9])' : '';
+    pattern = new RegExp(`${before}${escaped}${after}`, 'g');
+    if (patternCache.size > 512) patternCache.clear();
+    patternCache.set(secret, pattern);
+  }
+  pattern.lastIndex = 0;
+  return pattern;
 }
 
 function scrubKnownSecretStrings(value: unknown, secrets: Set<string>): unknown {
@@ -210,7 +246,7 @@ function scrubKnownSecretStrings(value: unknown, secrets: Set<string>): unknown 
     let scrubbed = value;
     // Longest first prevents a short token from hiding part of a longer one.
     for (const secret of [...secrets].sort((left, right) => right.length - left.length)) {
-      scrubbed = scrubbed.split(secret).join(REDACTED_VALUE);
+      scrubbed = scrubbed.replace(boundedPattern(secret), REDACTED_VALUE);
     }
     return scrubbed;
   }
