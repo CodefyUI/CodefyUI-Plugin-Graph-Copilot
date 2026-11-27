@@ -16,6 +16,7 @@ import type {
 import type { TurnCallbacks } from '../loop';
 import type { ExperimentApprovalRequest, RunApprovalRequest } from '../runtimeTools';
 import type { AgentContext } from '../hostContext';
+import type { HostRef } from '../../state/conversations';
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -39,7 +40,12 @@ export type ApprovalRequest =
   | { kind: 'experiment'; request: ExperimentApprovalRequest }
   | { kind: 'project_commit'; request: ProjectCommitApprovalRequest };
 
-export interface ToolResult { content: string; outcome: ToolOutcome }
+export interface ToolResult {
+  content: string;
+  outcome: ToolOutcome;
+  /** Text CodefyUI can give again: stored as this reference only. */
+  ref?: HostRef;
+}
 
 /** What `available` and `approval` may look at: the environment, not the turn. */
 export interface ToolEnvironment {
@@ -58,6 +64,8 @@ export interface SkillSession {
   loaded: Set<string>;
   /** Skills whose body the model already has in this turn's context. */
   inContext: Set<string>;
+  /** Skill files (`name\npath`) the model already has in this turn's context. */
+  filesInContext: Set<string>;
 }
 
 export interface HostFeatures {

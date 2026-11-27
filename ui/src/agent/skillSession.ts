@@ -7,7 +7,9 @@ import { quoteSkill } from './untrusted';
 /** A user message with the skills invoked on it, each quoted as reference. */
 export function withSkills(text: string, skills: SkillInvocation[] | undefined): string {
   if (!skills?.length) return text;
-  const blocks = skills.map((skill) => `The user invoked the skill "${skill.name}" for this message.\n${quoteSkill(skill.name, skill.body)}`);
+  const blocks = skills.map((skill) => (skill.body === undefined
+    ? `The user invoked the skill "${skill.name}" for this message; its text is not available. Call load_skill if it is needed.`
+    : `The user invoked the skill "${skill.name}" for this message.\n${quoteSkill(skill.name, skill.body)}`));
   return [text, ...blocks].filter(Boolean).join('\n\n');
 }
 
@@ -28,10 +30,25 @@ export function skillNamesIn(turns: ChatTurn[]): Set<string> {
   return names;
 }
 
+/** Skill files (`name\npath`) whose read_skill_file call completed. */
+export function skillFilesIn(turns: ChatTurn[]): Set<string> {
+  const files = new Set<string>();
+  const outcomes = new Map(turns.filter((turn) => turn.role === 'tool').map((turn) => [turn.tool_call_id, turn.toolOutcome]));
+  for (const turn of turns) {
+    for (const call of turn.tool_calls ?? []) {
+      const { name, path } = call.arguments ?? {};
+      if (call.name === 'read_skill_file' && typeof name === 'string' && typeof path === 'string' && outcomes.get(call.id) === 'completed') {
+        files.add(`${name.trim()}\n${path.trim()}`);
+      }
+    }
+  }
+  return files;
+}
+
 export function skillSession(context: AgentContext, history: ChatTurn[], windowed: ChatTurn[], current: SkillInvocation[] = []): SkillSession {
   const loaded = skillNamesIn(history);
   const inContext = skillNamesIn(windowed);
   for (const skill of current) { loaded.add(skill.name); inContext.add(skill.name); }
-  return { context, loaded, inContext };
+  return { context, loaded, inContext, filesInContext: skillFilesIn(windowed) };
 }
 

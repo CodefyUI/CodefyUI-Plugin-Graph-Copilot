@@ -30,6 +30,7 @@ import type {
 import { buildChatBody, copy, observe } from './chatBody';
 import { RunExit } from './runExit';
 import { validateCurrentGraph } from './validation';
+import { resolveHostRefs } from './historyRefs';
 import { toolRegistry, toWire } from './tools';
 import type {
   ApprovalRequest, ApprovalRequirement, ProjectCommitApprovalRequest, SkillSession, ToolContext, ToolEnvironment, ToolRegistry, TurnState,
@@ -166,7 +167,11 @@ export async function runTurn(opts: RunTurnOpts): Promise<TurnResult> {
     readers.push(awaitWithSignal(read(), opts.signal).then((value) => { gitProject = value === true; }, () => { gitProject = false; }));
   } else gitProject = opts.gitProject === true;
   if (readers.length) await Promise.all(readers);
-  return runTurnWithContext(opts, agentContext, gitProject);
+  // Stored skill text is a reference; fetch it again for the history window.
+  let history = opts.history;
+  try { history = await awaitWithSignal(resolveHostRefs(opts.api, opts.history, agentContext !== null, opts.signal), opts.signal); }
+  catch { /* a stopped turn reports Stop below; the stubs stay as notes */ }
+  return runTurnWithContext(history === opts.history ? opts : { ...opts, history }, agentContext, gitProject);
 }
 
 async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext | null, gitProject: boolean): Promise<TurnResult> {
@@ -449,6 +454,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     const result = await tool.execute(args, context);
     if (result) {
       recordRuntime(result.content, result.outcome);
+      if (result.ref) turns[slot.index] = { ...turns[slot.index], hostRef: result.ref };
       if (result.outcome !== 'completed') issues.add(call.name);
     }
   };

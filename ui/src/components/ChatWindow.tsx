@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CodefyUIPluginAPI } from '../types/codefyui';
 import type { Settings } from '../state/settings';
-import type { Conversation } from '../state/conversations';
+import { onStorageProblem, type Conversation, type StorageProblem } from '../state/conversations';
 import { ChatView } from './ChatView';
 import { ExperimentsView } from './ExperimentsView';
 import { HistoryView } from './HistoryView';
@@ -195,6 +195,9 @@ export function ChatWindow({
   const [activity, setActivity] = useState<AgentActivity>({ busy: false, needsApproval: false, atBottom: true, finishedRun: 0 });
   const [seenRun, setSeenRun] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  // A save that had to drop data says so (SEC4), instead of losing it quietly.
+  const [storageProblem, setStorageProblem] = useState<StorageProblem | null>(null);
+  useEffect(() => onStorageProblem(setStorageProblem), []);
   const [prefill, setPrefill] = useState<{ id: number; text: string } | null>(null);
   const busyRef = useRef(false);
   const detachRef = useRef<(() => void) | null>(null);
@@ -372,6 +375,14 @@ export function ChatWindow({
         </div>
       </header>
 
+      {storageProblem && (
+        <div className="gcp-storage-alert" role="alert">
+          <span>{storageProblem.failed ? t('storage.failed')
+            : storageProblem.droppedConversations > 0 ? t('storage.dropped', { count: storageProblem.droppedConversations })
+            : t('storage.images')}</span>
+          <button type="button" className="gcp-secondary-btn" onClick={() => setStorageProblem(null)}>{t('storage.dismiss')}</button>
+        </div>
+      )}
       <main className="gcp-view" ref={viewRef} tabIndex={-1}>
         {/* Keep the composer mounted so navigating or closing preserves drafts. */}
         <div className="gcp-chat-view" hidden={view !== 'chat'}>

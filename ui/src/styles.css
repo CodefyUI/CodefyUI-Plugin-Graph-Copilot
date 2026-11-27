@@ -2579,3 +2579,5 @@
 .gcp-approval-target { color: var(--gcp-text); font-weight: 600; overflow-wrap: anywhere; }
 .gcp-approval-target-graph { color: var(--gcp-muted); font-weight: 400; font-family: var(--gcp-mono); }
 .gcp-approval-opened { color: var(--gcp-role-attention); }
+.gcp-storage-alert { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid color-mix(in srgb, var(--gcp-role-attention) 45%, transparent); background: color-mix(in srgb, var(--gcp-role-attention) 8%, var(--gcp-bg)); color: var(--gcp-text); font-size: var(--gcp-tier-caption); }
+.gcp-storage-alert span { flex: 1; }

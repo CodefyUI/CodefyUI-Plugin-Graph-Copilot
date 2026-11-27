@@ -34,6 +34,10 @@ export interface ChatTurn {
   /** Skills the user invoked with `/name` on this turn. The body goes to the
    *  model with the message; the transcript shows only a skill tag. */
   skills?: SkillInvocation[];
+  /** A tool result whose text CodefyUI can give again (a skill, a skill
+   *  file). Only the reference is stored; the loop fetches the text when it
+   *  sends history to the model. */
+  hostRef?: HostRef;
   /** Optional local metadata; old conversations need no migration. */
   runId?: string;
   toolOutcome?: ToolOutcome;
@@ -43,7 +47,51 @@ export interface ChatTurn {
 export interface SkillInvocation {
   id: string;
   name: string;
-  body: string;
+  /** Present while the message is being sent; never stored. */
+  body?: string;
+}
+
+export type HostRef =
+  | { kind: 'skill'; id: string; name: string }
+  | { kind: 'skill_file'; id: string; name: string; path: string };
+
+/** Largest tool result kept in storage; the model got the whole one. */
+export const STORED_RESULT_LIMIT = 16 * 1024;
+
+/** What a stored reference turn says until the loop fetches the text again. */
+export const HOST_REF_STUB = '[Not stored: CodefyUI provides this text again when the conversation continues.]';
+
+/** The stored form of a turn: no skill text, capped tool results. The plugin's
+ *  storage is the host's localStorage, shared with CodefyUI itself. */
+export function compactTurn(turn: ChatTurn): ChatTurn {
+  let out = turn;
+  if (turn.skills?.some((skill) => skill.body !== undefined)) {
+    out = { ...out, skills: turn.skills.map(({ id, name }) => ({ id, name })) };
+  }
+  if (turn.role === 'tool') {
+    if (turn.hostRef && turn.toolOutcome === 'completed') out = { ...out, content: HOST_REF_STUB };
+    else if (turn.content.length > STORED_RESULT_LIMIT) {
+      out = { ...out, content: `${turn.content.slice(0, STORED_RESULT_LIMIT)}\n[Stored copy cut at 16 KB of ${turn.content.length} characters; the model saw the whole result when it ran.]` };
+    }
+  }
+  return out;
+}
+
+export function compactConversation(c: Conversation): Conversation {
+  const messages = c.messages.map(compactTurn);
+  return messages.every((turn, index) => turn === c.messages[index]) ? c : { ...c, messages };
+}
+
+/** What a save had to give up to fit the host's storage. */
+export interface StorageProblem { droppedConversations: number; strippedImages: boolean; failed: boolean }
+const storageListeners = new Set<(problem: StorageProblem) => void>();
+/** Saves that lost data report it here, so the panel can say so. */
+export function onStorageProblem(listener: (problem: StorageProblem) => void): () => void {
+  storageListeners.add(listener);
+  return () => { storageListeners.delete(listener); };
+}
+function reportStorageProblem(problem: StorageProblem): void {
+  for (const listener of storageListeners) { try { listener(problem); } catch { /* a listener never breaks a save */ } }
 }
 
 export interface Conversation {
@@ -119,16 +167,24 @@ function trySet(api: StrictApi, list: Conversation[]): boolean {
  * never throws, so a send is never stranded by a failed save.
  */
 function writeAll(api: StrictApi, list: Conversation[]): void {
+  list = list.map(compactConversation);
   if (trySet(api, list)) return;
 
   const trimmed = [...list];
   while (trimmed.length > 1) {
     trimmed.pop(); // list is newest-first, so this drops the oldest
-    if (trySet(api, trimmed)) return;
+    if (trySet(api, trimmed)) {
+      reportStorageProblem({ droppedConversations: list.length - trimmed.length, strippedImages: false, failed: false });
+      return;
+    }
   }
 
-  if (trySet(api, list.map(stripAttachmentBlobs))) return;
-  trySet(api, list.slice(0, 1).map(stripAttachmentBlobs)); // last resort
+  if (trySet(api, list.map(stripAttachmentBlobs))) {
+    reportStorageProblem({ droppedConversations: 0, strippedImages: true, failed: false });
+    return;
+  }
+  const saved = trySet(api, list.slice(0, 1).map(stripAttachmentBlobs)); // last resort
+  reportStorageProblem({ droppedConversations: list.length - 1, strippedImages: true, failed: !saved });
 }
 
 // ---------------------------------------------------------------------------

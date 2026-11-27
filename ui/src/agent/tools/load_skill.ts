@@ -1,7 +1,18 @@
-import { getSkill } from '../hostContext';
+import { getSkill, type SkillDetail } from '../hostContext';
 import { LIST_LIMIT, oneLine, quoteSkill } from '../untrusted';
 import { throwIfAborted } from '../toolGuards';
 import type { ToolDefinition, ToolEnvironment } from './types';
+
+/** The load_skill result for a skill; also used to rebuild it from a stored reference. */
+export function skillResultText(name: string, detail: SkillDetail): string {
+  const files = detail.files.filter((file) => file.path !== 'SKILL.md');
+  const listed = files.slice(0, LIST_LIMIT).map((file) => `- ${oneLine(file.path)}`);
+  if (files.length > LIST_LIMIT) listed.push(`- [truncated: ${files.length - LIST_LIMIT} more files not listed]`);
+  const fileNote = listed.length
+    ? `\n\nFiles in this skill (read one with read_skill_file when the instructions point to it):\n${listed.join('\n')}`
+    : '\n\nThis skill has no other files.';
+  return quoteSkill(name, detail.body) + fileNote;
+}
 
 export const skillsAvailable = (env: ToolEnvironment): boolean => env.host?.skills === true && !!env.skills;
 
@@ -32,14 +43,8 @@ export const loadSkillTool: ToolDefinition = {
     const result = await getSkill(ctx.api, skill.id, ctx.signal);
     throwIfAborted(ctx.signal);
     if (!result.ok) { ctx.fail(`Skill "${name}" could not be loaded: ${result.error.message}`); return; }
-    const files = result.value.files.filter((file) => file.path !== 'SKILL.md');
-    const listed = files.slice(0, LIST_LIMIT).map((file) => `- ${oneLine(file.path)}`);
-    if (files.length > LIST_LIMIT) listed.push(`- [truncated: ${files.length - LIST_LIMIT} more files not listed]`);
     session.loaded.add(name);
     session.inContext.add(name);
-    const fileNote = listed.length
-      ? `\n\nFiles in this skill (read one with read_skill_file when the instructions point to it):\n${listed.join('\n')}`
-      : '\n\nThis skill has no other files.';
-    return { content: quoteSkill(name, result.value.body) + fileNote, outcome: 'completed' };
+    return { content: skillResultText(name, result.value), outcome: 'completed', ref: { kind: 'skill', id: skill.id, name } };
   },
 };
