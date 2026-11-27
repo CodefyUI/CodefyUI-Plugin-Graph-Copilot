@@ -1,5 +1,5 @@
 import { isDotenvPath, readDiff } from '../gitHost';
-import { DIFF_LIMIT, truncateText } from '../untrusted';
+import { DIFF_LIMIT, UNTRUSTED_NOTE, oneLine, quoteBlock, truncateText } from '../untrusted';
 import { throwIfAborted } from '../toolGuards';
 import { hasGitProject } from './workspace';
 import type { ToolDefinition } from './types';
@@ -28,6 +28,7 @@ export const projectDiffTool: ToolDefinition = {
     if (result.value.binary) return { content: JSON.stringify({ path, binary: true }), outcome: 'completed' };
     const cut = truncateText(result.value.patch, DIFF_LIMIT);
     const hostCut = result.value.truncated && !cut.truncated ? '\n[truncated by the host]' : '';
-    return { content: `Patch of ${path}:\n${cut.text}${hostCut}`, outcome: 'completed' };
+    // The patch is the repo's text, possibly someone else's: quote it as data.
+    return { content: `The patch of "${oneLine(path)}" follows between the markers. ${UNTRUSTED_NOTE}\n${quoteBlock('PATCH', path, cut.text + hostCut)}`, outcome: 'completed' };
   },
 };

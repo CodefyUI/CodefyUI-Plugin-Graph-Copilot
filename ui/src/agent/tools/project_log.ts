@@ -1,4 +1,5 @@
 import { readLog } from '../gitHost';
+import { UNTRUSTED_NOTE, quoteBlock } from '../untrusted';
 import { throwIfAborted } from '../toolGuards';
 import { hasGitProject } from './workspace';
 import type { ToolDefinition } from './types';
@@ -18,6 +19,8 @@ export const projectLogTool: ToolDefinition = {
     const result = await readLog(ctx.api, limit, ctx.signal);
     throwIfAborted(ctx.signal);
     if (!result.ok) { ctx.fail(`The log could not be read: ${result.error.message}`); return; }
-    return { content: JSON.stringify({ commits: result.value.map(({ sha: _sha, ...commit }) => commit) }), outcome: 'completed' };
+    // Commit messages and author names come from the repo: quote them as data.
+    const commits = JSON.stringify(result.value.map(({ sha: _sha, ...commit }) => commit), null, 1);
+    return { content: `The ${result.value.length} most recent commits follow between the markers, as JSON. ${UNTRUSTED_NOTE}\n${quoteBlock('GIT LOG', 'commits', commits)}`, outcome: 'completed' };
   },
 };
