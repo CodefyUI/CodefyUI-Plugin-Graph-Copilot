@@ -577,4 +577,6 @@ export const zhTW: Record<MessageKey, string> = {
   'bubble.you': '你',
   'bubble.step': '第 {step} 步',
   'bubble.applied': '已套用：{summary}',
+  'approve.commit.confirm.one': '提交 {count} 個檔案',
+  'approve.commit.confirm.many': '提交 {count} 個檔案',
 };

@@ -584,6 +584,8 @@ export const en = {
   'bubble.you': 'You',
   'bubble.step': 'Step {step}',
   'bubble.applied': 'Applied: {summary}',
+  'approve.commit.confirm.one': 'Commit {count} file',
+  'approve.commit.confirm.many': 'Commit {count} files',
 } as const;
 
 export type MessageKey = keyof typeof en;

@@ -719,7 +719,7 @@ export function ChatView({
         {commitApproval && (
           <ApprovalCard key="commit" active={active} detailsLabel={t('approve.commit.details')}
             title={plural(commitApproval.files.length, 'approve.commit.title.one', 'approve.commit.title.many')}
-            confirmLabel={plural(commitApproval.files.length, 'approve.commit.title.one', 'approve.commit.title.many').replace(/[?？]$/, '')}
+            confirmLabel={plural(commitApproval.files.length, 'approve.commit.confirm.one', 'approve.commit.confirm.many')}
             cancelLabel={t('common.cancel')} onDecide={run.decide}>
             <p className="gcp-approval-lead">{commitApproval.message}</p>
             <ul className="gcp-approval-list gcp-commit-files" aria-label={t('approve.commit.files')}>
