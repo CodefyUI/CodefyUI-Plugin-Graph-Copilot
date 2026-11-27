@@ -4,7 +4,8 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Markdown } from './markdown';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MARKDOWN_LIMIT, Markdown } from './markdown';
 
 describe('Markdown rendering limits', () => {
   it('raw HTML stays text, with no element created from it', () => {
@@ -37,5 +38,41 @@ describe('Markdown rendering limits', () => {
     expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer');
     expect(links[0]).toHaveAttribute('title', 'https://example.com/a?b=c');
     expect(container.textContent).toContain('[bad](javascript:alert(1))');
+  });
+});
+
+describe('SEC2: hostile text renders in linear time', () => {
+  const time = (text: string) => {
+    const start = performance.now();
+    renderToStaticMarkup(<Markdown text={text} />);
+    return performance.now() - start;
+  };
+  // Warm the JIT once so the first measured case is not charged for it.
+  renderToStaticMarkup(<Markdown text={'`x` **b** *i* [l](https://e.com) ![a](https://e.com/i.png)'} />);
+
+  it('`x`![a]( repeated 4000 times (cubic before) renders within 200 ms', () => {
+    expect(time('`x`![a]('.repeat(4000))).toBeLessThan(200);
+  });
+
+  it.each([
+    ['italic', ' *a'], ['bold', '**a'], ['link', '[a]('], ['image', '![a]('], ['code and italic', '`x` *a '], ['code and bold', '`x` **a '],
+  ])('%s openers without closers, 8000 times, within 200 ms', (_name, unit) => {
+    expect(time(unit.repeat(8000))).toBeLessThan(200);
+  });
+
+  it('a 30 KB ordinary document with every construct renders within 200 ms', () => {
+    const block = '## Section\n\nSome **bold** and *italic* text with `code`, a [link](https://example.com/a) and ![img](https://example.com/i.png).\n\n- item one\n- item two\n\n```\ncode block\n```\n\n';
+    const text = block.repeat(Math.floor(30_000 / block.length));
+    expect(text.length).toBeLessThanOrEqual(MARKDOWN_LIMIT);
+    expect(time(text)).toBeLessThan(200);
+  });
+
+  it('a 64 KB document is shown as plain text, without markdown, within 200 ms', () => {
+    const text = 'plain **not bold** [not](https://a.b) '.repeat(Math.ceil(65_536 / 38));
+    expect(time(text)).toBeLessThan(200);
+    const html = renderToStaticMarkup(<Markdown text={text} />);
+    expect(html.startsWith('<pre class="gcp-md-plain">')).toBe(true);
+    expect(html).not.toContain('<strong>');
+    expect(html).not.toContain('<a ');
   });
 });

@@ -2574,3 +2574,5 @@
   .gcp-header .gcp-nav-btn, .gcp-header .gcp-icon-btn { width: 40px; height: 40px; }
   .gcp-composer-bar .gcp-mode-switch button, .gcp-composer-bar .gcp-context-chip { height: 40px; }
 }
+/* Text past the markdown size limit, shown as written. */
+.gcp-md-plain { max-height: 60vh; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--gcp-mono); font-size: var(--gcp-tier-caption); }
