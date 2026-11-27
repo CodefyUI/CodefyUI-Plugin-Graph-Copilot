@@ -1,9 +1,9 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import type { ChatTurn } from '../state/conversations';
 import type { AttachmentKind } from '../state/attachments';
 import { currentLocale, translate } from '../i18n';
 import type { ToolStage } from './turnStages';
-import { describeStage, formatDuration } from './turnStages';
+import { argSummary, describeStage, formatDuration, opsLine } from './turnStages';
 import { Markdown } from './markdown';
 import { RunResult } from './RunResult';
 
@@ -30,31 +30,6 @@ function FileGlyph({ kind }: { kind: AttachmentKind }) {
       ) : (
         <path d="M8 13h8M8 17h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       )}
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function AlertIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 5v9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-      <circle cx="12" cy="19" r="1.7" fill="currentColor" />
-    </svg>
-  );
-}
-
-function StopIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="5" y="5" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="2.4" />
     </svg>
   );
 }
@@ -100,12 +75,32 @@ function renderPlain(text: string): React.ReactNode[] {
 // detail. This is what makes an agent run read as distinct steps.
 // ---------------------------------------------------------------------------
 
+/** Streaming text re-parsed as markdown at most every `ms` (80ms): the last
+ * chunk always lands, and a finished message is never delayed. */
+export function useThrottledText(text: string, live: boolean, ms = 80): string {
+  const [shown, setShown] = useState(text);
+  const last = useRef(0);
+  useEffect(() => {
+    if (!live) { setShown(text); return; }
+    const wait = ms - (Date.now() - last.current);
+    if (wait <= 0) { last.current = Date.now(); setShown(text); return; }
+    const id = window.setTimeout(() => { last.current = Date.now(); setShown(text); }, wait);
+    return () => window.clearTimeout(id);
+  }, [text, live, ms]);
+  return live ? shown : text;
+}
+
+/** One glyph per outcome; colour repeats it, never replaces it. */
+const GLYPH: Record<string, string> = { running: '⚙', ok: '✓', error: '✗', unknown: '?', cancelled: '○', not_executed: '○', interrupted: '○' };
+
 function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) {
   const [open, setOpen] = useState(false);
   const detailId = useId();
   const d = describeStage(stage, active);
   const expandable = !!d.detail;
   const durationMs = stage.result?.durationMs;
+  const args = argSummary(stage.call.arguments);
+  const ops = stage.call.name === 'apply_graph_operations' ? opsLine(stage.call.arguments) : '';
 
   return (
     <div className={`gcp-stage ${d.status}`} aria-busy={d.status === 'running'}>
@@ -119,19 +114,16 @@ function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) 
         disabled={!expandable}
       >
         <span className="gcp-stage-status" aria-hidden="true">
-          {d.status === 'running' ? (
-            <span className="gcp-stage-spinner" />
-          ) : d.status === 'ok' ? (
-            <CheckIcon />
-          ) : d.status === 'cancelled' || d.status === 'not_executed' || d.status === 'interrupted' ? (
-            <StopIcon />
-          ) : (
-            <AlertIcon />
-          )}
+          {d.status === 'running' ? <span className="gcp-stage-spinner">{GLYPH.running}</span> : GLYPH[d.status] ?? '?'}
         </span>
         <span className="gcp-stage-copy">
-          <span className="gcp-stage-label">{d.label}</span>
+          <span className="gcp-stage-line">
+            <span className="gcp-stage-label">{d.label}</span>
+            <code className="gcp-stage-name">{stage.call.name}</code>
+          </span>
           {d.summary && <span className="gcp-stage-summary">{d.summary}</span>}
+          {ops && <span className="gcp-stage-ops">{ops}</span>}
+          {args && !ops && <code className="gcp-stage-args" title={args}>{args}</code>}
         </span>
         {typeof durationMs === 'number' && (
           <span className="gcp-stage-time">{formatDuration(durationMs)}</span>
@@ -169,6 +161,56 @@ function ToolStageRow({ stage, active }: { stage: ToolStage; active: boolean }) 
   );
 }
 
+/** Calls whose rows carry their own results (edits, runs, commits) stay on
+ * their own line; three or more other calls in a row fold into one row. */
+const OWN_ROW = new Set(['apply_graph_operations', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit']);
+
+export function batchStages(stages: ToolStage[]): (ToolStage | ToolStage[])[] {
+  const out: (ToolStage | ToolStage[])[] = [];
+  for (let i = 0; i < stages.length;) {
+    if (OWN_ROW.has(stages[i].call.name)) { out.push(stages[i]); i++; continue; }
+    let j = i;
+    while (j < stages.length && !OWN_ROW.has(stages[j].call.name)) j++;
+    if (j - i >= 3) out.push(stages.slice(i, j));
+    else out.push(...stages.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
+function ToolBatch({ stages, active }: { stages: ToolStage[]; active: boolean }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const described = stages.map((stage) => describeStage(stage, active));
+  const tally = (status: string) => described.filter((d) => d.status === status).length;
+  const running = tally('running');
+  const failed = tally('error') + tally('unknown');
+  const status = running ? 'running' : failed ? 'error' : 'ok';
+  const names = [...new Set(stages.map((stage) => stage.call.name))].join(', ');
+  const facts = [`${tally('ok')} ✓`, ...(failed ? [`${failed} ✗`] : []), ...(running ? [`${running} ⚙`] : [])].join(' · ');
+  return (
+    <div className={`gcp-stage gcp-stage-batch ${status}`} aria-busy={status === 'running'}>
+      <button type="button" className="gcp-stage-head" aria-expanded={open} aria-controls={open ? id : undefined}
+        aria-label={`${stages.length} tool calls: ${names} · ${facts}`} onClick={() => setOpen((v) => !v)}>
+        <span className="gcp-stage-status" aria-hidden="true">{GLYPH[status]}</span>
+        <span className="gcp-stage-copy">
+          <span className="gcp-stage-line">
+            <span className="gcp-stage-label">{stages.length} tool calls</span>
+            <code className="gcp-stage-name">{names}</code>
+          </span>
+          <span className="gcp-stage-summary">{facts}</span>
+        </span>
+        <ChevronIcon open={open} />
+      </button>
+      {open && (
+        <div id={id} className="gcp-stage-batch-items">
+          {stages.map((stage, i) => <ToolStageRow key={`${stage.call.id}-${i}`} stage={stage} active={active} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // MessageBubble
 // ---------------------------------------------------------------------------
@@ -181,12 +223,13 @@ export function MessageBubble({
   streaming = false,
   streamingText,
 }: MessageBubbleProps) {
+  const liveText = useThrottledText(streamingText ?? '', streaming && streamingText !== undefined);
   // Tool turns are never rendered standalone (they fold into stages)
   if (turn.role === 'tool') return null;
   const t = translate.bind(null, currentLocale());
 
   const isUser = turn.role === 'user';
-  const displayText = streaming && streamingText !== undefined ? streamingText : turn.content;
+  const displayText = streaming && streamingText !== undefined ? liveText : turn.content;
   const hasText = displayText.trim().length > 0;
   const attachments = turn.attachments ?? [];
   const isStep = !isUser && stages.length > 0;
@@ -222,7 +265,6 @@ export function MessageBubble({
       {/* Step marker — labels each tool-calling round of a multi-round run */}
       {isStep && typeof step === 'number' && (
         <div className="gcp-step-tag">
-          <span className="gcp-step-tag-dot" aria-hidden="true" />
           Step {step}
         </div>
       )}
@@ -238,9 +280,9 @@ export function MessageBubble({
       {/* Tool stages (assistant turns only) — the wired step timeline */}
       {stages.length > 0 && (
         <div className="gcp-stages">
-          {stages.map((s, i) => (
-            <ToolStageRow key={`${s.call.id}-${i}`} stage={s} active={active && !turn.runSummary} />
-          ))}
+          {batchStages(stages).map((entry, i) => Array.isArray(entry)
+            ? <ToolBatch key={`batch-${entry[0].call.id}-${i}`} stages={entry} active={active && !turn.runSummary} />
+            : <ToolStageRow key={`${entry.call.id}-${i}`} stage={entry} active={active && !turn.runSummary} />)}
         </div>
       )}
 

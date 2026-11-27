@@ -159,6 +159,9 @@ export interface PluginPanelOptions {
   dock?: 'bottom' | 'side';
   side?: { defaultWidth?: number; minWidth?: number; maxWidth?: number; defaultOpen?: boolean };
   badge?: PluginPanelBadge | null;
+  /** Called after the element is attached to / detached from the document. */
+  onShow?: () => void;
+  onHide?: () => void;
 }
 
 export interface CodefyUIPluginAPI {

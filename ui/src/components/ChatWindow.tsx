@@ -6,11 +6,13 @@ import { ChatView } from './ChatView';
 import { ExperimentsView } from './ExperimentsView';
 import { HistoryView } from './HistoryView';
 import { SettingsView } from './SettingsView';
-import { GraphMark } from './GraphMark';
 import { SkillsView } from './SkillsView';
 import type { SlashCommand } from './SlashMenu';
 import { fetchAgentContext, invalidateAgentContext, type AgentContext } from '../agent/hostContext';
 import { useT } from '../i18n';
+import type { PluginPanelBadge } from '../types/codefyui';
+import { providerReady } from '../state/settings';
+import { agentState, badgeFor, type AgentActivity, type AgentState } from './agentStatus';
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -135,7 +137,31 @@ export interface ChatWindowProps {
   open?: boolean;
   panelId?: string;
   onDetachReady?: (detach: () => void) => void;
+  /** The host's side dock, or the plugin's own floating window. */
+  dock?: 'side' | 'floating';
+  /** Whether the user can see the panel right now. */
+  visible?: boolean;
+  /** Side dock: the toolbar toggle's state dot. */
+  onBadge?: (badge: PluginPanelBadge | null) => void;
 }
+
+function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+    </svg>
+  );
+}
+
+function NewIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const STATE_GLYPH: Record<AgentState, string> = { needs_you: '!', done: '✓', working: '⚙', idle: '○' };
 
 // ---------------------------------------------------------------------------
 // ChatWindow
@@ -156,6 +182,9 @@ export function ChatWindow({
   open = true,
   panelId = 'graph-copilot-panel',
   onDetachReady,
+  dock = 'floating',
+  visible = open,
+  onBadge,
 }: ChatWindowProps) {
   const t = useT();
   const [view, setView] = useState<View>('chat');
@@ -163,10 +192,14 @@ export function ChatWindow({
   const [panelMode, setPanelMode] = useState<PanelMode>('compact');
   const [graphStats, setGraphStats] = useState<GraphStats>(() => readGraphStats(api));
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<AgentActivity>({ busy: false, needsApproval: false, atBottom: true, finishedRun: 0 });
+  const [seenRun, setSeenRun] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ id: number; text: string } | null>(null);
   const busyRef = useRef(false);
   const detachRef = useRef<(() => void) | null>(null);
   const viewRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const registerDetach = useCallback((detach: () => void) => {
     detachRef.current = detach;
     onDetachReady?.(detach);
@@ -175,6 +208,17 @@ export function ChatWindow({
     busyRef.current = value;
     setBusy(value);
   }, []);
+
+  // Done = a turn ended that the user has not looked at yet.
+  const looking = visible && view === 'chat' && activity.atBottom;
+  useEffect(() => { if (looking && activity.finishedRun > seenRun) setSeenRun(activity.finishedRun); }, [looking, activity.finishedRun, seenRun]);
+  const state = agentState({
+    busy: activity.busy || busy,
+    needsApproval: activity.needsApproval,
+    providerMissing: !providerReady(settings, codexLoggedIn),
+    unseenDone: activity.finishedRun > seenRun && !looking,
+  });
+  useEffect(() => { onBadge?.(badgeFor(state)); }, [onBadge, state]);
 
   useEffect(() => {
     if (open && view !== 'chat') viewRef.current?.focus();
@@ -203,7 +247,9 @@ export function ChatWindow({
   };
 
   const navigate = (next: View) => {
+    setMenuOpen(false);
     if (next !== 'chat') detachRef.current?.();
+    // Pressing the open view's button again goes back to the conversation.
     setView(next);
   };
   const startStudy = (text: string) => {
@@ -221,73 +267,109 @@ export function ChatWindow({
   useEffect(() => { if (!skillsOn && view === 'skills') setView('chat'); }, [skillsOn, view]);
 
   const navItems: Array<{ id: View; label: string; ariaLabel: string; icon: React.ReactNode }> = [
-    { id: 'chat', label: 'Chat', ariaLabel: 'Agent chat', icon: <ChatIcon /> },
-    { id: 'experiments', label: 'Lab', ariaLabel: 'Experiments lab', icon: <LabIcon /> },
-    { id: 'history', label: 'History', ariaLabel: 'Conversation history', icon: <HistoryIcon /> },
+    { id: 'chat', label: t('nav.chat'), ariaLabel: t('nav.chat.aria'), icon: <ChatIcon /> },
+    { id: 'experiments', label: t('nav.lab'), ariaLabel: t('nav.lab.aria'), icon: <LabIcon /> },
+    { id: 'history', label: t('nav.history'), ariaLabel: t('nav.history.aria'), icon: <HistoryIcon /> },
     // Only on a host with Agent Skills (CodefyUI with apiVersion 6).
     ...(skillsOn ? [{ id: 'skills' as View, label: t('skills.title'), ariaLabel: t('skills.title'), icon: <SkillsIcon /> }] : []),
-    { id: 'settings', label: 'Settings', ariaLabel: 'Settings', icon: <GearIcon /> },
+    { id: 'settings', label: t('nav.settings'), ariaLabel: t('nav.settings'), icon: <GearIcon /> },
   ];
+  const stateLabel = t(`state.${state}` as const);
+  const title = conversation.title || t('chat.untitled');
+  const floating = dock === 'floating';
 
   return (
     <div
       id={panelId}
-      className={`gcp-window gcp-window--${panelMode}`}
-      role="dialog"
-      aria-label="Graph Copilot agent workbench"
-      data-panel-mode={panelMode}
+      className={`gcp-window gcp-window--${floating ? panelMode : 'side'}`}
+      role={floating ? 'dialog' : 'region'}
+      aria-label={floating ? 'Graph Copilot agent workbench' : 'Copilot'}
+      data-panel-mode={floating ? panelMode : 'side'}
+      data-agent-state={state}
       hidden={!open}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+          if (menuOpen) { event.stopPropagation(); setMenuOpen(false); menuButtonRef.current?.focus(); return; }
+          if (!floating) return;
           event.stopPropagation();
           close();
         }
       }}
     >
-      <header className="gcp-workbench-header">
-        <div className="gcp-header-main">
-          <div className="gcp-brand">
-            <span className="gcp-header-mark"><GraphMark /></span>
-            <strong>Graph Copilot</strong>
-          </div>
+      <header className="gcp-header">
+        <span className={`gcp-state gcp-state--${state}`} title={t(`state.${state}.hint` as const)}>
+          <span className="gcp-state-glyph" aria-hidden="true">{STATE_GLYPH[state]}</span>
+          <span className="gcp-state-label">{stateLabel}</span>
+        </span>
+        <h1 className="gcp-header-title" title={title}>{title}</h1>
 
-          <div className="gcp-header-actions">
+        <div className="gcp-header-actions">
+          <nav className="gcp-header-nav" aria-label={t('nav.label')}>
             <button className="gcp-icon-btn" onClick={handleNew} disabled={busy}
-              aria-label="New conversation" title={busy ? 'Wait for the current turn to settle' : 'New conversation'}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              </svg>
+              aria-label={t('nav.new')} title={busy ? t('nav.new.busy') : t('nav.new')}>
+              <NewIcon />
             </button>
-
-            <button
-              className="gcp-icon-btn"
-              onClick={() => setPanelMode((mode) => mode === 'compact' ? 'expanded' : 'compact')}
-              aria-label={panelMode === 'compact' ? 'Expand panel' : 'Use compact panel'}
-              title={panelMode === 'compact' ? 'Expand workspace' : 'Compact workspace'}
-            >
-              <ExpandIcon expanded={panelMode === 'expanded'} />
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                className={`gcp-icon-btn gcp-nav-btn${view === item.id ? ' active' : ''}`}
+                onClick={() => navigate(item.id)}
+                aria-label={item.ariaLabel}
+                title={item.label}
+                aria-current={view === item.id ? 'page' : undefined}
+              >
+                {item.icon}
+              </button>
+            ))}
+          </nav>
+          <div className="gcp-header-more">
+            <button ref={menuButtonRef} className="gcp-icon-btn" aria-label={t('nav.more')} title={t('nav.more')}
+              aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}>
+              <MoreIcon />
             </button>
-
-            <button className="gcp-icon-btn" onClick={close} aria-label="Close panel" title="Close">
-              <CloseIcon />
-            </button>
+            {menuOpen && (
+              <ul className="gcp-menu" role="menu" aria-label={t('nav.more')}
+                ref={(element) => { element?.querySelector<HTMLElement>('[role="menuitem"]')?.focus(); }}
+                onKeyDown={(event) => {
+                  const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')];
+                  const index = items.indexOf(document.activeElement as HTMLElement);
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+                  }
+                }}>
+                <li role="none">
+                  <button role="menuitem" className="gcp-menu-item" disabled={busy} onClick={() => { setMenuOpen(false); handleNew(); }}>
+                    <NewIcon /><span>{t('nav.new')}</span>
+                  </button>
+                </li>
+                {navItems.map((item) => (
+                  <li role="none" key={item.id}>
+                    <button role="menuitem" className="gcp-menu-item" aria-current={view === item.id ? 'page' : undefined}
+                      onClick={() => navigate(item.id)}>
+                      {item.icon}<span>{item.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
+          {floating && (
+            <>
+              <button
+                className="gcp-icon-btn gcp-header-expand"
+                onClick={() => setPanelMode((mode) => mode === 'compact' ? 'expanded' : 'compact')}
+                aria-label={panelMode === 'compact' ? t('window.expand') : t('window.compact')}
+                title={panelMode === 'compact' ? t('window.expand') : t('window.compact')}
+              >
+                <ExpandIcon expanded={panelMode === 'expanded'} />
+              </button>
+              <button className="gcp-icon-btn" onClick={close} aria-label={t('window.close')} title={t('window.close')}>
+                <CloseIcon />
+              </button>
+            </>
+          )}
         </div>
-
-        <nav className="gcp-workbench-nav" aria-label="Agent workbench views">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              className={`gcp-nav-btn${view === item.id ? ' active' : ''}`}
-              onClick={() => navigate(item.id)}
-              aria-label={item.ariaLabel}
-              aria-current={view === item.id ? 'page' : undefined}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
       </header>
 
       <main className="gcp-view" ref={viewRef} tabIndex={-1}>
@@ -309,6 +391,7 @@ export function ChatWindow({
             prefill={prefill}
             agentContext={agentContext ?? null}
             onSlashCommand={slashCommand}
+            onActivity={setActivity}
           />
         </div>
 

@@ -20,18 +20,19 @@ for (const width of [375, 1440]) {
       // The textarea is transparent inside one composed dock; audit the
       // actually painted parent surface rather than inventing a filled input.
       expect(composerColors).toEqual({ foreground: 'rgb(23, 32, 51)', background: 'rgba(0, 0, 0, 0)' });
-      const dock = dialog.locator('.gcp-input-row');
+      // The composer frame is the painted surface and carries the focus border.
+      const dock = dialog.locator('.gcp-composer');
       await expect(dock).toBeVisible();
       await expect(dock).toHaveCSS('background-color', 'rgb(248, 250, 252)');
-      await expect(page.getByText('What should change?', { exact: true })).toHaveCSS('color', 'rgb(23, 32, 51)');
+      await expect(page.getByText('What should Copilot work on?', { exact: true })).toHaveCSS('color', 'rgb(23, 32, 51)');
       await composer.focus();
       await page.keyboard.press('Tab');
       await page.keyboard.press('Shift+Tab');
       await expect(composer).toBeFocused();
       expect(await composer.evaluate((element) => element.matches(':focus-visible'))).toBe(true);
-      await expect(dock).toHaveCSS('outline-style', 'solid');
-      await expect(dock).toHaveCSS('outline-width', '2px');
-      await expect(dock).toHaveCSS('outline-color', 'rgb(14, 116, 144)');
+      await expect(dock).toHaveCSS('border-top-style', 'solid');
+      await expect(dock).toHaveCSS('border-top-color', 'rgb(14, 116, 144)');
+      await expect(dock).toHaveCSS('box-shadow', 'rgb(14, 116, 144) 0px 0px 0px 1px inset');
       await capture(page, testInfo, `${width}-test-light-token-welcome`);
       await send(page, 'Add Normalize between Dataset and Preview, with scale 0.5.');
       await expect(dialog.getByRole('status').filter({ has: page.getByText('Completed', { exact: true }) })).toBeVisible();
@@ -39,7 +40,7 @@ for (const width of [375, 1440]) {
       await readyPreview(page, 'scenario=clear&tokens=light');
       await openCopilot(page);
       await send(page, 'Clear my graph and start over.');
-      await expect(page.getByRole('dialog', { name: 'Clear the current graph?', exact: true })).toBeVisible();
+      await expect(page.getByRole('group', { name: 'Clear the current graph?', exact: true })).toBeVisible();
       await capture(page, testInfo, `${width}-test-light-token-confirmation`);
       await page.getByRole('button', { name: 'Keep graph', exact: true }).click();
     });

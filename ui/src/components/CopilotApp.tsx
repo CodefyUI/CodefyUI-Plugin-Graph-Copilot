@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
-import type { CodefyUIPluginAPI } from '../types/codefyui';
+import type { CodefyUIPluginAPI, PluginPanelBadge } from '../types/codefyui';
 import type { Settings } from '../state/settings';
 import {
   activeReasoningEffort,
@@ -26,15 +26,31 @@ import {
 // Props
 // ---------------------------------------------------------------------------
 
+/** Where the host put the plugin: its side dock (apiVersion 6, the host owns
+ * open and close) or the floating widget stack (older hosts; the plugin
+ * draws its own launcher and window). */
+export type HostMount =
+  | { kind: 'floating' }
+  | {
+    kind: 'side';
+    isVisible(): boolean;
+    onVisibility(listener: (visible: boolean) => void): () => void;
+    setBadge(badge: PluginPanelBadge | null): void;
+  };
+
 export interface CopilotAppProps {
   api: CodefyUIPluginAPI;
+  mount?: HostMount;
 }
 
 // ---------------------------------------------------------------------------
 // CopilotApp
 // ---------------------------------------------------------------------------
 
-export function CopilotApp({ api }: CopilotAppProps) {
+export function CopilotApp({ api, mount = { kind: 'floating' } }: CopilotAppProps) {
+  const side = mount.kind === 'side' ? mount : null;
+  const [visible, setVisible] = useState(() => side?.isVisible() ?? false);
+  useEffect(() => side?.onVisibility(setVisible), [side]);
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
   const panelId = useId();
@@ -202,6 +218,34 @@ export function CopilotApp({ api }: CopilotAppProps) {
     setConversation(conv);
   };
 
+  if (side) {
+    // The host owns the column and its toggle. A run keeps going while the
+    // column is closed; the toolbar badge says what it is doing.
+    return (
+      <div className="gcp-root gcp-root--side gcp-root--open">
+        <ChatWindow
+          open
+          dock="side"
+          visible={visible}
+          onBadge={side.setBadge}
+          panelId={panelId}
+          onDetachReady={registerDetach}
+          api={api}
+          settings={settings}
+          codexLoggedIn={codexLoggedIn}
+          codexEmail={codexEmail}
+          conversation={conversation}
+          onConversationChange={setConversation}
+          onSettingsChange={handleSettingsChange}
+          onCodexStatusChange={handleCodexStatusChange}
+          onNewConversation={handleNewConversation}
+          onResumeConversation={handleResumeConversation}
+          onClose={() => { api.ui.setPanelOpen?.('copilot', false); }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={`gcp-root${open ? ' gcp-root--open' : ''}`}>
       <Fab onClick={toggle} expanded={open} controls={panelId} buttonRef={fabRef} />
@@ -209,6 +253,8 @@ export function CopilotApp({ api }: CopilotAppProps) {
       {opened && (
         <ChatWindow
           open={open}
+          dock="floating"
+          visible={open}
           panelId={panelId}
           onDetachReady={registerDetach}
           api={api}

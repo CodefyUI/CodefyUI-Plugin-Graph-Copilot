@@ -473,7 +473,7 @@ export function SettingsView({
       </div>
 
       <section className="gcp-settings-section" aria-labelledby="gcp-settings-connection">
-        <h3 id="gcp-settings-connection">Connection</h3>
+        <h3 id="gcp-settings-connection">Provider</h3>
         <div className="gcp-settings-section-body">
           <div className="gcp-field">
             <label className="gcp-label" htmlFor="gcp-provider-select">Provider</label>

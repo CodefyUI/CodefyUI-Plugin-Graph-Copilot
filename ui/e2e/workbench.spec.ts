@@ -5,41 +5,19 @@ import { expectControlContrast, expectKeyboardFocus } from './accessibility';
 const workbench = (page: Page) => page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true });
 const composer = (page: Page) => page.getByRole('combobox', { name: 'Message input', exact: true });
 
-async function expectNativeFocusCycle(page: Page, dialog: Locator, safeAction: Locator): Promise<void> {
-  await expect(dialog).toBeVisible();
-  expect(await dialog.evaluate((element) => element.tagName)).toBe('DIALOG');
-  expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
-  await expect(page.locator('dialog:modal')).toHaveCount(1);
+/** Approvals are inline cards (plan 02-agent 2D), not modals: the card takes
+ * focus on its safe action, Tab reaches its verb, and nothing behind the panel
+ * is made inert. The decision itself is enforced by the agent loop. */
+async function expectInlineCardFocus(page: Page, card: Locator, safeAction: Locator, verb: Locator): Promise<void> {
+  await expect(card).toBeVisible();
+  expect(await card.evaluate((element) => element.tagName)).toBe('DIV');
+  await expect(page.locator('dialog:modal')).toHaveCount(0);
+  await expect(card).toBeInViewport({ ratio: 1 });
   await expect(safeAction).toBeFocused();
-  // Native modal inertness must reject programmatic focus on a real host
-  // sibling as well as keyboard traversal; never fake an inert attribute.
-  await page.locator('[aria-label="Mock canvas options"]').evaluate((element) => (element as HTMLButtonElement).focus());
-  expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
-  const tabStops = await dialog.evaluate((element) => Array.from(element.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]')).filter((node) => node.getClientRects().length).length);
-  expect(tabStops).toBeGreaterThanOrEqual(3);
-  const sequence: Array<{ key: string; inside: boolean; documentFocused: boolean; tag: string; name: string }> = [];
-  for (const key of ['Tab', 'Shift+Tab'] as const) {
-    // Native modal navigation may visit browser chrome, represented by BODY
-    // while document.hasFocus() is false. It must never focus host/app siblings.
-    for (let index = 0; index < tabStops + 1; index++) {
-      await page.keyboard.press(key);
-      const focus = await dialog.evaluate((element) => ({
-        inside: element.contains(document.activeElement), documentFocused: document.hasFocus(),
-        tag: document.activeElement?.tagName ?? '',
-        name: document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent?.trim().slice(0, 80) ?? '',
-      }));
-      sequence.push({ key, ...focus });
-      expect(focus.inside || (focus.tag === 'BODY' && !focus.documentFocused), `${key} has no focus on a background control: ${JSON.stringify(focus)}`).toBe(true);
-      if (!focus.inside) {
-        await page.keyboard.press(key);
-        expect(await dialog.evaluate((element) => element.contains(document.activeElement)), `${key} returns from browser chrome to the native decision`).toBe(true);
-      }
-    }
-  }
-  await test.info().attach('native-dialog-focus-sequence.json', { body: JSON.stringify(sequence, null, 2), contentType: 'application/json' });
-  expect(sequence.some((focus) => focus.inside && focus.key === 'Tab')).toBe(true);
-  expect(sequence.some((focus) => focus.inside && focus.key === 'Shift+Tab')).toBe(true);
-  await safeAction.focus();
+  await page.keyboard.press('Tab');
+  await expect(verb).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(safeAction).toBeFocused();
 }
 
 async function closeAndUseHost(page: Page): Promise<void> {
@@ -55,20 +33,20 @@ async function closeAndUseHost(page: Page): Promise<void> {
 }
 
 for (const decision of [
-  { scenario: 'clear', prompt: 'Clear my graph and start over.', title: 'Clear the current graph?', safe: 'Keep graph' },
-  { scenario: 'native-run', prompt: 'Run my current sample graph on CPU after I approve.', title: 'Run the current graph?', safe: 'Cancel' },
+  { scenario: 'clear', prompt: 'Clear my graph and start over.', title: 'Clear the current graph?', safe: 'Keep graph', verb: 'Clear graph' },
+  { scenario: 'native-run', prompt: 'Run my current sample graph on CPU after I approve.', title: 'Run the current graph?', safe: 'Cancel', verb: 'Run graph' },
 ] as const) {
-  test(`native ${decision.scenario} dialog contains keyboard focus and Escape cancels only its top layer`, async ({ page }, testInfo) => {
+  test(`inline ${decision.scenario} approval takes keyboard focus and Escape cancels only the card`, async ({ page }, testInfo) => {
     await readyPreview(page, `scenario=${decision.scenario}`);
     await openCopilot(page);
     const before = (await snapshot(page)).graph;
     await send(page, decision.prompt);
-    const dialog = page.getByRole('dialog', { name: decision.title, exact: true });
+    const dialog = page.getByRole('group', { name: decision.title, exact: true });
     const safe = dialog.getByRole('button', { name: decision.safe, exact: true });
-    await expectNativeFocusCycle(page, dialog, safe);
+    await expectInlineCardFocus(page, dialog, safe, dialog.getByRole('button', { name: decision.verb, exact: true }));
     await expectControlContrast(safe, `${decision.scenario} safe action`);
     await expectKeyboardFocus(page, safe, `${decision.scenario} safe action`);
-    await capture(page, testInfo, `${decision.scenario}-native-dialog-keyboard`);
+    await capture(page, testInfo, `${decision.scenario}-inline-approval-keyboard`);
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     await expect(workbench(page)).toBeVisible();

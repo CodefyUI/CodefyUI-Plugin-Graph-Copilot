@@ -122,8 +122,8 @@ describe('SettingsView', () => {
     const { container } = renderSettings();
     expect(screen.getByRole('heading', { level: 2, name: 'Settings' })).toBeInTheDocument();
     const sections = Array.from(container.querySelectorAll('section.gcp-settings-section'));
-    expect(sections.map((section) => section.querySelector('h3')?.textContent)).toEqual(['Connection', 'Model', 'Behavior']);
-    const connection = screen.getByRole('region', { name: 'Connection' });
+    expect(sections.map((section) => section.querySelector('h3')?.textContent)).toEqual(['Provider', 'Model', 'Behavior']);
+    const connection = screen.getByRole('region', { name: 'Provider' });
     expect(within(connection).getByRole('combobox', { name: /select llm provider/i })).toBeInTheDocument();
     expect(within(connection).getByLabelText('OpenAI API key')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Model' })).getByRole('combobox', { name: 'Model ID' })).toBeInTheDocument();

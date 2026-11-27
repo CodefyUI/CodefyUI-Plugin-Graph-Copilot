@@ -13,8 +13,11 @@
 
 /* -------------------------------------------------------------------------- */
 /* Root container & design tokens                                              */
+/* Every colour literal in this file lives between tokens:begin and           */
+/* tokens:end, as a fallback for a host token. styles.test.ts enforces it.    */
 /* -------------------------------------------------------------------------- */
 
+/* tokens:begin */
 .gcp-root {
   /* Surfaces (host elevation ladder) */
   --gcp-canvas: var(--surface-canvas, #0f1319);
@@ -102,6 +105,23 @@
   --gcp-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   --gcp-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --gcp-lift: rgba(255, 255, 255, 0.22);
+
+  /* Roles: each colour means one thing, and always comes with a glyph or a
+   * word. accent = primary/focus/selection; live = working now; ok = done;
+   * attention = needs you; danger = error/destructive; neutral = idle. */
+  --gcp-role-accent: var(--gcp-accent);
+  --gcp-role-live: var(--status-info, var(--gcp-info));
+  --gcp-role-ok: var(--gcp-ok);
+  --gcp-role-attention: var(--gcp-warn);
+  --gcp-role-danger: var(--gcp-danger);
+  --gcp-role-neutral: var(--gcp-muted);
+
+  /* Font tiers by role: body is the host's --fs-md. */
+  --gcp-tier-micro: var(--gcp-fs-2xs);
+  --gcp-tier-caption: var(--gcp-fs-xs);
+  --gcp-tier-body: var(--gcp-fs-md);
+  --gcp-tier-title: var(--gcp-fs-lg);
 
   position: relative;
   font-family: inherit;
@@ -111,6 +131,7 @@
   box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
 }
+/* tokens:end */
 
 .gcp-root *,
 .gcp-root *::before,
@@ -142,7 +163,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 14px -6px var(--gcp-accent-glow);
+  box-shadow: inset 0 1px 0 var(--gcp-lift), 0 6px 14px -6px var(--gcp-accent-glow);
   transition: background var(--gcp-t-fast), transform var(--gcp-t-fast), box-shadow var(--gcp-t-fast);
   outline: none;
 }
@@ -150,7 +171,7 @@
 .gcp-fab:hover {
   background: var(--gcp-accent);
   transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px -6px var(--gcp-accent-glow);
+  box-shadow: inset 0 1px 0 var(--gcp-lift), 0 8px 18px -6px var(--gcp-accent-glow);
 }
 .gcp-fab:active { transform: scale(0.96); }
 .gcp-fab:focus-visible { outline: 2px solid var(--gcp-focus); outline-offset: 2px; }
@@ -368,6 +389,8 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  /* A size container so an approval card can always fit its own frame. */
+  container: log / size;
 }
 
 /* Welcome / empty state */
@@ -543,7 +566,6 @@
   margin-left: 2px;
   vertical-align: text-bottom;
   border-radius: 1px;
-  animation: gcp-blink 1s step-end infinite;
 }
 @keyframes gcp-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
@@ -833,7 +855,6 @@
 .gcp-thinking-orb {
   color: var(--gcp-accent);
   font-size: var(--gcp-fs-sm);
-  animation: gcp-orb-pulse 1.5s ease-in-out infinite;
 }
 .gcp-thinking-text { color: var(--gcp-dim); }
 .gcp-thinking-time {
@@ -1121,7 +1142,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 14px -6px var(--gcp-accent-glow);
+  box-shadow: inset 0 1px 0 var(--gcp-lift), 0 6px 14px -6px var(--gcp-accent-glow);
   transition: background var(--gcp-t-fast), transform var(--gcp-t-fast), box-shadow var(--gcp-t-fast);
   outline: none;
 }
@@ -1223,11 +1244,11 @@
   border-radius: 50%;
   background: var(--gcp-accent);
   flex-shrink: 0;
-  animation: gcp-runbar-pulse 1.4s ease-in-out infinite;
+
 }
 @keyframes gcp-runbar-pulse {
-  0%, 100% { opacity: 0.4; box-shadow: 0 0 0 0 var(--gcp-accent-wash); }
-  50% { opacity: 1; box-shadow: 0 0 6px 0 var(--gcp-accent-glow); }
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .gcp-runbar-phase {
@@ -1287,7 +1308,7 @@
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 var(--gcp-lift);
   transition: background var(--gcp-t-fast);
   outline: none;
   white-space: nowrap;
@@ -1321,7 +1342,7 @@
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 var(--gcp-lift);
   transition: background var(--gcp-t-fast);
   outline: none;
 }
@@ -1528,7 +1549,7 @@
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 var(--gcp-lift);
   transition: background var(--gcp-t-fast);
   outline: none;
 }
@@ -1900,7 +1921,7 @@
   background: var(--gcp-accent-deep);
   color: var(--gcp-accent-ink);
   font-weight: 700;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 var(--gcp-lift);
 }
 .gcp-study-import-actions button.primary:hover:not(:disabled) { background: var(--gcp-accent); color: var(--gcp-accent-ink); }
 .gcp-study-import-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -2121,7 +2142,7 @@
   border: none;
   background: var(--gcp-accent-deep);
   color: var(--gcp-accent-ink);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 var(--gcp-lift);
 }
 .gcp-approval-primary:hover { background: var(--gcp-accent); }
 .gcp-approval-primary:focus-visible { outline: 2px solid var(--gcp-focus); outline-offset: 2px; }
@@ -2188,4 +2209,368 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ========================================================================== */
+/* 2D: general-agent panel                                                     */
+/* ========================================================================== */
+
+/* Side dock: the host owns the frame, width and resize handle. */
+.gcp-root--side { height: 100%; }
+.gcp-root--side .gcp-window {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+/* Header: state chip, title, icon navigation, overflow menu. */
+.gcp-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--gcp-border-soft);
+  background: var(--gcp-bg);
+  flex-shrink: 0;
+}
+.gcp-header-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--gcp-text);
+  font-size: var(--gcp-tier-body);
+  font-weight: 600;
+  line-height: var(--gcp-lh-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gcp-header-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.gcp-header-nav { display: flex; align-items: center; gap: 2px; }
+.gcp-header-more { position: relative; display: none; }
+.gcp-header .gcp-nav-btn { padding: 0; width: 28px; height: 28px; justify-content: center; border-radius: var(--gcp-r-sm); }
+.gcp-header .gcp-nav-btn.active { color: var(--gcp-text); background: color-mix(in srgb, var(--gcp-role-accent) 14%, transparent); box-shadow: inset 0 -2px 0 var(--gcp-role-accent); }
+
+.gcp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--gcp-state-color) 40%, transparent);
+  border-radius: var(--gcp-r-pill);
+  background: color-mix(in srgb, var(--gcp-state-color) 10%, transparent);
+  color: var(--gcp-state-color);
+  font-size: var(--gcp-tier-micro);
+  font-weight: 500;
+  line-height: 1.6;
+  --gcp-state-color: var(--gcp-role-neutral);
+}
+.gcp-state--working { --gcp-state-color: var(--gcp-role-live); }
+.gcp-state--needs_you { --gcp-state-color: var(--gcp-role-attention); }
+.gcp-state--done { --gcp-state-color: var(--gcp-role-ok); }
+.gcp-state-glyph { font-family: var(--gcp-mono); }
+
+.gcp-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  min-width: 200px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--gcp-border);
+  border-radius: var(--gcp-r);
+  background: var(--gcp-surface);
+  box-shadow: var(--gcp-shadow-pop);
+}
+.gcp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--gcp-r-sm);
+  background: none;
+  color: var(--gcp-dim);
+  font: inherit;
+  font-size: var(--gcp-tier-body);
+  text-align: left;
+  cursor: pointer;
+}
+.gcp-menu-item:hover, .gcp-menu-item:focus-visible { background: var(--gcp-hover); color: var(--gcp-text); }
+.gcp-menu-item[aria-current='page'] { color: var(--gcp-role-accent); }
+
+/* Inline approval card: in the conversation, never a modal. */
+.gcp-approval {
+  margin: 4px 0 8px;
+  scroll-margin: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--gcp-role-attention) 45%, var(--gcp-border));
+  border-radius: var(--gcp-r);
+  background: color-mix(in srgb, var(--gcp-role-attention) 6%, var(--gcp-surface));
+  color: var(--gcp-dim);
+}
+.gcp-approval:focus-visible { outline: 2px solid var(--gcp-focus); outline-offset: 2px; }
+.gcp-approval--danger { border-color: color-mix(in srgb, var(--gcp-role-danger) 50%, var(--gcp-border)); background: color-mix(in srgb, var(--gcp-role-danger) 6%, var(--gcp-surface)); }
+.gcp-approval-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gcp-approval-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--gcp-role-attention) 18%, transparent);
+  color: var(--gcp-role-attention);
+  font-family: var(--gcp-mono);
+  font-size: var(--gcp-tier-caption);
+  font-weight: 700;
+}
+.gcp-approval--danger .gcp-approval-glyph { background: color-mix(in srgb, var(--gcp-role-danger) 18%, transparent); color: var(--gcp-role-danger); }
+.gcp-approval-title { margin: 0; color: var(--gcp-text); font-size: var(--gcp-tier-body); font-weight: 600; }
+.gcp-approval-body { display: flex; flex-direction: column; gap: 6px; max-height: max(3.5em, min(260px, calc(100cqh - 150px))); overflow: auto; font-size: var(--gcp-tier-caption); line-height: var(--gcp-lh-snug); overscroll-behavior: contain; }
+.gcp-approval-body:focus-visible { outline: 2px solid var(--gcp-focus); outline-offset: 2px; }
+.gcp-approval-body p { margin: 0; flex-shrink: 0; }
+.gcp-approval-lead { color: var(--gcp-text); font-size: var(--gcp-tier-body); }
+.gcp-approval-facts { color: var(--gcp-muted); font-variant-numeric: tabular-nums; }
+.gcp-approval-note { color: var(--gcp-muted); }
+.gcp-approval-warning { color: var(--gcp-dim); }
+.gcp-approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--gcp-border-soft);
+  border-radius: var(--gcp-r-sm);
+  background: var(--gcp-bg);
+}
+.gcp-approval-list li { display: flex; gap: 8px; min-width: 0; }
+.gcp-approval-list li > span { color: var(--gcp-muted); }
+.gcp-commit-files code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--gcp-mono); color: var(--gcp-text); }
+.gcp-approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.gcp-primary-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--gcp-role-accent);
+  border-radius: var(--gcp-r-sm);
+  background: var(--gcp-role-accent);
+  color: var(--gcp-accent-ink);
+  font: inherit;
+  font-size: var(--gcp-tier-caption);
+  font-weight: 600;
+  cursor: pointer;
+}
+.gcp-primary-btn:hover:not(:disabled) { background: var(--gcp-accent-deep); }
+
+/* Conversation: the one pulse is the working line's step text. */
+.gcp-runbar-phase { color: var(--gcp-role-live); animation: gcp-runbar-pulse 1.5s ease-in-out infinite; }
+.gcp-runbar.waiting .gcp-runbar-phase { color: var(--gcp-role-attention); animation: none; }
+.gcp-jump-latest { font-variant-numeric: tabular-nums; }
+.gcp-welcome-title { font-size: var(--gcp-tier-title); }
+
+/* Tool rows: glyph, label, mono name, k=v arguments, duration. */
+.gcp-stage-status { font-family: var(--gcp-mono); font-size: var(--gcp-tier-caption); line-height: 1; }
+.gcp-stage.ok .gcp-stage-status { color: var(--gcp-role-ok); }
+.gcp-stage.error .gcp-stage-status { color: var(--gcp-role-danger); }
+.gcp-stage.running .gcp-stage-status { color: var(--gcp-role-live); }
+.gcp-stage-spinner { display: inline-block; width: auto; height: auto; border: none; }
+.gcp-stage-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.gcp-stage-name { overflow: hidden; color: var(--gcp-muted); font-family: var(--gcp-mono); font-size: var(--gcp-tier-micro); text-overflow: ellipsis; white-space: nowrap; }
+.gcp-stage-args { overflow: hidden; color: var(--gcp-muted); font-family: var(--gcp-mono); font-size: var(--gcp-tier-micro); text-overflow: ellipsis; white-space: nowrap; }
+.gcp-stage-ops { color: var(--gcp-dim); font-family: var(--gcp-mono); font-size: var(--gcp-tier-caption); font-variant-numeric: tabular-nums; }
+.gcp-stage-time { font-family: var(--gcp-mono); font-variant-numeric: tabular-nums; }
+.gcp-stage-batch-items { padding-left: 14px; }
+
+/* Composer: one rounded frame; the border turns accent on focus, no glow. */
+.gcp-composer {
+  position: relative;
+  border: 1px solid var(--gcp-border);
+  border-radius: var(--gcp-r-lg);
+  background: var(--gcp-bg);
+  transition: border-color var(--gcp-t-fast);
+}
+/* The frame's border is the focus indicator: accent, 2px, no glow. */
+.gcp-composer:focus-within { border-color: var(--gcp-focus); box-shadow: inset 0 0 0 1px var(--gcp-focus); }
+.gcp-composer .gcp-input-row:has(.gcp-textarea:focus-visible) { outline: none; }
+.gcp-composer .gcp-input-row { border: none; background: none; box-shadow: none; }
+.gcp-composer .gcp-input-row:focus-within { border: none; box-shadow: none; }
+.gcp-composer .gcp-textarea:focus-visible { outline: none; }
+.gcp-composer .gcp-stop-btn { color: var(--gcp-role-danger); }
+.gcp-composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 6px;
+  font-size: var(--gcp-tier-caption);
+}
+.gcp-composer-bar .gcp-mode-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--gcp-border-soft);
+  border-radius: var(--gcp-r-sm);
+  background: var(--gcp-bg);
+}
+.gcp-composer-bar .gcp-mode-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--gcp-r-xs);
+  font-size: var(--gcp-tier-caption);
+}
+.gcp-composer-bar .gcp-mode-switch button[aria-checked='true'] { background: color-mix(in srgb, var(--gcp-role-accent) 14%, transparent); color: var(--gcp-role-accent); }
+.gcp-mode-glyph { font-family: var(--gcp-mono); }
+.gcp-composer-bar .gcp-context-chip { display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 6px; min-height: 0; height: 28px; max-width: 46%; min-width: 0; align-self: center; line-height: 28px; }
+.gcp-composer-bar .gcp-effort-control { flex-direction: row; align-items: center; gap: 4px; }
+.gcp-composer-bar .gcp-effort-control select { min-height: 0; height: 26px; padding: 0 18px 0 6px; }
+.gcp-context-chip-model { overflow: hidden; font-family: var(--gcp-mono); text-overflow: ellipsis; white-space: nowrap; }
+.gcp-configured { color: var(--gcp-role-ok); font-size: var(--gcp-tier-micro); }
+.gcp-configured--missing { color: var(--gcp-role-attention); }
+.gcp-effort-control { display: inline-flex; align-items: center; gap: 4px; }
+.gcp-graph-context { margin-left: auto; color: var(--gcp-muted); font-family: var(--gcp-mono); font-size: var(--gcp-tier-micro); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gcp-context-ring { display: inline-flex; align-items: center; gap: 4px; color: var(--gcp-muted); font-family: var(--gcp-mono); font-size: var(--gcp-tier-micro); font-variant-numeric: tabular-nums; }
+.gcp-context-ring svg { fill: none; stroke-width: 2.5; }
+.gcp-context-ring-track { stroke: var(--gcp-border); }
+.gcp-context-ring-fill { stroke: var(--gcp-role-neutral); stroke-linecap: round; }
+.gcp-context-ring--attention .gcp-context-ring-fill { stroke: var(--gcp-role-attention); }
+.gcp-context-ring--danger .gcp-context-ring-fill { stroke: var(--gcp-role-danger); }
+.gcp-composer-hint { padding: 0 10px 6px; color: var(--gcp-muted); font-size: var(--gcp-tier-micro); }
+
+/* Slash menu and skill tags. */
+.gcp-slash-menu {
+  max-height: 240px;
+  margin: 0 0 6px;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--gcp-border);
+  border-radius: var(--gcp-r);
+  background: var(--gcp-surface);
+  box-shadow: var(--gcp-shadow);
+}
+.gcp-slash-option { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; padding: 6px 8px; border-radius: var(--gcp-r-sm); cursor: pointer; }
+.gcp-slash-option.active { background: color-mix(in srgb, var(--gcp-role-accent) 12%, transparent); }
+.gcp-slash-name { color: var(--gcp-text); font-family: var(--gcp-mono); font-size: var(--gcp-tier-caption); }
+.gcp-slash-kind { justify-self: end; color: var(--gcp-muted); font-size: var(--gcp-tier-micro); }
+.gcp-slash-detail { grid-column: 1 / -1; overflow: hidden; color: var(--gcp-muted); font-size: var(--gcp-tier-micro); text-overflow: ellipsis; white-space: nowrap; }
+.gcp-slash-empty { padding: 8px; color: var(--gcp-muted); font-size: var(--gcp-tier-caption); }
+.gcp-slash-notice { margin: 0 0 6px; color: var(--gcp-role-danger); font-size: var(--gcp-tier-caption); }
+.gcp-skill-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; padding: 0; list-style: none; }
+.gcp-skill-tags.in-transcript { justify-content: flex-end; margin: 0 0 4px; }
+.gcp-skill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--gcp-role-accent) 40%, transparent);
+  border-radius: var(--gcp-r-pill);
+  background: color-mix(in srgb, var(--gcp-role-accent) 10%, transparent);
+  color: var(--gcp-dim);
+  font-family: var(--gcp-mono);
+  font-size: var(--gcp-tier-micro);
+}
+.gcp-skill-tag.loaded { border-color: var(--gcp-border); background: none; color: var(--gcp-muted); }
+.gcp-skill-tag-remove { display: inline-grid; place-items: center; padding: 0; border: none; background: none; color: inherit; cursor: pointer; }
+
+/* Views with their own header (Skills). */
+.gcp-skills { display: flex; flex-direction: column; gap: 12px; height: 100%; padding: 12px; overflow: auto; }
+.gcp-view-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gcp-view-title { margin: 0; color: var(--gcp-text); font-size: var(--gcp-tier-title); font-weight: 600; }
+.gcp-state--loading, .gcp-state--empty, .gcp-state--error, .gcp-state--notice {
+  display: block;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--gcp-border-soft);
+  border-radius: var(--gcp-r);
+  background: var(--gcp-surface);
+  color: var(--gcp-dim);
+  font-size: var(--gcp-tier-caption);
+  font-weight: 400;
+}
+.gcp-state--error { border-color: color-mix(in srgb, var(--gcp-role-danger) 45%, transparent); }
+.gcp-state--notice { border-color: color-mix(in srgb, var(--gcp-role-attention) 45%, transparent); }
+.gcp-state-title { margin: 0 0 4px; color: var(--gcp-text); font-weight: 600; }
+.gcp-skill-group { display: flex; flex-direction: column; gap: 4px; }
+.gcp-skill-group-title { margin: 0; color: var(--gcp-muted); font-size: var(--gcp-tier-micro); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+.gcp-skill-list { margin: 0; padding: 0; list-style: none; }
+.gcp-skill-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--gcp-border-soft); }
+.gcp-skill-row.muted { opacity: 0.7; }
+.gcp-skill-open {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 4px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gcp-skill-open:hover { background: var(--gcp-hover); }
+.gcp-skill-name { color: var(--gcp-text); font-family: var(--gcp-mono); font-size: var(--gcp-tier-caption); }
+.gcp-skill-source { color: var(--gcp-muted); font-size: var(--gcp-tier-micro); }
+.gcp-skill-description { grid-column: 1 / -1; display: -webkit-box; overflow: hidden; color: var(--gcp-muted); font-size: var(--gcp-tier-caption); -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.gcp-skill-description.full { display: block; -webkit-line-clamp: unset; }
+.gcp-skill-flag { grid-column: 1 / -1; color: var(--gcp-role-attention); font-size: var(--gcp-tier-micro); }
+.gcp-switch { position: relative; display: inline-flex; flex-shrink: 0; cursor: pointer; }
+.gcp-switch input { position: absolute; z-index: 1; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.gcp-switch-track { position: relative; width: 28px; height: 16px; border-radius: var(--gcp-r-pill); background: var(--gcp-border-strong); transition: background var(--gcp-t-fast); }
+.gcp-switch-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--gcp-text); transition: transform var(--gcp-t-fast); }
+.gcp-switch input:checked + .gcp-switch-track { background: var(--gcp-role-accent); }
+.gcp-switch input:checked + .gcp-switch-track::after { transform: translateX(12px); }
+.gcp-switch input:focus-visible + .gcp-switch-track { outline: 2px solid var(--gcp-focus); outline-offset: 2px; }
+.gcp-skill-meta { margin: 0; color: var(--gcp-muted); font-size: var(--gcp-tier-caption); }
+.gcp-skill-meta code, .gcp-skill-files code { font-family: var(--gcp-mono); }
+.gcp-skill-files { margin: 0; padding-left: 16px; font-size: var(--gcp-tier-caption); }
+.gcp-skill-issues ul { margin: 0; padding-left: 16px; color: var(--gcp-role-attention); font-size: var(--gcp-tier-caption); }
+.gcp-skill-body { padding: 8px 12px; border: 1px solid var(--gcp-border-soft); border-radius: var(--gcp-r); background: var(--gcp-surface); }
+.gcp-inline-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gcp-install { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--gcp-border-soft); }
+.gcp-install .gcp-primary-btn { align-self: flex-start; }
+.gcp-field { display: flex; flex-direction: column; gap: 4px; }
+.gcp-field-label { color: var(--gcp-muted); font-size: var(--gcp-tier-caption); }
+.gcp-field-error { margin: 0; color: var(--gcp-role-danger); font-size: var(--gcp-tier-caption); overflow-wrap: anywhere; }
+.gcp-install-result { color: var(--gcp-dim); font-size: var(--gcp-tier-caption); }
+.gcp-install-skipped { margin: 4px 0 0; padding-left: 16px; color: var(--gcp-role-attention); }
+
+/* Narrow panels (300–720px): container queries, never the viewport. */
+@container workbench (max-width: 399px) {
+  .gcp-state-label { display: none; }
+}
+@container workbench (max-width: 320px) {
+  .gcp-header-nav { display: none; }
+  .gcp-header-more { display: block; }
+}
+@container workbench (max-width: 359px) {
+  .gcp-mode-text, .gcp-effort-label, .gcp-configured, .gcp-graph-context-edges, .gcp-context-ring-text { display: none; }
+  .gcp-composer-hint { display: none; }
+  .gcp-composer-bar .gcp-context-chip { max-width: 38%; }
+}
+@container workbench (max-width: 300px) {
+  .gcp-graph-context { display: none; }
+}
+
+@media (pointer: coarse) {
+  .gcp-header .gcp-nav-btn, .gcp-header .gcp-icon-btn { width: 40px; height: 40px; }
+  .gcp-composer-bar .gcp-mode-switch button, .gcp-composer-bar .gcp-context-chip { height: 40px; }
 }

@@ -64,6 +64,13 @@ export async function readyPreview(page: Page, query = ''): Promise<void> {
 }
 
 export async function openCopilot(page: Page): Promise<void> {
+  // A v6 host docks Copilot at the side, opened from the host toolbar.
+  const toggle = page.getByRole('navigation', { name: 'Mock host toolbar' }).getByRole('button', { name: 'Copilot', exact: true });
+  if (await toggle.count()) {
+    await toggle.click();
+    await expect(page.getByRole('region', { name: 'Copilot', exact: true })).toBeVisible();
+    return;
+  }
   await page.getByRole('button', { name: 'Graph Copilot', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Graph Copilot agent workbench', exact: true })).toBeVisible();
 }

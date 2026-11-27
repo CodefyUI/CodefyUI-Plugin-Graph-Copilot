@@ -64,7 +64,8 @@ test('acceptance 5: the slash menu works from the keyboard with combobox ARIA', 
   await expect(input).toHaveAttribute('aria-activedescendant', (await options.nth(1).getAttribute('id'))!);
   await input.press('Escape');
   await expect(listbox).toBeHidden();
-  await expect(page.getByRole('dialog', { name: 'Graph Copilot agent workbench' })).toBeVisible();
+  // Escape closed only the menu: the docked panel (a v6 host) stays open.
+  await expect(page.getByRole('region', { name: 'Copilot', exact: true })).toBeVisible();
   await input.fill('/build');
   await input.press('Enter');
   await expect(page.getByRole('list', { name: 'Skills in this conversation' })).toContainText('/build-graph');

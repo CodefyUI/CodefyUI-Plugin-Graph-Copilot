@@ -124,7 +124,52 @@ const LABELS: Record<string, string> = {
   optimize_graph_parameters: 'Parameter search',
   list_runs: 'Reading run history',
   get_run: 'Reading run details',
+  load_skill: 'Load skill',
+  read_skill_file: 'Read skill file',
+  list_tabs: 'List tabs',
+  open_graph: 'Open graph',
+  search_examples: 'Search examples',
+  open_example: 'Open example',
+  project_status: 'Project status',
+  project_diff: 'Project diff',
+  project_commit: 'Commit',
+  project_log: 'Project log',
 };
+
+/** `key=value` pairs of a call's scalar arguments, for the mono line under a
+ * tool row. Long values are cut; nested values are named, not printed. */
+export function argSummary(args: unknown, max = 90): string {
+  const record = asRecord(args);
+  if (!record) return '';
+  const parts = Object.entries(record).map(([key, value]) => {
+    if (typeof value === 'string') return `${key}=${truncate(value.replace(/\s+/g, ' '), 32)}`;
+    if (typeof value === 'number' || typeof value === 'boolean') return `${key}=${value}`;
+    if (Array.isArray(value)) return `${key}=[${value.length}]`;
+    return value === null || value === undefined ? '' : `${key}={…}`;
+  }).filter(Boolean);
+  return truncate(parts.join(' '), max);
+}
+
+/** What an edit did, in one line: "+3 nodes · 4 edges · 1 param". */
+export function opsLine(args: unknown): string {
+  const ops = asRecord(args)?.operations;
+  if (!Array.isArray(ops)) return '';
+  const count = (name: string) => ops.filter((op) => asRecord(op)?.op === name).length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const parts: string[] = [];
+  if (count('clear_graph')) parts.push('cleared');
+  if (count('add_node')) parts.push(`+${plural(count('add_node'), 'node')}`);
+  if (count('remove_node')) parts.push(`−${plural(count('remove_node'), 'node')}`);
+  if (count('connect')) parts.push(`+${plural(count('connect'), 'edge')}`);
+  if (count('remove_edge')) parts.push(`−${plural(count('remove_edge'), 'edge')}`);
+  if (count('set_params')) parts.push(plural(count('set_params'), 'param'));
+  return parts.join(' · ');
+}
+
+/** First line of an error, so a row stays one line tall. */
+export function firstLine(text: string): string {
+  return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? '';
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -399,9 +444,9 @@ export function describeStage(stage: ToolStage, active = false): StageDescriptio
       case 'unknown': return unknownResult(label, detail,
         call.name === 'run_graph' && parseJson(result.content)?.status === 'detached'
           ? 'Detached — host run may still be running' : 'Outcome unknown');
-      case 'error': return { label, summary: typeof error === 'string' ? truncate(error, 120) : 'Tool failed', status: 'error', detail };
+      case 'error': return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : 'Tool failed', status: 'error', detail };
     }
-    if (typeof error === 'string') return { label, summary: truncate(error, 120), status: 'error', detail };
+    if (typeof error === 'string') return { label, summary: truncate(firstLine(error), 120), status: 'error', detail };
   }
   const args = asRecord(call.arguments) ?? {};
   switch (call.name) {

@@ -144,7 +144,7 @@ for (const decision of ['Keep graph', 'Clear graph'] as const) {
     await readyPreview(page, 'scenario=clear');
     await openCopilot(page);
     await send(page, 'Clear my graph and start over.');
-    const confirmation = page.getByRole('dialog', { name: 'Clear the current graph?', exact: true });
+    const confirmation = page.getByRole('group', { name: 'Clear the current graph?', exact: true });
     await expect(confirmation).toBeVisible();
     await expect(confirmation).toContainText('3 nodes and 2 edges');
     const before = await snapshot(page);

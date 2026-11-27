@@ -132,7 +132,7 @@ describe('panel navigation owns running work', () => {
       decision = control.opts().callbacks.onRunApproval!({ reason: 'Train', nodeCount: 1, edgeCount: 0,
         nodeTypes: ['Trainer'], timeoutMinutes: 10, device: 'cpu' });
     });
-    expect(screen.getByRole('dialog', { name: 'Run the current graph?' })).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Run the current graph?' })).toBeVisible();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name }));
       await expect(decision).resolves.toBe(false);

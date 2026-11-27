@@ -57,7 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
     openai: 'gpt-5.6-sol',
     'openai-codex': 'gpt-5.6-sol',
     openrouter: '',
-    anthropic: 'claude-sonnet-4-6',
+    anthropic: 'claude-opus-5-5',
     custom: '',
   },
   apiKeys: {},

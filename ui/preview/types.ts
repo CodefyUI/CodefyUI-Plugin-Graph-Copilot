@@ -26,6 +26,8 @@ export interface PreviewSnapshot {
   conversations: unknown[];
   experimentSessions: unknown[];
   widgets: string[];
+  panels: Array<{ id: string; open: boolean; badge: string | null }>;
+  tabs: Array<{ title: string }>;
 }
 
 export interface PreviewControl {

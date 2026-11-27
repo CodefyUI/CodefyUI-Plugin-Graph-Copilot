@@ -301,7 +301,7 @@ describe('ChatView', () => {
       await userEvent.type(textarea, 'run the comparison');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      const dialog = await screen.findByRole('dialog', { name: /run 6 graph executions/i });
+      const dialog = await screen.findByRole('group', { name: /run 6 graph executions/i });
       expect(dialog).toHaveTextContent('3 variants');
       expect(dialog).toHaveTextContent('2 repetitions');
       expect(dialog).toHaveTextContent('write files');
@@ -312,7 +312,7 @@ describe('ChatView', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /approve and run/i }));
       await waitFor(() => expect(decision).toBe(true));
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
 
     it('defaults focus to Cancel and records an explicit rejection', async () => {
@@ -326,13 +326,13 @@ describe('ChatView', () => {
       await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      await screen.findByRole('dialog');
+      await screen.findByRole('group', { name: /run 6 graph executions/i });
       const cancel = screen.getByRole('button', { name: /^cancel$/i });
       expect(cancel).toHaveFocus();
       await userEvent.click(cancel);
 
       await waitFor(() => expect(decision).toBe(false));
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
 
     it('resolves a pending approval as rejected when Stop aborts the run', async () => {
@@ -348,14 +348,15 @@ describe('ChatView', () => {
       await userEvent.type(screen.getByRole('combobox', { name: /message input/i }), 'compare');
       await userEvent.click(screen.getByRole('button', { name: /send message/i }));
 
-      const dialog = await screen.findByRole('dialog');
-      const stop = within(dialog).getByRole('button', { name: /stop generation/i });
+      await screen.findByRole('group', { name: /run 6 graph executions/i });
+      // Stop stays in the composer while an approval card waits in the conversation.
+      const stop = screen.getByRole('button', { name: /stop generation/i });
       expect(screen.getAllByRole('button', { name: /stop generation/i })).toHaveLength(1);
       await userEvent.click(stop);
 
       await waitFor(() => expect(decision).toBe(false));
       expect(aborted).toBe(true);
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /run 6 graph executions/i })).not.toBeInTheDocument();
     });
   });
 });
