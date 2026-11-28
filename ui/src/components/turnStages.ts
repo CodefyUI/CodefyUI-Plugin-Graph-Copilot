@@ -204,6 +204,27 @@ function unknownResult(label: string, detail: string, summary = tr('stage.unknow
 }
 
 /** Never infer a successful batch from its length or receipt order. */
+/** A batch where some operations failed: "1 of 12 operations failed:
+ * connect: <first error>", from the indexed receipt. Null when the receipt
+ * has no readable per-operation results (then the generic row applies). */
+function partialApplyFailure(args: Record<string, unknown>, result: ChatTurn): StageDescription | null {
+  const parsed = parseJson(result.content);
+  const receipts = parsed?.results;
+  const operations = Array.isArray(args.operations) ? args.operations : [];
+  if (!Array.isArray(receipts) || !receipts.length) return null;
+  const failures = receipts.map(asRecord).filter((receipt): receipt is Record<string, unknown> => !!receipt && receipt.ok === false)
+    .sort((a, b) => Number(a.index) - Number(b.index));
+  if (!failures.length) return null;
+  const first = failures[0];
+  const op = asRecord(operations[Number(first.index)])?.op;
+  const error = typeof first.error === 'string' && first.error.trim() ? firstLine(first.error) : tr('stage.toolFailed');
+  const summary = tr('stage.apply.partial', {
+    failed: failures.length, total: Math.max(operations.length, receipts.length),
+    error: typeof op === 'string' ? `${op}: ${error}` : error,
+  });
+  return { label: toolLabel('apply_graph_operations'), summary: truncate(summary, 160), status: 'error', detail: prettyDetail(result.content) };
+}
+
 function describeApply(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
   const label = toolLabel('apply_graph_operations');
   const kinds = opKindCounts(args);
@@ -460,7 +481,13 @@ export function describeStage(stage: ToolStage, active = false, awaiting = false
       case 'unknown': return unknownResult(label, detail,
         call.name === 'run_graph' && parseJson(result.content)?.status === 'detached'
           ? tr('stage.run.detached') : tr('stage.unknown'));
-      case 'error': return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : tr('stage.toolFailed'), status: 'error', detail: errorDetail(error, detail) };
+      case 'error': {
+        if (call.name === 'apply_graph_operations' && typeof error !== 'string') {
+          const partial = partialApplyFailure(asRecord(call.arguments) ?? {}, result);
+          if (partial) return partial;
+        }
+        return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : tr('stage.toolFailed'), status: 'error', detail: errorDetail(error, detail) };
+      }
     }
     if (typeof error === 'string') return { label, summary: truncate(firstLine(error), 120), status: 'error', detail: errorDetail(error, detail) };
   }

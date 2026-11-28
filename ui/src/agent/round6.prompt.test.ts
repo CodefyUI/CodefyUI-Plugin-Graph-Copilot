@@ -89,8 +89,30 @@ describe('P5 and P1 prompt rules', () => {
   });
   it('after a failed run: read, fix, then ask again; never the same graph', () => {
     expect(prompt).toContain('If a run FAILS, read its error');
-    expect(prompt).toContain('Never request the same unchanged graph again');
+    expect(prompt).toContain('Never call it again for the same unchanged graph');
     expect(prompt).toContain('3 runs per turn');
     expect(prompt).not.toMatch(/do not automatically rerun/i);
+  });
+});
+
+describe('R2 (A): the approval card is the confirmation', () => {
+  const prompt = buildSystemPrompt([], graph, 'edit');
+  const approvals = section(prompt, 'Approvals');
+  it('has one Approvals section that says to call the tool and let the card ask', () => {
+    expect(approvals).toContain('that card is the confirmation');
+    expect(approvals).toContain('When the user asked for the action (run, clear, save, commit, write a file), call the tool.');
+    expect(approvals).toContain('Never ask for confirmation in prose first, and never end a turn saying that approval is needed');
+    for (const tool of ['run_graph', 'project_commit', 'save_graph', 'project_write_file']) expect(approvals).toContain(tool);
+  });
+  it('no rule asks for confirmation in prose', () => {
+    expect(prompt).not.toMatch(/fresh confirmation|ask the user to approve|interactive user confirmation|requires its own approval/);
+    expect(prompt).toContain('when asked, call it right away: the editor shows the user an approval card for this exact graph');
+    expect(prompt).toContain('then call run_graph again (the user approves it on the card)');
+  });
+  it('the tool descriptions agree', async () => {
+    const { toolRegistry } = await import('./tools');
+    expect(toolRegistry.get('apply_graph_operations')!.description).toContain('call it directly: the editor shows them an approval card, which is the confirmation (do not ask in prose)');
+    expect(toolRegistry.get('run_graph')!.description).toContain('that card is the confirmation, so call this tool instead of asking in prose');
+    expect(toolRegistry.get('apply_graph_operations')!.description).not.toContain('requires fresh user confirmation');
   });
 });

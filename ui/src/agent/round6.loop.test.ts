@@ -108,7 +108,8 @@ describe('P1: a definite run failure goes back to the model', () => {
     expect(streamChat).toHaveBeenCalledTimes(2);
     const receipt = toolResults(t.requests[1])[0];
     expect(receipt).toContain('sklearn.datasets');
-    expect(receipt).toContain('next_step');
+    expect(JSON.parse(receipt).next_step).toBe('The run failed. Read the error and node_errors, fix the cause in the graph, validate, then call run_graph again (the user approves it on the card). Do not call it again for the same unchanged graph.');
+    expect(receipt).not.toMatch(/ask the user to approve/);
     expect(result.turns.at(-1)?.content).toContain('CSVReader');
     expect(result).toMatchObject({ status: 'incomplete', reason: 'execution_failed', executions: { runs: 1, failedRuns: 1, studies: 0 } });
     expect(result.executionUnknown).toBe(false);
@@ -207,16 +208,21 @@ describe('P2: the validation nudge only covers this turn\'s own errors', () => {
     expect(result).toMatchObject({ status: 'completed', validation: { status: 'not_run' } });
   });
 
-  it('does not nudge after an approved clear even when the rebuilt graph has issues', async () => {
+  it('after an approved clear, a rebuilt graph with issues gets the usual nudge with all its errors', async () => {
+    // The old graph had the same message; after a clear it must not be filtered out as pre-existing.
     const t = setup({ validate: (body) => (body.nodes.length ? { valid: false, errors: ['Missing input on new'] } : { valid: true, errors: [] }) });
+    t.setGraph({ nodes: [{ id: 'new0', type: 'Test' }], edges: [] });
     t.script([
       done([call('c', 'apply_graph_operations', { operations: [{ op: 'clear_graph' }] })]),
       done([call('a', 'apply_graph_operations', { operations: [{ op: 'add_node', node_type: 'Test', ref: 'new' }] })]),
       done([], 'Rebuilt.'),
+      done([], 'Still.'),
+      done([], 'Still.'),
     ]);
     const result = await t.run();
-    expect(streamChat).toHaveBeenCalledTimes(3);
-    expect(result).toMatchObject({ status: 'incomplete', reason: 'validation_issues' });
+    const nudge = t.requests[3].messages.find((message) => typeof message.content === 'string' && message.content.includes('did not pass structural validation'));
+    expect(nudge?.content).toContain('Missing input on new');
+    expect(result).toMatchObject({ status: 'incomplete', reason: 'validation_limit' });
   });
 
   it('lists only errors the turn introduced, and none when every error predates the turn', async () => {

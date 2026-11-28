@@ -82,3 +82,27 @@ describe('a truncated tool error is whole when expanded', () => {
     expect(d.detail?.startsWith('{')).toBe(true);
   });
 });
+
+describe('R2 (B): a partly failed batch says how many failed and the first error', () => {
+  const ops = Array.from({ length: 12 }, (_, index) => (index === 7
+    ? { op: 'connect', source: 'py', source_handle: 'out2', target: 'b', target_handle: 'x' }
+    : { op: 'add_node', node_type: 'Test' }));
+  const receipt = JSON.stringify({
+    results: ops.map((_, index) => (index === 7 ? { index, ok: false, error: "PythonScript has no output 'out2'; outputs: out1" } : { index, ok: true })),
+    refs: {}, node_count: 11, edge_count: 0,
+  });
+  const stage = { call: { id: 'a', name: 'apply_graph_operations', arguments: { operations: ops } }, result: { role: 'tool' as const, content: receipt, toolOutcome: 'error' as const } };
+  it('in English', () => {
+    const d = describeStage(stage);
+    expect(d.status).toBe('error');
+    expect(d.summary).toBe("1 of 12 operations failed: connect: PythonScript has no output 'out2'; outputs: out1");
+  });
+  it('in Traditional Chinese', () => {
+    document.documentElement.lang = 'zh-TW';
+    expect(describeStage(stage).summary).toBe("12 個操作中有 1 個失敗：connect: PythonScript has no output 'out2'; outputs: out1");
+  });
+  it('a refused batch with an error message keeps that message', () => {
+    const d = describeStage({ ...stage, result: { ...stage.result, content: JSON.stringify({ error: 'Malformed batch' }) } });
+    expect(d.summary).toBe('Malformed batch');
+  });
+});

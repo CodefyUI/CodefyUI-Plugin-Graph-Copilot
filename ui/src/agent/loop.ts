@@ -605,10 +605,10 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
               }
               const baseline = baselineErrors;
               const fresh = baseline ? report.errors.filter((error) => !baseline.has(error)) : report.errors;
+              // After an approved clear the old graph is gone, so every error
+              // is this turn's (the pre-edit comparison is skipped above).
               if (report.errors.length && !fresh.length) editsSettled = true;
-              else if (clearApproved) {
-                throw new RunExit('incomplete', 'validation_issues', 'Structural validation reports issues in this run\'s edits. The graph was cleared in this run, so no automatic repair was attempted.');
-              } else {
+              else {
                 if (validationNudges >= MAX_VALIDATION_NUDGES || !fresh.length) {
                   throw new RunExit('incomplete', 'validation_limit', 'Structural validation still reports issues; the bounded repair limit was reached.');
                 }

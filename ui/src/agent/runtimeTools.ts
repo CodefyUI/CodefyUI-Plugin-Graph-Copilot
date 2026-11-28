@@ -288,7 +288,7 @@ async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Pro
     if (context.budget.liveRuns) context.budget.liveRuns.lastFailed = true;
     return json({
       ...receipt,
-      next_step: 'The run failed. Read the error and node_errors, fix the cause in the graph, validate, then ask the user to approve a new run. Do not request the same unchanged graph again.',
+      next_step: 'The run failed. Read the error and node_errors, fix the cause in the graph, validate, then call run_graph again (the user approves it on the card). Do not call it again for the same unchanged graph.',
     }, 'error');
   }
   if (outcome.status !== 'complete') throw new RuntimeToolExit('incomplete', 'execution_failed', 'The host execution did not complete successfully. Inspect its terminal receipt; do not automatically rerun it.');
