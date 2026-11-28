@@ -58,6 +58,7 @@ export function createMockHttp(
   let requestId = 0;
   const requests: MockRequest[] = [];
   const blocked: string[] = [];
+  const seenGraphs = new Set<string>();
   const pending = new Map<number, { descriptor: PendingResponse; release: () => void }>();
   const runPolls = new Map<number, PendingResponse>();
 
@@ -187,6 +188,10 @@ export function createMockHttp(
     const allowed = ['/api/llm/chat', '/api/graph/validate', '/api/llm/models', '/api/llm/codex/status'].includes(url)
       || nativeRead || (listMatch !== null && Number(listMatch[1]) <= 50) || runMatch !== null || eventsRoute || cancelRoute;
     if (!allowed) return reject(request, `unexpected URL ${url}`);
+    // Every graph the mock canvas has held while Copilot was talking to it:
+    // the round-6 loop validates the graph as it was before its first edit.
+    const held = graph();
+    seenGraphs.add(JSON.stringify({ nodes: held.nodes, edges: held.edges }));
     const expectedMethod = ['/api/llm/chat', '/api/graph/validate', '/api/llm/models'].includes(url) || cancelRoute ? 'POST' : 'GET';
     if (request.method !== expectedMethod) return reject(request, `${url} expected ${expectedMethod}, got ${request.method}`);
     if (init?.signal?.aborted) { request.status = 'aborted'; onChange(); throw abortError(); }
@@ -227,11 +232,13 @@ export function createMockHttp(
       if (!Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) return reject(request, 'invalid mock validation body');
       if (manual) await waitForRelease(request, init?.signal);
       const current = graph();
-      if (JSON.stringify({ nodes: payload.nodes, edges: payload.edges }) !== JSON.stringify({ nodes: current.nodes, edges: current.edges })) return reject(request, 'validation did not contain the current mock graph');
+      const sent = JSON.stringify({ nodes: payload.nodes, edges: payload.edges });
+      const isCurrent = sent === JSON.stringify({ nodes: current.nodes, edges: current.edges });
+      if (!isCurrent && !seenGraphs.has(sent)) return reject(request, 'validation did not contain the current mock graph or one it held earlier');
       request.status = 'complete';
       onChange();
       if (scenario.validation === 'unavailable') return json({ error: 'Mock validator unavailable' }, 503);
-      const result = validateSampleGraph(current);
+      const result = validateSampleGraph(isCurrent ? current : { ...current, nodes: payload.nodes, edges: payload.edges } as SampleGraph);
       return json(result);
     }
 

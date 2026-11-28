@@ -134,7 +134,21 @@ export interface WorkspaceTabInfo {
   transient: boolean;
   source: { kind: string; pluginId: string; [key: string]: unknown } | null;
   active: boolean;
+  /** apiVersion >= 7: the tab's unsaved marker, from the same source the tab bar uses. */
+  unsaved?: boolean;
+  /** apiVersion >= 7: the saved graph this tab is bound to, or null. */
+  graph?: { name: string; file: string } | null;
 }
+
+/** apiVersion >= 7. Never opens a dialog and never throws; a refusal is a value. */
+export type WorkspaceSaveResult =
+  | { ok: true; tabId: string; name: string; file: string; created: boolean }
+  | { ok: false; code: 'unknown_tab' | 'read_only' | 'editing_subgraph' | 'needs_name' | 'invalid_name'
+      | 'exists' | 'cross_project' | 'project_changed' | 'failed'; message: string };
+
+export type WorkspaceOpenSavedResult =
+  | { ok: true; tabId: string; alreadyOpen: boolean }
+  | { ok: false; code: 'not_found' | 'unreadable' | 'too_many_tabs' | 'failed'; message: string };
 
 export type WorkspaceSnapshot = (WorkspaceTabInfo & { graph: SerializedGraph }) | { error: 'unknown_tab' };
 
@@ -165,7 +179,7 @@ export interface PluginPanelOptions {
 }
 
 export interface CodefyUIPluginAPI {
-  /** v1 is CodefyUI 1.3.0; 3.2.0 is v5 (workspace); v6 adds the side dock. */
+  /** v1 is CodefyUI 1.3.0; 3.2.0 is v5 (workspace); v6 adds the side dock; v7 adds saveGraph and openSavedGraph. */
   apiVersion: number;
   pluginId: string;
   ui: {
@@ -184,6 +198,10 @@ export interface CodefyUIPluginAPI {
     tabs(): WorkspaceTabInfo[];
     snapshot(tabId?: string): WorkspaceSnapshot;
     onChanged(cb: (event: { type: string; tabId: string; revision: number }) => void): () => void;
+    /** apiVersion >= 7: save a tab through the editor's own save path, without a dialog. */
+    saveGraph?(request: { tabId?: string; name?: string; overwrite?: boolean }): Promise<WorkspaceSaveResult>;
+    /** apiVersion >= 7: open a saved graph the way the Graphs panel does (a bound tab, not a copy). */
+    openSavedGraph?(name: string, options?: { activate?: boolean }): Promise<WorkspaceOpenSavedResult>;
   };
   graph: {
     getGraph(): SerializedGraph;

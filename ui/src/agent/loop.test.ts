@@ -725,8 +725,9 @@ describe('runTurn', () => {
     );
     expect(nudge).toBeDefined();
     expect(nudge!.content as string).toMatch(/Missing required input/);
-    // Validated twice (once per finish attempt); finished exactly once.
-    expect(api.http.fetch).toHaveBeenCalledTimes(2);
+    // Validated once per finish attempt, plus once for the graph as it was
+    // before the edit (P2); finished exactly once.
+    expect(api.http.fetch).toHaveBeenCalledTimes(3);
     expect(state.finished).toBe(1);
   });
 
@@ -835,10 +836,12 @@ describe('runTurn', () => {
 
   it('runnability gate: reports a blocked result when bounded correction attempts stay invalid', async () => {
     const api = makeFakeApi();
-    (api.http.fetch as Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({ valid: false, errors: ['Missing required input x on node n0'] }),
-    });
+    const invalid = { ok: true, json: async () => ({ valid: false, errors: ['Missing required input x on node n0'] }) };
+    // The finish check, then the graph as it was before the edit (P2: valid,
+    // so the issue is this turn's own), then every later finish check.
+    (api.http.fetch as Mock).mockResolvedValue(invalid)
+      .mockResolvedValueOnce(invalid)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) });
     const state = makeCallbacks();
 
     scriptStreamChat([
@@ -851,7 +854,7 @@ describe('runTurn', () => {
     const result = await runTurn({ api, settings: FAKE_SETTINGS, history: [], userText: 'build', callbacks: state.cbs });
 
     expect(streamChat).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 2);
-    expect(api.http.fetch).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 1);
+    expect(api.http.fetch).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 2);
     // The authoritative result overrides model success prose; local metadata
     // remains redacted rather than copying host diagnostic strings.
     expect(result).toMatchObject({ status: 'incomplete', reason: 'validation_limit', validation: { status: 'invalid' } });
@@ -1159,7 +1162,7 @@ describe('runTurn', () => {
     expect(runGraphExperiments).toHaveBeenCalledTimes(1);
     const compiled = (runGraphExperiments as Mock).mock.calls[0][1];
     expect(compiled.variants).toEqual([
-      { id: 'baseline', label: 'Baseline', operations: [] },
+      { id: 'baseline', label: 'Baseline (current): n0.channels=1', operations: [] }, // P6
       {
         id: 'optimizer-grid-001',
         label: 'Grid 1: n0.channels=2',

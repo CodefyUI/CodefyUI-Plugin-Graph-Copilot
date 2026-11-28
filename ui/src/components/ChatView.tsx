@@ -684,7 +684,7 @@ export function ChatView({
             <TargetLine target={experimentApproval.target} t={t} />
             <p className="gcp-approval-lead">{experimentApproval.hypothesis}</p>
             <p className="gcp-approval-facts">
-              {[t('approve.study.variants', { count: experimentApproval.variantCount }),
+              {[t(experimentApproval.includesBaseline ? 'approve.study.variantsWithBaseline' : 'approve.study.variants', { count: experimentApproval.variantCount }),
                 t('approve.study.repetitions', { count: experimentApproval.repetitions }),
                 t('approve.study.concurrency', { count: experimentApproval.concurrency }),
                 t('approve.study.cap', { minutes: experimentApproval.runTimeoutMinutes }),

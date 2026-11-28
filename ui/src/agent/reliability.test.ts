@@ -63,6 +63,16 @@ function setup() {
   const run = (extra: Record<string, unknown> = {}) => runTurn({ api, settings, callbacks, history: [], userText: 'build', runId: 'run-test', ...extra } as Parameters<typeof runTurn>[0]);
   return { api, callbacks, requests, script, run, graph: () => graph };
 }
+/** Validation that reports `errors` only for graphs this turn edited: the
+ * graph before the turn's first edit (the single node "old") is valid, so the
+ * errors count as this turn's own (P2). */
+function invalidAfterEdits(fetch: CodefyUIPluginAPI['http']['fetch'], errors: string[]) {
+  vi.mocked(fetch).mockImplementation(async (_url, init) => {
+    const nodes = (JSON.parse(String(init?.body ?? '{}')).nodes ?? []) as Array<{ id: string }>;
+    const edited = nodes.some((node) => node.id !== 'old');
+    return { ok: true, json: async () => (edited ? { valid: false, errors } : { valid: true, errors: [] }) } as Response;
+  });
+}
 function assertPairs(result: TurnResult) {
   for (let i = 0; i < result.turns.length; i++) {
     const turn = result.turns[i];
@@ -366,22 +376,25 @@ describe('validation boundaries', () => {
     expect(streamChat).toHaveBeenCalledTimes(2);
   });
   it('invalid final snapshot at the nudge limit is still validated and incomplete', async () => {
-    const t = setup(); vi.mocked(t.api.http.fetch).mockResolvedValue({ ok: true, json: async () => ({ valid: false, errors: ['required input'] }) } as Response);
+    const t = setup(); invalidAfterEdits(t.api.http.fetch, ['required input']);
     t.script([done([call('one')]), ...Array.from({ length: MAX_VALIDATION_NUDGES + 1 }, () => done())]);
     const result = await t.run();
     expect(result).toMatchObject({ status: 'incomplete', validation: { status: 'invalid' } });
-    expect(t.api.http.fetch).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 1);
+    // One finish check per attempt, plus one read of the pre-edit graph (P2).
+    expect(t.api.http.fetch).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 2);
     expect(streamChat).toHaveBeenCalledTimes(MAX_VALIDATION_NUDGES + 2);
   });
   it('successful corrective edits validate the last graph, not the first graph', async () => {
     const t = setup(); vi.mocked(t.api.http.fetch)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: false, errors: ['required input'] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) } as Response)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ valid: true, errors: [] }) } as Response);
     t.script([done([call('one')]), done(), done([call('fix')]), done()]);
     const result = await t.run();
     expect(result.status).toBe('completed');
     const bodies = vi.mocked(t.api.http.fetch).mock.calls.map(([, init]) => JSON.parse(init!.body as string));
-    expect(bodies[0].nodes).toHaveLength(2); expect(bodies[1].nodes).toHaveLength(3);
+    // Finish check, the pre-edit graph (P2), then the finish check after the fix.
+    expect(bodies[0].nodes).toHaveLength(2); expect(bodies[1].nodes).toHaveLength(1); expect(bodies[2].nodes).toHaveLength(3);
   });
   it('manual changes during validation produce stale and no repair', async () => {
     const t = setup(); vi.mocked(t.api.http.fetch).mockImplementation(async () => { t.graph().nodes.push({ id: 'manual' }); return { ok: true, json: async () => ({ valid: true, errors: [] }) } as Response; });
@@ -413,7 +426,7 @@ describe('validation boundaries', () => {
   });
 
   it('manual edits before a repair write invalidate the bounded repair authority', async () => {
-    const t = setup(); vi.mocked(t.api.http.fetch).mockResolvedValue({ ok: true, json: async () => ({ valid: false, errors: ['required input'] }) } as Response);
+    const t = setup(); invalidAfterEdits(t.api.http.fetch, ['required input']);
     t.script([done([call('one')]), done(), (handlers) => { t.graph().nodes.push({ id: 'manual' }); handlers.onDone(done([call('fix')])); }]);
     const result = await t.run();
     expect(result).toMatchObject({ status: 'incomplete', validation: { status: 'stale' } });
@@ -421,7 +434,7 @@ describe('validation boundaries', () => {
     assertPairs(result);
   });
   it('repair nudges never authorize destructive edits of unrelated existing nodes', async () => {
-    const t = setup(); vi.mocked(t.api.http.fetch).mockResolvedValue({ ok: true, json: async () => ({ valid: false, errors: ['required input on old'] }) } as Response);
+    const t = setup(); invalidAfterEdits(t.api.http.fetch, ['required input on old']);
     t.script([done([call('one')]), done(), done([call('fix', 'apply_graph_operations', { operations: [{ op: 'remove_node', node_id: 'old' }] })])]);
     const result = await t.run();
     expect(result).toMatchObject({ status: 'incomplete', reason: 'repair_scope', appliedOps: 1 });
@@ -434,7 +447,7 @@ describe('validation boundaries', () => {
     [{ op: 'add_node', node_type: 'Unknown', ref: 'old' }, { op: 'remove_node', node_id: 'old' }],
     [{ op: 'connect', source: 'new0', source_handle: 'out', target: 'old', target_handle: 'in' }],
   ].map((operations) => ({ operations })))('repair cannot promote unrelated existing nodes through aliases or source edges $operations', async ({ operations }) => {
-    const t = setup(); vi.mocked(t.api.http.fetch).mockResolvedValue({ ok: true, json: async () => ({ valid: false, errors: ['required input'] }) } as Response);
+    const t = setup(); invalidAfterEdits(t.api.http.fetch, ['required input']);
     t.script([done([call('one')]), done(), done([call('bad-fix', 'apply_graph_operations', { operations })])]);
     const result = await t.run();
     expect(result).toMatchObject({ status: 'incomplete', reason: 'repair_scope', appliedOps: 1 });

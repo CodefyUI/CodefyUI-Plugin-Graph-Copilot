@@ -22,8 +22,20 @@ export interface ContextSkill {
   source: string;
 }
 
+export interface ProjectContext {
+  dir: string;
+  name: string;
+  graphs: string[];
+  /** Round 6 hosts: whether the project is a git repository. */
+  git?: boolean;
+  /** Round 6 hosts: "dir" (one file per node) or "file" (one file per graph). */
+  graph_format?: string;
+  /** Round 6 hosts: the project's mods (`mods/nodes`): trust state and node names. */
+  mods?: { state: string; nodes: string[] };
+}
+
 export interface AgentContext {
-  project: { dir: string; name: string; graphs: string[] } | null;
+  project: ProjectContext | null;
   instructions: { path: string; content: string; truncated: boolean } | null;
   /** The skills the agent may use: enabled, valid, not shadowed. */
   skills: ContextSkill[];
@@ -71,9 +83,14 @@ function contextSkill(value: unknown): ContextSkill | null {
 
 export function parseAgentContext(data: unknown): AgentContext | null {
   if (!isRecord(data) || !Array.isArray(data.skills)) return null;
-  const project = isRecord(data.project) && typeof data.project.name === 'string'
-    ? { dir: str(data.project.dir), name: data.project.name, graphs: strings(data.project.graphs) }
-    : null;
+  let project: ProjectContext | null = null;
+  if (isRecord(data.project) && typeof data.project.name === 'string') {
+    const raw = data.project;
+    project = { dir: str(raw.dir), name: raw.name as string, graphs: strings(raw.graphs) };
+    if (typeof raw.git === 'boolean') project.git = raw.git;
+    if (typeof raw.graph_format === 'string') project.graph_format = raw.graph_format;
+    if (isRecord(raw.mods) && typeof raw.mods.state === 'string') project.mods = { state: raw.mods.state, nodes: strings(raw.mods.nodes) };
+  }
   const instructions = isRecord(data.instructions) && typeof data.instructions.content === 'string'
     ? { path: str(data.instructions.path, 'AGENTS.md'), content: data.instructions.content, truncated: data.instructions.truncated === true }
     : null;

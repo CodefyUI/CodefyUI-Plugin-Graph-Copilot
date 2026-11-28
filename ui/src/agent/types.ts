@@ -27,6 +27,13 @@ export interface RunSummary {
   hostRunId?: string;
   appliedOps: number;
   failedOps: number;
+  /** Failed operations a later edit in the same turn made good (the graph
+   * validated afterwards). Absent when nothing was corrected. */
+  correctedOps?: number;
+  /** Host executions this turn dispatched; absent when none. */
+  executions?: { runs: number; failedRuns: number; studies: number; runIds: string[] };
+  /** Some dispatched execution has no known outcome (detached, stopped, lost). */
+  executionUnknown?: boolean;
   validation: ValidationReport;
 }
 

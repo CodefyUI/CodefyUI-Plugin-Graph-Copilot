@@ -157,6 +157,15 @@ export function opsLine(args: unknown): string {
   return parts.join(' · ');
 }
 
+/** P4: the row shows the error's first line; expanding it shows the whole
+ * error first, then the receipt (which may be cut at 4000 characters). */
+function errorDetail(error: unknown, detail: string): string {
+  if (typeof error !== 'string' || !error.trim()) return detail;
+  // A short one-line error is already whole in the row's summary.
+  if (error.length <= 120 && !error.includes('\n')) return detail;
+  return `${truncate(error, 4000)}\n\n${detail}`;
+}
+
 /** First line of an error, so a row stays one line tall. */
 export function firstLine(text: string): string {
   return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? '';
@@ -451,9 +460,9 @@ export function describeStage(stage: ToolStage, active = false, awaiting = false
       case 'unknown': return unknownResult(label, detail,
         call.name === 'run_graph' && parseJson(result.content)?.status === 'detached'
           ? tr('stage.run.detached') : tr('stage.unknown'));
-      case 'error': return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : tr('stage.toolFailed'), status: 'error', detail };
+      case 'error': return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : tr('stage.toolFailed'), status: 'error', detail: errorDetail(error, detail) };
     }
-    if (typeof error === 'string') return { label, summary: truncate(firstLine(error), 120), status: 'error', detail };
+    if (typeof error === 'string') return { label, summary: truncate(firstLine(error), 120), status: 'error', detail: errorDetail(error, detail) };
   }
   const args = asRecord(call.arguments) ?? {};
   switch (call.name) {

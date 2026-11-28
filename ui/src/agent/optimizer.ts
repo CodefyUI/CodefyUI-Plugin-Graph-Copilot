@@ -430,7 +430,11 @@ export function compileParameterOptimizer(
 
   const totalDomainAssignments = bindings.reduce((product, binding) => product * binding.domain.length, 1);
   const baselineIndex = baselineDomainIndex(bindings);
-  const candidateSlots = MAX_OPTIMIZER_VARIANTS - (parsed.includeBaseline ? 1 : 0);
+  // P6: when a grid contains the current values, that cell IS the baseline
+  // row and is measured in the same study, whatever include_baseline says.
+  const baselineFromGrid = parsed.strategy === 'grid' && baselineIndex !== undefined;
+  const includeBaseline = parsed.includeBaseline || baselineFromGrid;
+  const candidateSlots = MAX_OPTIMIZER_VARIANTS - (includeBaseline ? 1 : 0);
   let domainIndices: number[];
   let plannerSeed: number | undefined;
 
@@ -483,8 +487,14 @@ export function compileParameterOptimizer(
     throw new Error('optimizer search space contains no assignment different from the current graph baseline');
   }
 
-  const baselineVariant = parsed.includeBaseline
-    ? [{ id: 'baseline', label: 'Baseline', operations: [] as GraphOp[] }]
+  const baselineVariant = includeBaseline
+    ? [{
+      id: 'baseline',
+      label: baselineFromGrid
+        ? `Baseline (current): ${bindings.map((binding) => `${binding.nodeId}.${binding.paramName}=${JSON.stringify(binding.baselineValue)}`).join(', ')}`
+        : 'Baseline',
+      operations: [] as GraphOp[],
+    }]
     : [];
   const prefix = parsed.strategy === 'grid' ? 'grid' : 'random';
   const candidateVariants = compiledAssignments.map(({ assignment }, index) => ({
@@ -524,7 +534,7 @@ export function compileParameterOptimizer(
     prngVersion: parsed.strategy === 'seeded_random' ? PARAMETER_OPTIMIZER_PRNG_VERSION : undefined,
     plannerSeed,
     seedDescription: PLANNER_SEED_DESCRIPTION,
-    includesBaseline: parsed.includeBaseline,
+    includesBaseline: includeBaseline,
     totalDomainAssignments,
     baselineAssignmentExcluded: baselineIndex !== undefined,
     generatedCandidateCount: candidateVariants.length,

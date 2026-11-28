@@ -1,5 +1,5 @@
 /** Read-only structural validation of the live canvas (`POST /api/graph/validate`). */
-import type { CodefyUIPluginAPI } from '../types/codefyui';
+import type { CodefyUIPluginAPI, SerializedGraph } from '../types/codefyui';
 import { redactToolResultForContext } from './historyRedaction';
 import { awaitWithSignal, comparisonSnapshot, isAbortError, isRecord, throwIfAborted } from './toolGuards';
 import type { ValidationReport } from './types';
@@ -60,5 +60,36 @@ export async function validateCurrentGraph(api: CodefyUIPluginAPI, signal?: Abor
     return JSON.parse(safe) as CurrentGraphValidation;
   } finally {
     try { unsubscribe?.(); } catch { /* listener cleanup is best effort */ }
+  }
+}
+
+/** The structural errors of a graph that is not on the canvas (for example the
+ * graph as it was before this turn's edits), or null when the host could not
+ * say. Read-only; used only to tell pre-existing issues from new ones. */
+export async function validationErrorsOf(api: CodefyUIPluginAPI, graph: SerializedGraph, signal?: AbortSignal): Promise<Set<string> | null> {
+  throwIfAborted(signal);
+  const nodes = graph.nodes.filter((node) => node.type !== 'note');
+  if (!nodes.length) return new Set();
+  const ids = new Set(nodes.map((node) => node.id));
+  const edges = graph.edges.filter((edge) => typeof edge.source === 'string' && typeof edge.target === 'string' && ids.has(edge.source) && ids.has(edge.target));
+  try {
+    const response = await awaitWithSignal(api.http.fetch('/api/graph/validate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodes, edges, presets: graph.presets ?? [] }), signal,
+    }), signal);
+    throwIfAborted(signal);
+    if (!response.ok) return null;
+    const data: unknown = await awaitWithSignal(response.json(), signal);
+    throwIfAborted(signal);
+    if (!isRecord(data) || typeof data.valid !== 'boolean' || !Array.isArray(data.errors)) return null;
+    // Compare the same redacted text the finish check produced.
+    const safe = redactToolResultForContext({ id: 'validation-gate', name: 'validate_graph', arguments: {} },
+      JSON.stringify({ errors: data.errors.filter((error): error is string => typeof error === 'string') }), api, [{ graph, definitions: api.graph.getNodeDefinitions() }]);
+    const parsed = JSON.parse(safe) as { errors?: unknown };
+    return new Set(Array.isArray(parsed.errors) ? parsed.errors.filter((error): error is string => typeof error === 'string') : []);
+  } catch (error) {
+    throwIfAborted(signal);
+    if (isAbortError(error)) throw error;
+    return null;
   }
 }

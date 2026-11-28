@@ -95,8 +95,21 @@ export interface TurnState {
   /** The exact receipt last journaled for this call. */
   rawReceipt(): string | undefined;
   addRoundOps(text: string): void;
+  /** Operation kinds (add_node, connect, ...) that failed and have not been
+   * followed by a successful operation of the same kind in a later batch. */
+  readonly failedOpKinds?: Set<string>;
   /** Tabs this turn opened (open_graph, open_example); approval cards say so. */
   readonly openedTabs: Set<string>;
+}
+
+/** Per-turn execution limits, shared by every runtime tool call of the turn. */
+export interface TurnBudget {
+  /** Study executions left (16 per turn). */
+  remaining: number;
+  /** Live runs dispatched this turn; `lastFailed` when the latest one failed definitely. */
+  liveRuns?: { used: number; lastFailed: boolean };
+  /** Semantic fingerprints of graphs whose live run failed this turn. */
+  failedGraphs?: Set<string>;
 }
 
 export interface ToolContext extends ToolEnvironment {
@@ -106,7 +119,7 @@ export interface ToolContext extends ToolEnvironment {
   cancelSignal?: AbortSignal;
   callbacks: TurnCallbacks;
   turn: TurnState;
-  budget: { remaining: number };
+  budget: TurnBudget;
   phase(value: RunPhase): void;
   /** Journal this call's receipt; `terminal: false` keeps it pending. */
   record(content: string, outcome: ToolOutcome, terminal?: boolean): void;

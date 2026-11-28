@@ -140,6 +140,13 @@ Malformed batches are rejected in full before host dispatch. The host validates 
       throw new RunExit('incomplete', 'receipt_unknown', 'The host returned missing or invalid indexed receipts. Changes may have occurred; do not retry.');
     }
     ctx.record(turn.rawReceipt()!, review.failed ? 'error' : 'completed');
+    // P4: a failed operation kind counts as corrected only by a successful
+    // operation of the same kind in a LATER batch (never by layout alone).
+    const failedKinds = turn.failedOpKinds;
+    if (failedKinds) {
+      operations.forEach((op, index) => { if (review.byIndex[index]?.ok === true) failedKinds.delete(op.op); });
+      operations.forEach((op, index) => { if (review.byIndex[index]?.ok === false) failedKinds.add(op.op); });
+    }
     if (review.failed) ctx.markIssue();
     if (review.applied > 0) {
       rememberAffectedNodes(operations, review, turn.affectedNodes);
