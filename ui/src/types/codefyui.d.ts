@@ -136,8 +136,9 @@ export interface WorkspaceTabInfo {
   active: boolean;
   /** apiVersion >= 7: the tab's unsaved marker, from the same source the tab bar uses. */
   unsaved?: boolean;
-  /** apiVersion >= 7: the saved graph this tab is bound to, or null. */
-  graph?: { name: string; file: string } | null;
+  /** apiVersion >= 7: the saved graph this tab is bound to, or null. Named
+   * `savedGraph` because `snapshot()` already uses `graph` for the document. */
+  savedGraph?: { name: string; file: string } | null;
 }
 
 /** apiVersion >= 7. Never opens a dialog and never throws; a refusal is a value. */

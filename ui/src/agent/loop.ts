@@ -115,8 +115,8 @@ function activeTabInfo(api: CodefyUIPluginAPI): ActiveTabInfo | null {
     return {
       title: active.title,
       ...(typeof active.unsaved === 'boolean' ? { unsaved: active.unsaved } : {}),
-      ...(active.graph === null || (isRecord(active.graph) && typeof active.graph.name === 'string')
-        ? { graph: active.graph ? { name: active.graph.name, file: String(active.graph.file ?? '') } : null } : {}),
+      ...(active.savedGraph === null || (isRecord(active.savedGraph) && typeof active.savedGraph.name === 'string')
+        ? { graph: active.savedGraph ? { name: active.savedGraph.name, file: String(active.savedGraph.file ?? '') } : null } : {}),
     };
   } catch { return null; }
 }

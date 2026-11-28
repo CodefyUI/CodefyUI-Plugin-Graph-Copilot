@@ -45,7 +45,7 @@ export const saveGraphTool: ToolDefinition = {
     const active = workspace.tabs().find((tab) => tab.active);
     if (!active) { ctx.fail('No tab is active, so there is nothing to save.'); return; }
     if (active.readOnly) { ctx.fail(`The tab "${active.title}" is read-only and cannot be saved.`); return; }
-    const bound = active.graph ?? null;
+    const bound = active.savedGraph ?? null;
     const requested = typeof args.name === 'string' ? args.name.trim() : '';
     const name = requested || bound?.name || '';
     if (!name) { ctx.fail('This tab is not bound to a saved graph, so saving needs a "name". Ask the user what to call it.'); return; }

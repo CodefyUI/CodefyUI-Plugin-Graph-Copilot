@@ -175,8 +175,15 @@ export const projectWriteFileTool: ToolDefinition = {
       expected = file.sha256;
       before = file.content;
     } else if (current.error.code !== 'path_not_found') {
-      ctx.fail(`"${path}" could not be checked before writing: ${current.error.message} Nothing was written.`);
-      return;
+      // The host refused the path itself (for example invalid_path or
+      // path_not_readable): its words, its code, no retry.
+      return {
+        content: JSON.stringify({
+          written: false, error: current.error.message, ...(current.error.code ? { code: current.error.code } : {}),
+          note: 'The host refused this path before anything was written. Report its message to the user; do not retry under another path.',
+        }),
+        outcome: 'error',
+      };
     }
     if (before !== null && before === content) {
       return { content: JSON.stringify({ path, unchanged: true, note: 'The file already has exactly this content; nothing was written.' }), outcome: 'completed' };

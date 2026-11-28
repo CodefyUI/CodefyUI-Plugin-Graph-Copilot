@@ -196,7 +196,7 @@ const api: CodefyUIPluginAPI = {
   ...(hostVersion >= 5 ? { workspace: {
     tabs: () => [
       { tabId: 'tab-sample', title: 'Sample graph', revision: graph.inspect().revision, readOnly: false, transient: false, source: null, active: extraTabs.length === 0,
-        ...(hostVersion >= 7 ? { unsaved: true, graph: sampleBinding } : {}) },
+        ...(hostVersion >= 7 ? { unsaved: true, savedGraph: sampleBinding } : {}) },
       ...extraTabs.map((tab, index) => ({ tabId: tab.tabId, title: tab.title, revision: 0, readOnly: false, transient: tab.transient, source: null, active: index === extraTabs.length - 1 })),
     ],
     snapshot(tabId?: string) {

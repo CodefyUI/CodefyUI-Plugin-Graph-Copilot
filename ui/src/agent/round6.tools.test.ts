@@ -35,7 +35,7 @@ function host(options: HostOptions = {}) {
   const fetches: Array<{ url: string; init?: RequestInit }> = [];
   const tabs: WorkspaceTabInfo[] = options.tabs ?? [{
     tabId: 't1', title: 'Iris', revision: 1, readOnly: false, transient: false, source: null, active: true,
-    ...(options.apiVersion === 6 ? {} : { unsaved: true, graph: null }),
+    ...(options.apiVersion === 6 ? {} : { unsaved: true, savedGraph: null }),
   }];
   const saveGraph = vi.fn(async (request: { tabId?: string; name?: string; overwrite?: boolean }) => ({
     ok: true as const, tabId: request.tabId ?? 't1', name: request.name ?? 'iris', file: `graphs/${request.name ?? 'iris'}`, created: !request.overwrite,
@@ -159,7 +159,7 @@ describe('P7 save_graph and open_graph', () => {
   });
 
   it('saves a bound tab in place with a "save changes" card', async () => {
-    const t = host({ tabs: [{ tabId: 't1', title: 'iris', revision: 2, readOnly: false, transient: false, source: null, active: true, unsaved: true, graph: { name: 'iris', file: 'graphs/iris' } }] });
+    const t = host({ tabs: [{ tabId: 't1', title: 'iris', revision: 2, readOnly: false, transient: false, source: null, active: true, unsaved: true, savedGraph: { name: 'iris', file: 'graphs/iris' } }] });
     t.script([done([call('s', 'save_graph', {})]), done()]);
     await t.run();
     expect(t.cards[0]).toMatchObject({ inPlace: true, name: 'iris', overwrites: null });
@@ -238,7 +238,7 @@ describe('P7 save_graph and open_graph', () => {
     const t = host();
     t.script([done([call('l', 'list_tabs')]), done()]);
     await t.run();
-    expect(t.results()[0].tabs[0]).toMatchObject({ unsaved: true, graph: null });
+    expect(t.results()[0].tabs[0]).toMatchObject({ unsaved: true, saved_graph: null });
     expect(t.results()[0].unsaved_state).toBeUndefined();
     const old = host({ apiVersion: 6 });
     old.script([done([call('l', 'list_tabs')]), done()]);
@@ -357,6 +357,16 @@ describe('P9 project files', () => {
     await t.run();
     expect(t.cards[0]).toMatchObject({ agentInstructions: true });
     expect(t.results()[0]).toMatchObject({ agent_instructions: true });
+  });
+
+  it('a path the host refuses on the pre-write read is reported in its words, with no card', async () => {
+    const message = "Invalid path 'notes/con.md': 'con' is a name Windows keeps for a device, so no file can be called that. Rename the file and try again.";
+    const t = host({ routes: { '/api/agent/files*': () => json({ detail: { code: 'invalid_path', message } }, 400) } });
+    t.script([done([call('w', 'project_write_file', { path: 'notes/con.md', content: 'x\n' })]), done()]);
+    await t.run();
+    expect(t.cards).toEqual([]);
+    expect(t.results()[0]).toMatchObject({ written: false, error: message, code: 'invalid_path' });
+    expect(t.fetches.some((item) => item.init?.method === 'PUT')).toBe(false);
   });
 
   it('shows the host\'s refusal as it is and does not retry', async () => {
