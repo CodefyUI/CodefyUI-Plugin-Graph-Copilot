@@ -33,7 +33,17 @@ export interface MockHttpOptions {
   skills?: MockSkills;
   /** A project-mode host on a git repository (`project=1`). */
   gitProject?: boolean;
+  /** Round 6: a CodefyUI 3.5.0 host with `/api/agent/data-files` and `/api/agent/files`. */
+  agentFiles?: boolean;
 }
+
+/** The mock project's files for the round-6 endpoints. */
+const MOCK_FILES: Record<string, string> = {
+  'AGENTS.md': 'Keep graphs small.\n',
+  'data/train.csv': 'x,label\n0.1,0\n0.9,1\n0.4,0\n',
+  'notes/plan.md': '# Plan\n',
+};
+const sha = (text: string) => `mock-sha-${text.length}`;
 
 const encoder = new TextEncoder();
 const event = (value: unknown): Uint8Array => encoder.encode(`data: ${JSON.stringify(value)}\n\n`);
@@ -96,11 +106,26 @@ export function createMockHttp(
         };
         cleanup = () => { pending.delete(request.id); signal?.removeEventListener('abort', abort); };
         if (signal?.aborted) { abort(); return; }
-        controller.enqueue(event({ type: 'text_delta', text: reply.text }));
+        if (reply.streamError) {
+          controller.enqueue(event({ type: 'error', message: reply.streamError }));
+          controller.close();
+          request.status = 'complete';
+          onChange();
+          return;
+        }
+        if (reply.reasoning) {
+          // The text is a placeholder the plugin must never show.
+          controller.enqueue(event({ type: 'reasoning_delta', text: 'mock hidden reasoning' }));
+          controller.enqueue(event({ type: 'reasoning_delta', text: 'mock hidden reasoning' }));
+        } else controller.enqueue(event({ type: 'text_delta', text: reply.text }));
         if (reply.pending) {
           pending.set(request.id, {
             descriptor: { id: request.id, url: request.url, kind: 'stream' },
-            release: () => { cleanup(); controller.enqueue(done()); controller.close(); request.status = 'complete'; onChange(); },
+            release: () => {
+              cleanup();
+              if (reply.reasoning) controller.enqueue(event({ type: 'text_delta', text: reply.text }));
+              controller.enqueue(done()); controller.close(); request.status = 'complete'; onChange();
+            },
           });
           signal?.addEventListener('abort', abort, { once: true });
           onChange();
@@ -164,6 +189,44 @@ export function createMockHttp(
       if (!options.skills) return json({ detail: 'Not Found' }, 404);
       const answer = options.skills.handle(request.method, url, payload);
       return answer ? json(answer[1], answer[0]) : reject(request, `unexpected skills route ${request.method} ${url}`);
+    }
+    if (url.startsWith('/api/agent/files') || url === '/api/agent/data-files') {
+      request.status = 'complete';
+      onChange();
+      if (!options.agentFiles) return json({ detail: 'Not Found' }, 404);
+      if (url === '/api/agent/data-files') {
+        return json({
+          bundled: [{ path: 'data/samples/iris.csv', size: 4551, kind: 'csv', columns: ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species'], rows: 150 }],
+          project: [{ path: 'data/train.csv', size: MOCK_FILES['data/train.csv'].length, kind: 'csv', columns: ['x', 'label'], rows: 3 }],
+          uploads: [],
+        });
+      }
+      if (request.method === 'PUT') {
+        const body = JSON.parse(String(init?.body)) as { path: string; content: string; expected_sha256: string | null };
+        const existing = MOCK_FILES[body.path];
+        if ((existing === undefined) !== (body.expected_sha256 === null) || (existing !== undefined && sha(existing) !== body.expected_sha256)) {
+          return json({ detail: { code: 'file_changed', message: 'The file changed since it was read.', current_sha256: existing === undefined ? null : sha(existing) } }, 409);
+        }
+        MOCK_FILES[body.path] = body.content;
+        return json({ path: body.path, sha256: sha(body.content), created: existing === undefined, mods_consent_required: body.path.startsWith('mods/'), agent_instructions: body.path.toLowerCase() === 'agents.md' });
+      }
+      const path = new URLSearchParams(url.split('?')[1] ?? '').get('path') ?? '';
+      const children = Object.keys(MOCK_FILES).filter((file) => (path ? file.startsWith(`${path}/`) : true));
+      if (MOCK_FILES[path] !== undefined) {
+        const content = MOCK_FILES[path];
+        return json({ path, content, sha256: sha(content), truncated: false, size: content.length, binary: false });
+      }
+      if (!path || children.length) {
+        const depth = path ? path.split('/').length + 1 : 1;
+        const names = [...new Set(children.map((file) => file.split('/').slice(0, depth).join('/')))];
+        return json({ entries: names.map((name) => ({ path: name, kind: MOCK_FILES[name] !== undefined ? 'file' : 'dir', size: MOCK_FILES[name]?.length ?? null })), truncated: false });
+      }
+      return json({ detail: { code: 'path_not_found', message: `Nothing at ${path}.` } }, 404);
+    }
+    if (url === '/api/graph/list' && request.method === 'GET') {
+      request.status = 'complete';
+      onChange();
+      return json([{ name: 'train', file: 'train', modified: 1 }]);
     }
     if (url === '/api/git/status' && request.method === 'GET') {
       request.status = 'complete';

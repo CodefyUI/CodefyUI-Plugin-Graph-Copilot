@@ -1,7 +1,8 @@
 import type { GraphOp } from '../src/types/codefyui';
 import type { WireToolCall } from '../src/llm/client';
 
-export type ScenarioId = 'skills' | 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history' | 'setup-required' | 'empty-graph' | 'unavailable-context' | 'lab-evidence';
+export type ScenarioId = 'skills' | 'ask' | 'edit' | 'partial-error' | 'http-error' | 'pending' | 'clear' | 'invalid-validation' | 'unavailable-validation' | 'seed' | 'native-run' | 'native-run-reservation' | 'ask-run' | 'ask-experiments' | 'ask-optimizer' | 'ask-run-history' | 'setup-required' | 'empty-graph' | 'unavailable-context' | 'lab-evidence'
+  | 'r6-save' | 'r6-save-replace' | 'r6-write-mods' | 'r6-write-agents' | 'r6-read-data' | 'r6-reasoning' | 'r6-corrected' | 'r6-model-error';
 
 export interface ChatReply {
   text: string;
@@ -9,6 +10,10 @@ export interface ChatReply {
   httpError?: number;
   // Starts a partial stream, then waits for an explicit release or AbortSignal.
   pending?: boolean;
+  /** Round 6: stream reasoning_delta frames before the text (a v7 host). */
+  reasoning?: boolean;
+  /** Round 6: answer with a stream error event carrying this message. */
+  streamError?: string;
 }
 
 export interface Scenario {
@@ -22,6 +27,8 @@ export interface Scenario {
   needsSkills?: boolean;
   /** The project's AGENTS.md, for a project-mode host. */
   instructions?: string;
+  /** Round 6: a CodefyUI 3.5.0 host (plugin API v7, agent file endpoints). */
+  needsV7?: boolean;
 }
 
 const tool = (id: string, name: string, args: Record<string, unknown> = {}): WireToolCall => ({ id, name, arguments: args });
@@ -43,7 +50,76 @@ const editReplies = (operations: GraphOp[] = EDIT_OPERATIONS): ChatReply[] => [
   { text: 'Added **Normalize** with `scale: 0.5` between Dataset and Preview. The graph’s structure is validated; this does not execute the pipeline.' },
 ];
 
+const R6 = { mode: 'edit' as const, validation: 'actual' as const, needsSkills: true, needsV7: true, instructions: 'Keep graphs small.' };
+
 export const SCENARIOS: Scenario[] = [
+  {
+    ...R6, id: 'r6-save', label: 'Round 6: save the tab as a new graph',
+    prompt: 'Save this graph as iris-mlp.',
+    replies: [
+      { text: 'I’ll save the active tab as **iris-mlp**.', tools: [tool('r6-save', 'save_graph', { name: 'iris-mlp' })] },
+      { text: 'Saved the tab as **iris-mlp**; the tab is now bound to it.' },
+    ],
+  },
+  {
+    ...R6, id: 'r6-save-replace', label: 'Round 6: replace an existing saved graph',
+    prompt: 'Save this over the train graph; I agree to replace it.',
+    replies: [
+      { text: 'You agreed to replace **train**, so I’ll save over it.', tools: [tool('r6-replace', 'save_graph', { name: 'train', overwrite: true })] },
+      { text: 'Replaced **train** with this tab.' },
+    ],
+  },
+  {
+    ...R6, id: 'r6-write-mods', label: 'Round 6: write a project node into mods/nodes',
+    prompt: 'Add a Scale node to this project.',
+    replies: [
+      { text: 'I’ll write the node file; it loads only after you trust the project’s mods.', tools: [tool('r6-write', 'project_write_file', {
+        path: 'mods/nodes/scale.py',
+        content: 'from app.core.node_base import BaseNode\n\n\nclass ScaleNode(BaseNode):\n    NODE_NAME = "Scale"\n    CATEGORY = "Project"\n\n    def execute(self, inputs, params):\n        return {"out": inputs["x"] * params.get("factor", 2.0)}\n',
+      })] },
+      { text: 'Wrote `mods/nodes/scale.py`. It is **not loaded yet**: agree to the trust prompt and press Reload Nodes.' },
+    ],
+  },
+  {
+    ...R6, id: 'r6-write-agents', label: 'Round 6: change AGENTS.md',
+    prompt: 'Add a rule to AGENTS.md: always seed runs with 7.',
+    replies: [
+      { text: 'I’ll add the rule to AGENTS.md.', tools: [tool('r6-agents', 'project_write_file', { path: 'AGENTS.md', content: 'Keep graphs small.\nAlways seed runs with 7.\n' })] },
+      { text: 'Added the seeding rule to AGENTS.md.' },
+    ],
+  },
+  {
+    ...R6, id: 'r6-read-data', label: 'Round 6: read a project data file',
+    prompt: 'Show me the first rows of data/train.csv.',
+    replies: [
+      { text: 'Reading the rows sends them to the model provider, so I’ll ask first.', tools: [tool('r6-read', 'project_read_file', { path: 'data/train.csv' })] },
+      { text: 'The file has columns `x` and `label`.' },
+    ],
+  },
+  {
+    ...R6, id: 'r6-reasoning', label: 'Round 6: a reasoning model (reasoning_delta)',
+    prompt: 'Which node should I add for normalization?',
+    replies: [{ text: 'Use **Normalize** between Dataset and Preview.', reasoning: true, pending: true }],
+  },
+  {
+    ...R6, id: 'r6-corrected', label: 'Round 6: a failed connect corrected later',
+    prompt: 'Insert Normalize between Dataset and Preview.',
+    replies: [
+      { text: 'I’ll add Normalize and wire it.', tools: [tool('r6-c1', 'apply_graph_operations', { operations: [
+        { op: 'add_node', node_type: 'Normalize', ref: 'n' },
+        { op: 'connect', source: 'sample-dataset', source_handle: 'out2', target: 'n', target_handle: 'samples' },
+      ] satisfies GraphOp[] })] },
+      { text: 'Dataset has no `out2`; I’ll use its `samples` output.', tools: [tool('r6-c2', 'apply_graph_operations', { operations: [
+        { op: 'connect', source: 'sample-dataset', source_handle: 'samples', target: 'mock-node-1', target_handle: 'samples' },
+      ] satisfies GraphOp[] })] },
+      { text: 'Done: Normalize is connected to Dataset.' },
+    ],
+  },
+  {
+    ...R6, id: 'r6-model-error', label: 'Round 6: the model request fails with the host\'s message',
+    prompt: 'Explain the graph.',
+    replies: [{ text: '', streamError: 'upstream request failed: ReadTimeout: the endpoint sent no data for 600 seconds' }],
+  },
   {
     id: 'skills', label: 'Skills: load and read a skill file (v6 host)', mode: 'edit', validation: 'actual', needsSkills: true,
     instructions: 'Seed every run with 7. The evaluation graph is called serve.',
