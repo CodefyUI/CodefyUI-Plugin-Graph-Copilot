@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runTurn, type ExperimentApprovalRequest, type RunApprovalRequest } from '../agent/loop';
-import type { ProjectCommitApprovalRequest } from '../agent/tools/types';
+import type { FileApprovalRequest, ProjectCommitApprovalRequest } from '../agent/tools/types';
 import { isPassiveDetach, PASSIVE_DETACH_REASON } from '../agent/abortReasons';
 import { formatRunStatusLine } from '../agent/runGraph';
 import { appendLossPoint } from './RunSparkline';
@@ -64,6 +64,9 @@ export function useAgentRun(options: Options) {
   const [experimentApproval, setExperimentApproval] = useState<ExperimentApprovalRequest | null>(null);
   const [runApproval, setRunApproval] = useState<RunApprovalRequest | null>(null);
   const [commitApproval, setCommitApproval] = useState<ProjectCommitApprovalRequest | null>(null);
+  const [fileApproval, setFileApproval] = useState<FileApprovalRequest | null>(null);
+  // P10: when the model started reasoning in this round (no text yet), or null.
+  const [reasoningSince, setReasoningSince] = useState<number | null>(null);
   const [runStatusLine, setRunStatusLine] = useState<string | null>(null);
   const [runLossSeries, setRunLossSeries] = useState<number[]>([]);
 
@@ -100,6 +103,8 @@ export function useAgentRun(options: Options) {
     setExperimentApproval(null);
     setRunApproval(null);
     setCommitApproval(null);
+    setFileApproval(null);
+    setReasoningSince(null);
     setRunStatusLine(null);
     setRunLossSeries([]);
   }, [options.conversation.id, detach]);
@@ -179,6 +184,8 @@ export function useAgentRun(options: Options) {
         setExperimentApproval(null);
         setRunApproval(null);
         setCommitApproval(null);
+        setFileApproval(null);
+        setReasoningSince(null);
         setRunStatusLine(null);
         setRunLossSeries([]);
         latest.current.onBusyChange?.(false);
@@ -201,6 +208,8 @@ export function useAgentRun(options: Options) {
           setExperimentApproval(null);
           setRunApproval(null);
           setCommitApproval(null);
+          setFileApproval(null);
+          setReasoningSince(null);
         }
         resolve(approved && isCurrent() && latest.current.active && !signals.some((value) => value.aborted));
       };
@@ -229,24 +238,29 @@ export function useAgentRun(options: Options) {
         confirmClearGraph: (value, signal) => requestDecision(() => setConfirmation(value), signal),
         callbacks: {
           onTextDelta: (text) => {
-            if (isCurrent() && !run.settled && !run.abort.signal.aborted) setStreamingText((value) => value + text);
+            if (isCurrent() && !run.settled && !run.abort.signal.aborted) { setReasoningSince(null); setStreamingText((value) => value + text); }
+          },
+          onReasoning: () => {
+            if (isCurrent() && !run.settled && !run.abort.signal.aborted) setReasoningSince((since) => since ?? Date.now());
           },
           onTurnAppended: (turn) => {
             if (run.settled) return;
             if (turn.tool_calls?.some((call) => call.name === 'apply_graph_operations')) run.mutationPossible = true;
-            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit'].includes(call.name))) {
+            if (turn.tool_calls?.some((call) => ['run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit', 'save_graph', 'project_write_file'].includes(call.name))) {
               run.sideEffectPossible = true;
             }
             if (!isCurrent()) return;
+            setReasoningSince(null);
             if (turn.role !== 'tool') setStreamingText('');
             else { setRunStatusLine(null); setRunLossSeries([]); }
             setLiveTurns((turns) => [...turns, turn]);
           },
-          onPhase: (value) => { if (isCurrent() && !run.settled) setPhase(value); },
+          onPhase: (value) => { if (isCurrent() && !run.settled) { setPhase(value); if (value !== 'thinking') setReasoningSince(null); } },
           onOpsApplied: () => { run.mutationPossible = true; },
           onExperimentApproval: (request, signal) => requestDecision(() => setExperimentApproval(request), signal),
           onRunApproval: (request, signal) => requestDecision(() => setRunApproval(request), signal),
           onProjectCommitApproval: (request, signal) => requestDecision(() => setCommitApproval(request), signal),
+          onFileApproval: (request, signal) => requestDecision(() => setFileApproval(request), signal),
           onRunStarted: (hostRunId) => {
             if (run.settled) return;
             run.hostRunId = hostRunId;
@@ -304,7 +318,7 @@ export function useAgentRun(options: Options) {
 
   return {
     busy, streamingText, liveTurns, phase, summary, error, confirmation,
-    experimentApproval, runApproval, commitApproval, runStatusLine, runLossSeries,
+    experimentApproval, runApproval, commitApproval, fileApproval, reasoningSince, runStatusLine, runLossSeries,
     start, stop, detach, decide, canRetry,
     retry: () => {
       const request = lastRequest.current;

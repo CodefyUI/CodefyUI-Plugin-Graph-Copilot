@@ -299,8 +299,13 @@ describe('security 2: Ask mode is a hard limit a skill cannot widen', () => {
 
 describe('security 4: no tool reads arbitrary files, fetches URLs or installs skills', () => {
   it('the registry has no such tool', () => {
-    const names = toolRegistry.all().map((tool) => tool.name);
+    // Round 6 (P9) adds exactly two file tools, both limited to the open
+    // project by the host's /api/agent/files path rules; no other tool may
+    // read or write files, fetch URLs, install or execute anything.
+    const PROJECT_FILE_TOOLS = ['project_read_file', 'project_write_file'];
+    const names = toolRegistry.all().map((tool) => tool.name).filter((name) => !PROJECT_FILE_TOOLS.includes(name));
     for (const name of names) expect(name).not.toMatch(/install|fetch|url|http|read_file|write_file|shell|exec/);
+    for (const name of PROJECT_FILE_TOOLS) expect(toolRegistry.get(name)?.input_schema.properties).toEqual(expect.objectContaining({ path: expect.anything() }));
     for (const tool of toolRegistry.all()) {
       const fields = Object.keys((tool.input_schema.properties ?? {}) as Record<string, unknown>);
       expect(fields, tool.name).not.toContain('url');

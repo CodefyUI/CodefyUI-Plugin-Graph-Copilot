@@ -2368,6 +2368,24 @@
 }
 .gcp-approval-list li { display: flex; gap: 8px; min-width: 0; }
 .gcp-approval-list li > span { color: var(--gcp-muted); }
+/* P7/P9: a new file or a diff on the write card; long content scrolls. */
+.gcp-approval-file {
+  flex-shrink: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  white-space: pre;
+  font-family: var(--gcp-mono);
+  font-size: var(--gcp-fs-sm, 12px);
+  color: var(--gcp-text);
+  border: 1px solid var(--gcp-border-soft);
+  border-radius: var(--gcp-r-sm);
+  background: var(--gcp-bg);
+}
+.gcp-diff-add { color: var(--gcp-role-ok); background: var(--gcp-ok-wash); }
+.gcp-diff-del { color: var(--gcp-role-danger); background: var(--gcp-danger-wash); }
+.gcp-diff-fold { color: var(--gcp-muted); }
 .gcp-commit-files code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--gcp-mono); color: var(--gcp-text); }
 .gcp-approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .gcp-primary-btn {

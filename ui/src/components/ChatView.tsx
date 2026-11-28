@@ -8,6 +8,7 @@ import type { Conversation } from '../state/conversations';
 import { listConversations } from '../state/conversations';
 import type { Attachment, AttachmentKind } from '../state/attachments';
 import { classify, readFileAsAttachment, formatBytes } from '../state/attachments';
+import { FileApprovalCard } from './FileApprovalCard';
 import type { AgentMode } from '../agent/types';
 import { useAgentRun } from './useAgentRun';
 import { SlashMenu, optionId, slashItems, slashQuery, type SlashCommand, type SlashItem } from './SlashMenu';
@@ -238,7 +239,7 @@ export function ChatView({
   const [dragging, setDragging] = useState(false);
   const [showLatest, setShowLatest] = useState(false);
   const run = useAgentRun({ api, settings, conversation, onConversationChange, active, onBusyChange });
-  const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, commitApproval, runStatusLine, runLossSeries } = run;
+  const { busy, streamingText, liveTurns, error: lastError, experimentApproval, runApproval, commitApproval, fileApproval, runStatusLine, runLossSeries } = run;
   useEffect(() => { onDetachReady?.(run.detach); }, [onDetachReady, run.detach]);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -517,14 +518,19 @@ export function ChatView({
     ? lastItem.stages.find((stage) => !stage.result)
     : undefined;
   const toolRunning = !!runningStage;
-  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation && !experimentApproval && !runApproval && !commitApproval;
+  const showThinking = busy && streamingText === '' && !toolRunning && !run.confirmation && !experimentApproval && !runApproval && !commitApproval && !fileApproval;
+  // P10: the host streams reasoning_delta while the model reasons; only the time is shown.
+  const reasoningSeconds = run.reasoningSince !== null && streamingText === '' && !toolRunning
+    ? Math.max(0, Math.floor((Date.now() - run.reasoningSince) / 1000)) : null;
 
   // Live run status for the composer bar: what the agent is doing right now.
   const liveStepCount = liveTurns.filter(
     (t) => t.role === 'assistant' && (t.tool_calls?.length ?? 0) > 0,
   ).length;
-  const runPhase = run.confirmation || experimentApproval || runApproval || commitApproval
+  const runPhase = run.confirmation || experimentApproval || runApproval || commitApproval || fileApproval
     ? t('phase.approval')
+    : reasoningSeconds !== null
+    ? t('phase.reasoning', { seconds: reasoningSeconds })
     : runStatusLine
     ? runStatusLine
     : streamingText !== ''
@@ -553,7 +559,7 @@ export function ChatView({
     ? listConversations(api).filter((c) => c.id !== conversation.id).length
     : 0;
 
-  const approvalPending = !!(run.confirmation || experimentApproval || runApproval || commitApproval);
+  const approvalPending = !!(run.confirmation || experimentApproval || runApproval || commitApproval || fileApproval);
   // U3: the latest run's result, its real error and Retry form one block.
   const resultKey = !busy && run.summary
     ? [...items].reverse().find((item) => item.turn.runSummary?.id === run.summary!.id)?.key
@@ -731,10 +737,12 @@ export function ChatView({
           </ApprovalCard>
         )}
 
+        {fileApproval && <FileApprovalCard request={fileApproval} active={active} onDecide={run.decide} t={t} />}
+
         {/* Waiting on the model (no visible activity yet) */}
         {showThinking && (
           <div className="gcp-thinking" aria-label={t('chat.thinking.aria')}>
-            <span className="gcp-thinking-text">{run.phase === 'validating' ? t('phase.validating') : t('phase.thinking')}</span>
+            <span className="gcp-thinking-text">{run.phase === 'validating' ? t('phase.validating') : reasoningSeconds !== null ? t('phase.reasoning', { seconds: reasoningSeconds }) : t('phase.thinking')}</span>
             {elapsed >= 3 && <span className="gcp-thinking-time" aria-hidden="true">{elapsed}s</span>}
           </div>
         )}

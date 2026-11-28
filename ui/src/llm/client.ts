@@ -104,6 +104,9 @@ export interface StreamHandlers {
   onText(text: string): void;
   onDone(done: DoneEvent): void;
   onError(message: string): void;
+  /** P10: the provider is reasoning (`reasoning_delta`). The text is never
+   * passed on: it is not shown and not stored. Hosts before 3.5.0 never send it. */
+  onReasoning?(): void;
 }
 
 export interface ChatBody {
@@ -202,6 +205,21 @@ function waitWithAbort<T>(
 const HTTP_ERROR_SNIPPET_CHARS = 200;
 const HTTP_ERROR_SNIPPET_BYTES = 1024;
 
+/** P10: a FastAPI error body (`{"detail": "..."}` or `{"detail": {"message"}}`)
+ * becomes its message, so the user reads the host's words, not JSON. */
+function errorBodyMessage(snippet: string): string {
+  try {
+    const data = JSON.parse(snippet) as { detail?: unknown };
+    const detail = data?.detail;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    if (detail && typeof detail === 'object' && typeof (detail as { message?: unknown }).message === 'string') {
+      const { code, message } = detail as { code?: unknown; message: string };
+      return typeof code === 'string' && code ? `${message} (${code})` : message;
+    }
+  } catch { /* not JSON, or cut: show as is */ }
+  return snippet;
+}
+
 /** Read only a bounded diagnostic prefix; the caller owns cancellation/release. */
 async function readHttpErrorSnippet(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -292,7 +310,8 @@ class StreamProtocolError extends Error {}
 type StreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'done'; done: DoneEvent }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'reasoning' };
 
 /** Validate the entire batch before exposing any tool call to the agent. */
 function parseDone(event: Record<string, unknown>): DoneEvent {
@@ -336,7 +355,7 @@ function parseDone(event: Record<string, unknown>): DoneEvent {
 
 /** Unknown event types are ignorable, but malformed subscribed data is terminal. */
 function parseFrame(frame: SseFrame): StreamEvent | undefined {
-  if (!['message', 'text_delta', 'done', 'error'].includes(frame.event)) return;
+  if (!['message', 'text_delta', 'done', 'error', 'reasoning_delta'].includes(frame.event)) return;
   const raw = frame.data.trim();
   // The proxy's structured done event is authoritative, not a provider sentinel.
   if (!raw || raw === '[DONE]') return;
@@ -355,6 +374,8 @@ function parseFrame(frame: SseFrame): StreamEvent | undefined {
     return { type: 'text_delta', text: event.text };
   }
   if (event.type === 'done') return { type: 'done', done: parseDone(event) };
+  // Only the fact that reasoning is happening is kept, never its text.
+  if (event.type === 'reasoning_delta') return { type: 'reasoning' };
   if (event.type === 'error') {
     if (event.message !== undefined && typeof event.message !== 'string') {
       throw new StreamProtocolError('Invalid error.message: expected a string.');
@@ -414,7 +435,7 @@ export async function streamChat(
         }
         throwIfAborted(signal);
       } catch (err) { rethrowAbort(err, signal); }
-      handlers.onError(`HTTP ${response.status}: ${snippet}`);
+      handlers.onError(`HTTP ${response.status}: ${errorBodyMessage(snippet)}`);
       return;
     }
     if (!response.body) {
@@ -447,10 +468,11 @@ export async function streamChat(
       }
       if (!event) return false;
       if (event.type === 'text_delta') handlers.onText(event.text);
+      else if (event.type === 'reasoning') handlers.onReasoning?.();
       else if (event.type === 'done') handlers.onDone(event.done);
       else handlers.onError(event.message);
       throwIfAborted(signal);
-      return event.type !== 'text_delta';
+      return event.type !== 'text_delta' && event.type !== 'reasoning';
     };
 
     let terminal = false;

@@ -34,7 +34,7 @@ import { validateCurrentGraph, validationErrorsOf } from './validation';
 import { resolveHostRefs } from './historyRefs';
 import { toolRegistry, toWire } from './tools';
 import type {
-  ApprovalRequest, ApprovalRequirement, ProjectCommitApprovalRequest, SkillSession, ToolContext, ToolEnvironment, ToolRegistry, TurnBudget, TurnState,
+  ApprovalRequest, ApprovalRequirement, FileApprovalRequest, ProjectCommitApprovalRequest, SkillSession, ToolContext, ToolEnvironment, ToolRegistry, TurnBudget, TurnState,
 } from './tools';
 export { validateCurrentGraph } from './validation';
 export type { CurrentGraphValidation } from './validation';
@@ -57,6 +57,10 @@ export interface TurnCallbacks {
   onExperimentApproval?(request: ExperimentApprovalRequest, signal?: AbortSignal): Promise<boolean>;
   onRunApproval?(request: RunApprovalRequest, signal?: AbortSignal): Promise<boolean>;
   onProjectCommitApproval?(request: ProjectCommitApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  /** P7/P9: save a graph, write a project file, read a data file. */
+  onFileApproval?(request: FileApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  /** P10: the model is reasoning (the host streams reasoning_delta); no content. */
+  onReasoning?(): void;
   onRunProgress?(update: RunProgressUpdate): void;
   onRunFinished?(outcome: RunGraphOutcome): void;
   onRunStarted?(hostRunId: string): void;
@@ -117,7 +121,7 @@ function activeTabInfo(api: CodefyUIPluginAPI): ActiveTabInfo | null {
   } catch { return null; }
 }
 
-function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: AgentContext | null, readOnlyTools?: string[], gitProject?: boolean): WireMessage[] {
+function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: AgentContext | null, readOnlyTools?: string[], gitProject?: boolean, tools?: string[]): WireMessage[] {
   throwIfAborted(opts.signal);
   const definitions = opts.api.graph.getNodeDefinitions();
   throwIfAborted(opts.signal);
@@ -136,7 +140,7 @@ function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: Agent
     }, opts.settings.provider);
   });
   return [
-    { role: 'system', content: buildSystemPrompt(definitions, graph, mode, { context, readOnlyTools, gitProject, activeTab: activeTabInfo(opts.api) }) },
+    { role: 'system', content: buildSystemPrompt(definitions, graph, mode, { context, readOnlyTools, gitProject, activeTab: activeTabInfo(opts.api), tools }) },
     ...safeHistory,
     { role: 'user', content: composeUserContent(withSkills(opts.userText, opts.skills), opts.attachments, opts.settings.provider) },
   ];
@@ -232,7 +236,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
   const removals = { removed: 0, startNodes: null as number | null };
   const env: ToolEnvironment = {
     api, settings, mode, removals,
-    host: { skills: agentContext !== null, gitProject },
+    host: { skills: agentContext !== null, gitProject, project: !!(agentContext as AgentContext | null)?.project },
     ...(agentContext ? { skills: skillSession(agentContext, opts.history, historyWindow(opts.history), opts.skills) } : {}),
   };
   const offeredTools = (opts.registry ?? toolRegistry).list({ mode, env });
@@ -307,7 +311,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         const outcome = turns[index]?.toolOutcome;
         if (outcome !== 'completed' && outcome !== 'error') unknown = true;
         if (name === 'run_graph') { executions.runs++; if (outcome === 'error') executions.failedRuns++; }
-        else executions.studies++;
+        else if (name === 'run_graph_experiments' || name === 'optimize_graph_parameters') executions.studies++;
       }
       summary.executions = executions;
       summary.executionUnknown = unknown;
@@ -370,7 +374,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       }
       let answer: boolean;
       // Name the tab the action applies to (the agent may have switched it).
-      if (request.kind !== 'project_commit') request = { ...request, request: { ...request.request, target: approvalTarget(api, openedTabs) } } as ApprovalRequest;
+      if (request.kind === 'clear_graph' || request.kind === 'run_graph' || request.kind === 'experiment') request = { ...request, request: { ...request.request, target: approvalTarget(api, openedTabs) } } as ApprovalRequest;
       switch (request.kind) {
         case 'clear_graph':
           if (!opts.confirmClearGraph) return false;
@@ -384,6 +388,11 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         case 'project_commit':
           if (!callbacks.onProjectCommitApproval) return false;
           answer = await awaitWithSignal(callbacks.onProjectCommitApproval(request.request, signal), signal); break;
+        case 'save_graph':
+        case 'project_write':
+        case 'data_read':
+          if (!callbacks.onFileApproval) return false;
+          answer = await awaitWithSignal(callbacks.onFileApproval(request.request, signal), signal); break;
       }
       granted = answer === true;
       if (granted && request.kind === 'clear_graph' && call.name === 'apply_graph_operations') {
@@ -398,6 +407,9 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         case 'run_graph': return !!callbacks.onRunApproval;
         case 'experiment': return !!callbacks.onExperimentApproval;
         case 'project_commit': return !!callbacks.onProjectCommitApproval;
+        case 'save_graph':
+        case 'project_write':
+        case 'data_read': return !!callbacks.onFileApproval;
       }
     };
     const checkRepairScope = (operations: GraphOp[]) => {
@@ -527,7 +539,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     throwIfAborted(signal);
     historicalCallIds(opts.history).forEach((id) => knownIds.add(id));
     throwIfAborted(signal);
-    const wire = buildInitialMessages(opts, mode, agentContext, mode === 'ask' ? offeredTools.map((tool) => tool.name) : undefined, gitProject);
+    const wire = buildInitialMessages(opts, mode, agentContext, mode === 'ask' ? offeredTools.map((tool) => tool.name) : undefined, gitProject, offeredTools.map((tool) => tool.name));
     try { removals.startNodes = api.graph.getGraph().nodes.length; } catch { /* then counted from the live graph */ }
     const tools = offeredTools.map(toWire);
     while (true) {
@@ -541,6 +553,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       try {
         await awaitWithSignal(streamChat(api, buildChatBody(settings, wire, tools), {
           onText(delta) { if (streamActive && !signal?.aborted && !round.done && !round.error) { round.text += delta; observe(() => callbacks.onTextDelta(delta)); } },
+          onReasoning() { if (streamActive && !signal?.aborted && !round.done && !round.error) observe(() => callbacks.onReasoning?.()); },
           onDone(event) { if (streamActive && !signal?.aborted && !round.done && !round.error) round.done = event; },
           onError(message) { if (streamActive && !signal?.aborted && !round.done && !round.error) round.error = message; },
         }, signal), signal);

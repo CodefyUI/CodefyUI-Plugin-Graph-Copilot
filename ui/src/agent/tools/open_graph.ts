@@ -3,10 +3,11 @@ import { awaitWithSignal, isRecord, throwIfAborted } from '../toolGuards';
 import { hasWorkspace } from './workspace';
 import type { ToolDefinition } from './types';
 import { pathSegment } from '../urlPath';
+import { AGENT_API_VERSION } from '../projectFiles';
 
 export const openGraphTool: ToolDefinition = {
   name: 'open_graph',
-  description: 'Open a saved graph, by its name as the host lists it, in a new editor tab. If a tab with that title is already open, nothing is opened and the tab is named instead (the editor cannot switch tabs for you; tell the user which tab). The new tab is a copy of the saved file: saving it is a Save As.',
+  description: 'Open a saved graph, by its name as the host lists it, in an editor tab. On CodefyUI 3.5.0 and later (API v7) the tab is bound to the saved graph, exactly as when the user opens it from the Graphs panel: an already open tab is switched to, and save_graph saves it in place. On older hosts the new tab is a copy (saving it is a Save As), and if a tab with that title is already open nothing is opened and the tab is named instead.',
   input_schema: {
     type: 'object',
     properties: { name: { type: 'string', description: 'The saved graph\'s name.' } },
@@ -19,6 +20,16 @@ export const openGraphTool: ToolDefinition = {
     const { api, signal } = ctx;
     const name = typeof args.name === 'string' ? args.name.trim() : '';
     if (!name) { ctx.fail('open_graph needs the saved graph\'s "name".'); return; }
+    const workspace = api.workspace!;
+    if ((api.apiVersion ?? 0) >= AGENT_API_VERSION && typeof workspace.openSavedGraph === 'function') {
+      let opened;
+      try { opened = await awaitWithSignal(workspace.openSavedGraph(name, { activate: true }), signal); }
+      catch (error) { throwIfAborted(signal); ctx.fail(`The editor did not open "${name}": ${String(error)}`); return; }
+      throwIfAborted(signal);
+      if (!opened.ok) { ctx.fail(`Graph "${name}" could not be opened (${opened.code}): ${opened.message}`); return; }
+      if (!opened.alreadyOpen) ctx.turn.openedTabs.add(opened.tabId);
+      return { content: JSON.stringify({ opened: !opened.alreadyOpen, already_open: opened.alreadyOpen, tab_id: opened.tabId, title: name, bound_to_saved_graph: true, active: true }), outcome: 'completed' };
+    }
     const open = api.workspace!.tabs().find((tab) => tab.title === name);
     if (open) {
       return { content: JSON.stringify({ already_open: true, tab_id: open.tabId, title: open.title, active: open.active }), outcome: 'completed' };

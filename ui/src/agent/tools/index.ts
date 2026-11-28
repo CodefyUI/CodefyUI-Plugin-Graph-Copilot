@@ -19,6 +19,8 @@ import { projectStatusTool } from './project_status';
 import { projectDiffTool } from './project_diff';
 import { projectCommitTool } from './project_commit';
 import { projectLogTool } from './project_log';
+import { saveGraphTool } from './save_graph';
+import { listDataFilesTool, projectListFilesTool, projectReadFileTool, projectWriteFileTool } from './project_files';
 import { createToolRegistry } from './registry';
 import type { ToolDefinition } from './types';
 
@@ -43,6 +45,11 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   projectDiffTool,
   projectCommitTool,
   projectLogTool,
+  saveGraphTool,
+  listDataFilesTool,
+  projectListFilesTool,
+  projectReadFileTool,
+  projectWriteFileTool,
 ];
 
 /** The registry the loop uses. */

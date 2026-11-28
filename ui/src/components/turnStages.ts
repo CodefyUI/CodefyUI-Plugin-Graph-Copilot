@@ -438,7 +438,7 @@ function describeCommit(result?: ChatTurn): StageDescription {
 }
 
 /** Tools that can stop at an approval card (clear and mass removal go through apply_graph_operations). */
-export const APPROVAL_TOOLS = new Set(['apply_graph_operations', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit']);
+export const APPROVAL_TOOLS = new Set(['apply_graph_operations', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit', 'save_graph', 'project_write_file', 'project_read_file']);
 
 /** Local terminal metadata takes precedence over the tool payload's appearance. */
 export function describeStage(stage: ToolStage, active = false, awaiting = false): StageDescription {

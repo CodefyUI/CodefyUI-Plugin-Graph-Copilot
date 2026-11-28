@@ -24,7 +24,7 @@ export type ToolGroup = 'graph' | 'run' | 'experiment' | 'workspace' | 'skill' |
 
 /** What a tool's approval card is about. The card's details are filled in at
  * the gate (`ToolContext.approve`), because some need host reads first. */
-export type ApprovalKind = 'clear_graph' | 'run_graph' | 'experiment' | 'project_commit';
+export type ApprovalKind = 'clear_graph' | 'run_graph' | 'experiment' | 'project_commit' | 'save_graph' | 'project_write' | 'data_read';
 
 export interface ApprovalRequirement { kind: ApprovalKind }
 
@@ -34,11 +34,54 @@ export interface ProjectCommitApprovalRequest {
   files: Array<{ path: string; status: string }>;
 }
 
+/** P7: save the active tab as a saved graph. */
+export interface SaveGraphApprovalRequest {
+  action: 'save_graph';
+  /** The saved graph's name after the save. */
+  name: string;
+  /** Saving onto the graph the tab is already bound to. */
+  inPlace: boolean;
+  /** The name of another saved graph this save replaces, or null. */
+  overwrites: string | null;
+  /** The tab being saved. */
+  tab: string;
+}
+
+/** P9: write one project file. */
+export interface ProjectWriteApprovalRequest {
+  action: 'project_write';
+  path: string;
+  created: boolean;
+  /** New file: its whole content (cut for display when long). */
+  content?: string;
+  /** Existing file: a line diff, or null when it is too large to diff. */
+  diff?: string | null;
+  bytes: number;
+  /** Under mods/: code that runs on this computer once trusted. */
+  mods: boolean;
+  /** The root AGENTS.md: added to every later conversation's prompt. */
+  agentInstructions: boolean;
+}
+
+/** P9: read a data file, whose rows go to the LLM provider. */
+export interface DataReadApprovalRequest {
+  action: 'data_read';
+  path: string;
+  size: number | null;
+  /** Where the content goes: provider id, and model or endpoint. */
+  provider: string;
+}
+
+export type FileApprovalRequest = SaveGraphApprovalRequest | ProjectWriteApprovalRequest | DataReadApprovalRequest;
+
 export type ApprovalRequest =
   | { kind: 'clear_graph'; request: ClearGraphRequest }
   | { kind: 'run_graph'; request: RunApprovalRequest }
   | { kind: 'experiment'; request: ExperimentApprovalRequest }
-  | { kind: 'project_commit'; request: ProjectCommitApprovalRequest };
+  | { kind: 'project_commit'; request: ProjectCommitApprovalRequest }
+  | { kind: 'save_graph'; request: SaveGraphApprovalRequest }
+  | { kind: 'project_write'; request: ProjectWriteApprovalRequest }
+  | { kind: 'data_read'; request: DataReadApprovalRequest };
 
 export interface ToolResult {
   content: string;
@@ -81,6 +124,8 @@ export interface HostFeatures {
   skills: boolean;
   /** The host is in project mode and the project is a git repository. */
   gitProject: boolean;
+  /** The host reported an open project (`/api/agent/context`). */
+  project?: boolean;
 }
 
 /** The loop's own bookkeeping for graph edits, shared with the graph tools. */

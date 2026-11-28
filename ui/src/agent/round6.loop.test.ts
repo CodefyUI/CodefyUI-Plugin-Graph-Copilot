@@ -293,3 +293,17 @@ describe('P6: the approval card counts the baseline row', () => {
     expect(requests[0]).toMatchObject({ variantCount: 5, includesBaseline: true, executionCount: 15 });
   });
 });
+
+describe('P10: the loop forwards reasoning as a signal', () => {
+  it('calls onReasoning for each reasoning event and keeps no reasoning text', async () => {
+    const t = setup();
+    const onReasoning = vi.fn();
+    vi.mocked(streamChat).mockImplementation(async (_api, _body, handlers: StreamHandlers) => {
+      handlers.onReasoning?.(); handlers.onReasoning?.();
+      handlers.onDone(done([], 'Answer.'));
+    });
+    const result = await runTurn({ api: t.api, settings, history: [], userText: 'q', callbacks: { ...t.callbacks, onReasoning } });
+    expect(onReasoning).toHaveBeenCalledTimes(2);
+    expect(result.turns.map((turn) => turn.content)).toEqual(['Answer.']);
+  });
+});
