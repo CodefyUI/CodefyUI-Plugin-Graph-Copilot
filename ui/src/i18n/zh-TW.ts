@@ -351,6 +351,8 @@ export const zhTW: Record<MessageKey, string> = {
   'run.exec.studies.one': '跑了 1 個研究',
   'run.exec.studies.many': '跑了 {count} 個研究',
   'run.hostRuns': '主程式執行：{ids}',
+  'run.noted.one': '有 1 個工具呼叫沒有找到結果或被拒絕；原因寫在那一步。',
+  'run.noted.many': '有 {count} 個工具呼叫沒有找到結果或被拒絕；原因寫在各自那一步。',
   'run.noChanges': '沒有改圖',
   'run.changesApplied': '已改圖',
   'run.mutationUnknown': '圖可能已經被改動。繼續之前請先看一下目前的圖。',

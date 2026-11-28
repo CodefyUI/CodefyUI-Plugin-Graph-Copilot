@@ -86,7 +86,8 @@ export const saveGraphTool: ToolDefinition = {
     }
     if (!result.ok) {
       // The editor's own words; no retry under another name.
-      return { content: JSON.stringify({ error: result.message, code: result.code, saved: false }), outcome: 'error' };
+      // The editor answered with a refusal: nothing was saved.
+      return { content: JSON.stringify({ error: result.message, code: result.code, saved: false }), outcome: 'error', refused: true };
     }
     return {
       content: JSON.stringify({

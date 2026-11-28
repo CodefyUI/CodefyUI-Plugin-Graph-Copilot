@@ -88,6 +88,9 @@ export interface ToolResult {
   outcome: ToolOutcome;
   /** Text CodefyUI can give again: stored as this reference only. */
   ref?: HostRef;
+  /** R3: the host definitely refused an approved action and nothing changed.
+   * The turn is not made incomplete by it; the receipt explains the refusal. */
+  refused?: boolean;
 }
 
 /** What `available` and `approval` may look at: the environment, not the turn. */

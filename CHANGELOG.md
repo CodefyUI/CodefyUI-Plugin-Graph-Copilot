@@ -16,6 +16,8 @@ Fixes from testing with real models, and the tools CodefyUI 3.5.0 (plugin API 7)
 - **Turn summaries.** Failed operations corrected later in the turn read as completed with a note; a successful run says what ran; the caution about repeating is kept for unknown outcomes; an expanded tool row shows the whole error.
 - **`auto_layout` only after structural batches**, never for parameter-only changes.
 - **Parameter grids that contain the current value measure it as the baseline** in the same study, and the approval card says so.
+- **Only a failed or uncertain graph change or approved side effect leaves a turn incomplete.** A lookup that finds nothing (a folder that does not exist yet, a node type not loaded) or a refused path completes the turn with one neutral line; a definite host refusal of an approved write or save does too, since nothing changed.
+- **Ordered lists keep their source numbers** when a code block or blank line splits them.
 - **Reasoning models**: the run bar shows "Reasoning" and the seconds while the host streams `reasoning_delta`; the reasoning text is never shown or stored. A failed model request shows the host's message.
 
 ### Added (CodefyUI 3.5.0, plugin API 7)

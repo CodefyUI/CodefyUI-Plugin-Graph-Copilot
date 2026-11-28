@@ -52,6 +52,7 @@ export function RunResult({ summary, error, children }: RunResultProps) {
   if (summary.mutation === 'none') facts.push(tr('run.noChanges'));
   if (summary.mutation === 'applied' && summary.appliedOps === 0) facts.push(tr('run.changesApplied'));
   facts.push(tr(VALIDATION_KEY[summary.validation.status]));
+  const noted = summary.status === 'completed' ? summary.notedCalls ?? 0 : 0;
   // A Stop the user asked for is not an error: no alert, neutral colour.
   const shownError = summary.status === 'cancelled' ? null : error;
   // P4: a known outcome says what ran; the "check before repeating" caution is
@@ -78,6 +79,7 @@ export function RunResult({ summary, error, children }: RunResultProps) {
         {detached && <p className="gcp-run-result-detail">{tr('run.detached.note')}</p>}
         {summary.mutation === 'unknown' && <p className="gcp-run-result-detail">{tr('run.mutationUnknown')}</p>}
         {ran.length > 0 && <p className="gcp-run-result-detail">{ran.join(' · ')}</p>}
+        {noted > 0 && <p className="gcp-run-result-detail">{tr(noted === 1 ? 'run.noted.one' : 'run.noted.many', { count: noted })}</p>}
         {runIds
           ? <p className="gcp-run-result-detail">{tr('run.hostRuns', { ids: bounded(runIds.join(', '), 400) })}</p>
           : summary.hostRunId && <p className="gcp-run-result-detail">{tr('run.hostRun', { id: bounded(summary.hostRunId, 160) })}</p>}

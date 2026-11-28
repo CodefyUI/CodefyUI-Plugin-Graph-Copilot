@@ -254,10 +254,14 @@ describe('mutation authorization and receipts', () => {
     expect(result).toMatchObject({ status: 'incomplete', appliedOps: 1, failedOps: 1, validation: { status: 'valid' } });
   });
 
-  it('later schema success cannot erase an unrelated failed lookup', async () => {
+  it('a failed read-only lookup is a neutral note, not an incomplete turn (R3)', async () => {
+    // R3 changed this: a lookup that finds nothing changes nothing, so the turn
+    // completes and the run result carries one neutral line instead.
     const t = setup(); vi.mocked(t.api.graph.getNodeDefinitions).mockReturnValue([{ node_name: 'Known', category: '', description: '', inputs: [], outputs: [], params: [] }]);
     t.script([done([call('failed-schema', 'get_node_schemas', { node_types: ['Unknown'] })]), done([call('good-schema', 'get_node_schemas', { node_types: ['Known'] })]), done()]);
-    expect((await t.run()).status).toBe('incomplete');
+    const result = await t.run();
+    expect(result.status).toBe('completed');
+    expect(result.notedCalls).toBe(1);
   });
 
   it('a repeated historical call id is never executed', async () => {

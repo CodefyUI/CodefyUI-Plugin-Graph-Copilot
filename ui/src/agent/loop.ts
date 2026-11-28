@@ -212,6 +212,8 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
   // Conservative: a later unrelated success does not prove a failed request
   // was corrected. Preserve observed failure obligations for this run.
   const issues = new Set<string>();
+  // R3: tool calls that found nothing or were refused before any dispatch.
+  const notedCalls = new Set<number>();
   const affectedNodes = new Set<string>();
   const openedTabs = new Set<string>();
   const failedOpKinds = new Set<string>();
@@ -316,6 +318,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       summary.executions = executions;
       summary.executionUnknown = unknown;
     }
+    if (notedCalls.size) summary.notedCalls = notedCalls.size;
     const local = { ...summary, validation: localValidation(summary.validation) };
     let lastAssistant = -1;
     turns.forEach((turn, index) => { if (turn.role === 'assistant') lastAssistant = index; });
@@ -347,8 +350,15 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     throwIfAborted(signal);
     assertRepairSnapshot();
     const args = call.arguments;
+    // R3: only a failed or uncertain graph change or approved side effect
+    // leaves an open issue. A read that found nothing, or a refusal before
+    // anything was dispatched, is a neutral note: the model's reply explains it.
+    const settle = (consequential: boolean) => {
+      if (consequential) issues.add(call.name);
+      else notedCalls.add(slot.index);
+    };
     const errorResult = (message: string) => {
-      issues.add(call.name);
+      settle(dispatchedSlots.has(slot.index));
       recordTool(slot, JSON.stringify({ error: message }), 'error');
     };
     // Only the tools offered this turn can run: Ask mode offers read-only ones.
@@ -481,7 +491,8 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       ...env, call, signal, cancelSignal: opts.cancelSignal, callbacks, turn: turnState, budget: experimentBudget, phase,
       record: (content, outcome, terminal) => recordRuntime(content, outcome, terminal),
       fail: errorResult,
-      markIssue: () => { issues.add(call.name); },
+      // Called for failed graph operations (after dispatch) and unavailable validation.
+      markIssue: () => { settle(!tool.readOnly); },
       validate: () => validateCurrentGraph(api, signal),
       canApprove, approve, assertApproved,
       dispatched: () => {
@@ -520,7 +531,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     if (result) {
       recordRuntime(result.content, result.outcome);
       if (result.ref) turns[slot.index] = { ...turns[slot.index], hostRef: result.ref };
-      if (result.outcome !== 'completed') issues.add(call.name);
+      if (result.outcome !== 'completed') settle((dispatchedSlots.has(slot.index) && !result.refused) || result.outcome === 'unknown');
       // P1: a later successful live run settles an earlier failed one.
       else if (call.name === 'run_graph') issues.delete(call.name);
     }

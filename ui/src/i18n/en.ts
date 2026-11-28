@@ -358,6 +358,8 @@ export const en = {
   'run.exec.studies.one': 'Ran 1 study',
   'run.exec.studies.many': 'Ran {count} studies',
   'run.hostRuns': 'Host runs: {ids}',
+  'run.noted.one': '1 tool call found nothing or was refused; its step shows why.',
+  'run.noted.many': '{count} tool calls found nothing or were refused; their steps show why.',
   'run.noChanges': 'No graph changes',
   'run.changesApplied': 'Graph changes applied',
   'run.mutationUnknown': 'Changes may have been applied. Check the current graph before continuing.',

@@ -408,3 +408,46 @@ describe('path rules and diff', () => {
     expect(toolRegistry.get('list_data_files')?.readOnly).toBe(true);
   });
 });
+
+describe('R3: lookups that find nothing and refusals do not make the turn incomplete', () => {
+  it('project_list_files on a folder that does not exist yet completes, with one neutral note', async () => {
+    const t = host({ routes: { '/api/agent/files*': () => json({ detail: { code: 'path_not_found', message: "No such folder: 'mods/nodes'" } }, 404) } });
+    t.script([done([call('l', 'project_list_files', { path: 'mods/nodes' })]), done([], 'That folder does not exist yet.')]);
+    const result = await t.run();
+    expect(result).toMatchObject({ status: 'completed', notedCalls: 1 });
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('a path refused before any card completes, with one neutral note', async () => {
+    const t = host();
+    t.script([done([call('w', 'project_write_file', { path: 'scripts/train.py', content: 'x' })]), done([], 'Python goes in mods/nodes/.')]);
+    const result = await t.run();
+    expect(result).toMatchObject({ status: 'completed', notedCalls: 1 });
+  });
+
+  it('the host refusing an approved write completes: nothing was written, and the host said so', async () => {
+    const t = host({ routes: { '/api/agent/files*': (init) => (init?.method === 'PUT'
+      ? json({ detail: { code: 'path_not_writable', message: 'only these paths can be written: docs/**' } }, 403)
+      : json({ detail: { code: 'path_not_found', message: 'none' } }, 404)) } });
+    t.script([done([call('w', 'project_write_file', { path: 'docs/a.md', content: 'x' })]), done([], 'The host refused.')]);
+    const result = await t.run();
+    expect(result).toMatchObject({ status: 'completed', notedCalls: 1 });
+  });
+
+  it('an approved write whose outcome is unknown still makes the turn incomplete', async () => {
+    const t = host({ routes: { '/api/agent/files*': (init) => {
+      if (init?.method === 'PUT') throw new Error('connection reset');
+      return json({ detail: { code: 'path_not_found', message: 'none' } }, 404);
+    } } });
+    t.script([done([call('w', 'project_write_file', { path: 'docs/a.md', content: 'x' })]), done()]);
+    const result = await t.run();
+    expect(result).toMatchObject({ status: 'incomplete', reason: 'tool_errors' });
+  });
+
+  it('several notes still give a completed turn with their count', async () => {
+    const t = host({ routes: { '/api/agent/files*': () => json({ detail: { code: 'path_not_found', message: 'none' } }, 404) } });
+    t.script([done([call('l1', 'project_list_files', { path: 'mods/nodes' }), call('l2', 'get_node_schemas', { node_types: ['NotLoaded'] })]), done()]);
+    const result = await t.run();
+    expect(result).toMatchObject({ status: 'completed', notedCalls: 2 });
+  });
+});

@@ -110,13 +110,15 @@ function parseInline(text: string): React.ReactNode[] {
 const HEADING_RE = /^(#{1,3})\s+(.*)$/;
 const HR_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const UL_RE = /^\s*[-*]\s+(.*)$/;
-const OL_RE = /^\s*\d+[.)]\s+(.*)$/;
+// The number is kept: a list split by a code block or a blank line must not
+// restart at 1 on screen (R3).
+const OL_RE = /^\s*(\d{1,9})[.)]\s+(.*)$/;
 
 function parseBlocks(text: string, keyBase: string): React.ReactNode[] {
   const lines = text.split('\n');
   const out: React.ReactNode[] = [];
   let para: string[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
+  let list: { ordered: boolean; items: string[]; numbers: number[] } | null = null;
   let key = 0;
 
   const flushPara = () => {
@@ -131,10 +133,15 @@ function parseBlocks(text: string, keyBase: string): React.ReactNode[] {
 
   const flushList = () => {
     if (!list) return;
-    const items = list.items.map((item, i) => <li key={i}>{parseInline(item)}</li>);
+    const { numbers } = list;
+    const start = list.ordered ? numbers[0] : 1;
+    // An item gets its own value only where the source breaks the sequence.
+    const items = list.items.map((item, i) => (
+      <li key={i} value={list!.ordered && numbers[i] !== start + i ? numbers[i] : undefined}>{parseInline(item)}</li>
+    ));
     out.push(
       list.ordered ? (
-        <ol key={`${keyBase}-l${key++}`} className="gcp-md-list">{items}</ol>
+        <ol key={`${keyBase}-l${key++}`} className="gcp-md-list" start={start !== 1 ? start : undefined}>{items}</ol>
       ) : (
         <ul key={`${keyBase}-l${key++}`} className="gcp-md-list">{items}</ul>
       ),
@@ -169,9 +176,10 @@ function parseBlocks(text: string, keyBase: string): React.ReactNode[] {
       const ordered = !!ol;
       if (!list || list.ordered !== ordered) {
         flushList();
-        list = { ordered, items: [] };
+        list = { ordered, items: [], numbers: [] };
       }
-      list.items.push((ul ?? ol)![1]);
+      list.items.push(ul ? ul[1] : ol![2]);
+      list.numbers.push(ol ? Number(ol[1]) : 0);
       continue;
     }
 

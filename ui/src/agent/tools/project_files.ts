@@ -215,6 +215,9 @@ export const projectWriteFileTool: ToolDefinition = {
             : 'The host refused this write. Report its message to the user; do not retry under another path.',
         }),
         outcome: 'error',
+        // A 4xx answer is a definite refusal: nothing was written. No answer,
+        // or a server error, leaves the outcome uncertain.
+        refused: written.error.status >= 400 && written.error.status < 500,
       };
     }
     const value = written.value;

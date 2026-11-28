@@ -106,3 +106,21 @@ describe('R2 (B): a partly failed batch says how many failed and the first error
     expect(d.summary).toBe('Malformed batch');
   });
 });
+
+describe('RunResult neutral note (R3)', () => {
+  it('a completed turn with refused or empty lookups shows one neutral line, en and zh-TW', () => {
+    const { container, unmount } = render(<RunResult summary={summary({ notedCalls: 2 })} />);
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('2 tool calls found nothing or were refused; their steps show why.')).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Incomplete|not corrected/);
+    unmount();
+    document.documentElement.lang = 'zh-TW';
+    render(<RunResult summary={summary({ notedCalls: 1 })} />);
+    expect(screen.getByText('有 1 個工具呼叫沒有找到結果或被拒絕；原因寫在那一步。')).toBeInTheDocument();
+  });
+
+  it('an incomplete turn does not add the note', () => {
+    const { container } = render(<RunResult summary={summary({ status: 'incomplete', reason: 'tool_errors', notedCalls: 1 })} />);
+    expect(container.textContent).not.toMatch(/found nothing/);
+  });
+});
