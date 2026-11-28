@@ -18774,7 +18774,7 @@ A: ${m[y].text}`).join(`
   return ((a = n.host) == null ? void 0 : a.gitProject) === !0;
 }, zj = (n) => n.filter((a) => a.type !== "note").length, Ij = {
   name: "list_tabs",
-  description: `List the editor's open tabs in tab-bar order: each tab's id, title, node and edge counts, whether it is the active tab, read-only, or transient (not kept after a reload). On CodefyUI 3.5.0 and later each tab also has "unsaved" (the tab bar's unsaved marker) and "graph" (the saved graph it is bound to, or null). Older hosts do not report these.`,
+  description: `List the editor's open tabs in tab-bar order: each tab's id, title, node and edge counts, whether it is the active tab, read-only, or transient (not kept after a reload). On CodefyUI 3.5.0 and later each tab also has "unsaved" (the tab bar's unsaved marker) and "saved_graph" (the saved graph it is bound to, or null). Older hosts do not report these.`,
   input_schema: { type: "object", properties: {} },
   group: "workspace",
   readOnly: !0,
@@ -18791,7 +18791,7 @@ A: ${m[y].text}`).join(`
         ...p ? { node_count: zj(p.nodes), edge_count: p.edges.length } : {},
         ...d.source ? { opened_by: d.source.pluginId } : {},
         ...typeof d.unsaved == "boolean" ? { unsaved: d.unsaved } : {},
-        ...d.graph !== void 0 ? { graph: d.graph ? { name: d.graph.name, file: d.graph.file } : null } : {}
+        ...d.savedGraph !== void 0 ? { saved_graph: d.savedGraph ? { name: d.savedGraph.name, file: d.savedGraph.file } : null } : {}
       };
     });
     return { content: JSON.stringify(l ? { tabs: c } : { tabs: c, unsaved_state: "not reported by this host" }), outcome: "completed" };
@@ -19395,7 +19395,7 @@ const pA = {
       a.fail(`The tab "${c.title}" is read-only and cannot be saved.`);
       return;
     }
-    const d = c.graph ?? null, p = (typeof n.name == "string" ? n.name.trim() : "") || (d == null ? void 0 : d.name) || "";
+    const d = c.savedGraph ?? null, p = (typeof n.name == "string" ? n.name.trim() : "") || (d == null ? void 0 : d.name) || "";
     if (!p) {
       a.fail('This tab is not bound to a saved graph, so saving needs a "name". Ask the user what to call it.');
       return;
@@ -19619,10 +19619,16 @@ ${ii("PROJECT FILE", d.path, d.content)}`
         return;
       }
       g = x.sha256, v = x.content;
-    } else if (p.error.code !== "path_not_found") {
-      a.fail(`"${l}" could not be checked before writing: ${p.error.message} Nothing was written.`);
-      return;
-    }
+    } else if (p.error.code !== "path_not_found")
+      return {
+        content: JSON.stringify({
+          written: !1,
+          error: p.error.message,
+          ...p.error.code ? { code: p.error.code } : {},
+          note: "The host refused this path before anything was written. Report its message to the user; do not retry under another path."
+        }),
+        outcome: "error"
+      };
     if (v !== null && v === c)
       return { content: JSON.stringify({ path: l, unchanged: !0, note: "The file already has exactly this content; nothing was written." }), outcome: "completed" };
     const y = Jj(l), w = Qj(l);
@@ -19735,7 +19741,7 @@ function NA(n) {
     return s ? {
       title: s.title,
       ...typeof s.unsaved == "boolean" ? { unsaved: s.unsaved } : {},
-      ...s.graph === null || Le(s.graph) && typeof s.graph.name == "string" ? { graph: s.graph ? { name: s.graph.name, file: String(s.graph.file ?? "") } : null } : {}
+      ...s.savedGraph === null || Le(s.savedGraph) && typeof s.savedGraph.name == "string" ? { graph: s.savedGraph ? { name: s.savedGraph.name, file: String(s.savedGraph.file ?? "") } : null } : {}
     } : null;
   } catch {
     return null;
