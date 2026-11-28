@@ -20,7 +20,7 @@ cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 
 使用上述正式 repository，**不要加上 `@tag`、`@branch` 或 `@commit` 後綴**，即可跟隨預設分支 `main`。Installer 先解析為 commit SHA，再下載該 commit 的 archive，其中包含已提交的 `frontend/index.js`；使用者不需自行 build UI。它不會選擇最新 GitHub release，也不會安裝尚未合併的 PR。
 
-目前發布的插件版本為 **0.5.0**：Copilot 改版為通用 agent，有側欄、Agent Skills、專案指令與分頁／專案工具。在 CodefyUI 3.2.0 與更舊版本上仍可使用，以浮動視窗呈現，技能功能關閉。現行宿主 catalog 也指向同一 repository，沒有固定 ref；較舊宿主可能尚未列出 Graph Copilot，因此明確指定 repository 的指令適用於支援的基礎版本。
+目前發布的插件版本為 **0.6.0**：Copilot 是通用 agent，有側欄、Agent Skills、專案指令與分頁／專案工具；在 CodefyUI 3.5.0 上還能在你核准後存檔、列出資料檔、讀寫專案檔案。在 CodefyUI 3.2.0 與更舊版本上仍可使用，以浮動視窗呈現，技能功能關閉。現行宿主 catalog 也指向同一 repository，沒有固定 ref；較舊宿主可能尚未列出 Graph Copilot，因此明確指定 repository 的指令適用於支援的基礎版本。
 
 安裝後重新整理 CodefyUI 分頁，從工具列的 Copilot 開關（有側欄的主程式）或右下角的按鈕（CodefyUI 3.2.0 與更舊版本）開啟 Copilot。
 

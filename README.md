@@ -9,6 +9,7 @@ Copilot (formerly Graph Copilot; the plugin id stays `graph-copilot`) is a front
 - **Live in a side panel.** On a CodefyUI host with the side dock (plugin API 6), Copilot is a resizable side panel opened from the toolbar, and the toolbar toggle shows when it needs you, is working or has finished. On CodefyUI 3.2.0 and older it is the floating window, as before.
 - **Follow skills and project instructions.** The system prompt lists enabled Agent Skills by name and description; the agent loads a skill's full text with `load_skill` and reads its files with `read_skill_file`. You can also pick a skill with `/` in the message box. `AGENTS.md` is added as project instructions. Skill text and `AGENTS.md` are reference material in marked blocks: they cannot approve anything, skip an approval or widen Ask mode. A skill's `allowed-tools` is shown in the Skills view only and is not enforced. On hosts without Agent Skills, all of this is off.
 - **Work across tabs and the project.** `list_tabs`, `open_graph`, `search_examples` and `open_example` use the host's workspace API; `project_status`, `project_diff`, `project_log` and `project_commit` use its git API. A commit lists every file on its approval card, stages only those paths, and never includes `.env` or ignored files. See [Side panel, skills and tools](docs/general-agent.md).
+- **Save, open and edit project files (CodefyUI 3.5.0, plugin API 7).** `save_graph` saves the active tab after an approval card (a danger card when it replaces another saved graph); `open_graph` opens a tab bound to the saved graph; `list_data_files` lists data paths exactly as node parameters take them; `project_list_files`, `project_read_file` and `project_write_file` read and write project files inside the host's path rules. Every write shows the whole new file or a diff first; reading a data file asks before its rows go to the model provider; a node written to `mods/nodes/` loads only after you trust the project's mods and press Reload Nodes. On older hosts these tools are not offered. See [Side panel, skills and tools](docs/general-agent.md#060).
 - **Build and tune graphs by conversation.** The agent receives an installed-node catalog and schema-redacted active-graph snapshot, looks up exact schemas, applies typed GraphOps, and self-corrects from indexed per-operation receipts. **One operation batch is one host undo step**, not a whole agent turn. Automatic structural validation/repair follows actual current-turn canvas edits, with at most two repair nudges; unrelated existing nodes are outside repair authority, although `auto_layout` can reposition the canvas. Unresolved structure is incomplete, not a successful edit.
 - **Ask or Edit.** Ask can read graphs/schemas, research, explicitly validate structure, and inspect supported host runs. Both the tool list and executor prohibit canvas writes and live/experimental execution in Ask. Edit permits those actions; clearing, live execution, and studies have separate approvals.
 - **Run the live graph on request.** When asked to run, train, or evaluate, the agent validates the canvas graph, asks for explicit confirmation, executes through the host's `/ws/execution`, and streams node status and training progress (loss, epochs, a loss sparkline). One live run at a time has a default 6-hour browser-monitored cap, adjustable to 12; detaching stops local timeout monitoring, not the host run. Results retain host outputs, metric/log tails, node errors, and supported video references or small image previews.
@@ -86,7 +87,7 @@ For study design, metric selection, portable evidence, reproducibility, and resp
 cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 ```
 
-This unpinned command installs the latest merged `main` commit, including the prebuilt UI (**0.5.0**). Existing users must update explicitly:
+This unpinned command installs the latest merged `main` commit, including the prebuilt UI (**0.6.0**). Existing users must update explicitly:
 
 ```bash
 cdui plugin update graph-copilot
@@ -153,6 +154,7 @@ Copilot（原名 Graph Copilot，插件 id 仍是 `graph-copilot`）是 CodefyUI
 - **常駐側欄。** 在有側欄的 CodefyUI（插件 API 6）上，Copilot 是從工具列打開、可調寬度的側欄；面板收起時，工具列開關會標示它需要你處理、正在處理或已完成。CodefyUI 3.2.0 與更舊版本則跟以前一樣是浮動視窗。
 - **依照技能與專案指令做事。** System prompt 列出已啟用 Agent Skills 的名稱與描述；agent 用 `load_skill` 讀完整說明、用 `read_skill_file` 讀技能裡的檔案。也可以在訊息框輸入 `/` 自己挑技能。`AGENTS.md` 會作為專案指令加入。技能本文與 `AGENTS.md` 是放在標示區塊裡的參考資料：不能代替你核准、不能跳過核准、不能放寬詢問模式。技能的 `allowed-tools` 只顯示在技能頁面，不會實際限制。主程式沒有 Agent Skills 時，這些功能全部關閉。
 - **跨分頁與專案工作。** `list_tabs`、`open_graph`、`search_examples`、`open_example` 使用主程式的 workspace API；`project_status`、`project_diff`、`project_log`、`project_commit` 使用它的 git API。提交時核准卡片會列出每個檔案，只暫存這些路徑，永遠不包含 `.env` 或被忽略的檔案。見[側欄、技能與工具](i18n/zh-Hant/docusaurus-plugin-content-docs/current/general-agent.md)。
+- **存檔、開圖與專案檔案（CodefyUI 3.5.0，插件 API 7）。** `save_graph` 在核准卡片後儲存目前分頁（會覆蓋另一張已存的圖時是警示樣式的卡片）；`open_graph` 開出綁定到已存圖的分頁；`list_data_files` 列出資料檔，路徑就是節點參數的寫法；`project_list_files`、`project_read_file`、`project_write_file` 在主程式的路徑規則內讀寫專案檔案。每次寫入都先顯示完整的新檔或差異；讀取資料檔前會先問你，因為內容會送給模型供應商；寫進 `mods/nodes/` 的節點要等你信任這個專案的 mods 並按 Reload Nodes 才會載入。舊版主程式上不提供這些工具。見[側欄、技能與工具](i18n/zh-Hant/docusaurus-plugin-content-docs/current/general-agent.md)。
 - **對話建圖與調參。** Agent 取得已安裝節點目錄與依 schema 遮蔽敏感值的即時圖快照，查精確 schema、套用 GraphOps，並依 indexed 操作回執修正。**一批操作是一個宿主復原步驟**，不是整次 Agent turn。只有本次真正修改畫布才觸發自動結構驗證／修復，最多兩次修復提示；無關既有節點不在修復權限內，但 `auto_layout` 可重新排列畫布。未解決的結構問題會標為 incomplete。
 - **Ask／Edit。** Ask 可讀圖／schema、研究、明確驗證結構，以及讀取受支援的宿主執行紀錄；工具清單與執行層都禁止畫布修改及即時／實驗執行。Edit 可要求這些操作；清空、即時執行與研究分別需要核准。
 - **依要求執行即時圖。** run／train／evaluate 要求會先驗證畫布、取得明確確認，再透過 `/ws/execution` 執行，串流節點狀態、loss、epoch 與 loss sparkline。同時只能提交一次即時執行，瀏覽器監控的時間上限預設 6 小時、可調至 12；detach 停止本機 timeout 監控，不停止宿主 run。結果保留宿主輸出、指標／log 尾端、節點錯誤及支援的影片參照／小型圖片預覽。
@@ -230,7 +232,7 @@ Experiment Lab 不會把候選圖開到畫布上（有 workspace API 的主程�
 cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 ```
 
-此未指定 ref 的指令會安裝最新已合併的 `main` commit，包含預編譯 UI（**0.5.0**）。既有使用者需明確更新：
+此未指定 ref 的指令會安裝最新已合併的 `main` commit，包含預編譯 UI（**0.6.0**）。既有使用者需明確更新：
 
 ```bash
 cdui plugin update graph-copilot

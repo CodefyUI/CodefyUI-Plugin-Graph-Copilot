@@ -20,7 +20,7 @@ cdui plugin install CodefyUI/CodefyUI-Plugin-Graph-Copilot
 
 Use the canonical repository above **without an `@tag`, `@branch`, or `@commit` suffix** to follow its default branch, `main`. The installer resolves that branch to a commit SHA and downloads that commit's archive, including the committed `frontend/index.js`; users do not need to build the UI. It does not select the latest GitHub release or an unmerged PR.
 
-The current published plugin version is **0.5.0**: Copilot as a general agent with the side panel, Agent Skills, project instructions and workspace/project tools. It still runs on CodefyUI 3.2.0 and older, as a floating window with skills off. The host's current catalog also points to this repository without a fixed ref; older hosts may not list Graph Copilot, so the explicit repository command works across the supported baseline.
+The current published plugin version is **0.6.0**: Copilot as a general agent with the side panel, Agent Skills, project instructions and workspace/project tools; on CodefyUI 3.5.0 it also saves graphs, lists data files and reads and writes project files with your approval. It still runs on CodefyUI 3.2.0 and older, as a floating window with skills off. The host's current catalog also points to this repository without a fixed ref; older hosts may not list Graph Copilot, so the explicit repository command works across the supported baseline.
 
 Reload the CodefyUI browser tab. Open Copilot from its toolbar toggle (hosts with the side dock) or the button at the bottom-right (CodefyUI 3.2.0 and older).
 

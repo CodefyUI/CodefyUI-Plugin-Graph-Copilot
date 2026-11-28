@@ -1,7 +1,7 @@
 [plugin]
 id              = "graph-copilot"
 name            = "Copilot — General Agent"
-version         = "0.5.0"
+version         = "0.6.0"
 description     = "A general agent for CodefyUI: follows Agent Skills and AGENTS.md, builds and validates graphs, opens graphs and examples in tabs, reads and commits project files with approval, and runs approved isolated experiments with portable evidence."
 schema_version  = 1
 requires_codefyui = ">=1.3.0"
