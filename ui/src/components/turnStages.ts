@@ -157,6 +157,15 @@ export function opsLine(args: unknown): string {
   return parts.join(' · ');
 }
 
+/** P4: the row shows the error's first line; expanding it shows the whole
+ * error first, then the receipt (which may be cut at 4000 characters). */
+function errorDetail(error: unknown, detail: string): string {
+  if (typeof error !== 'string' || !error.trim()) return detail;
+  // A short one-line error is already whole in the row's summary.
+  if (error.length <= 120 && !error.includes('\n')) return detail;
+  return `${truncate(error, 4000)}\n\n${detail}`;
+}
+
 /** First line of an error, so a row stays one line tall. */
 export function firstLine(text: string): string {
   return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? '';
@@ -195,6 +204,27 @@ function unknownResult(label: string, detail: string, summary = tr('stage.unknow
 }
 
 /** Never infer a successful batch from its length or receipt order. */
+/** A batch where some operations failed: "1 of 12 operations failed:
+ * connect: <first error>", from the indexed receipt. Null when the receipt
+ * has no readable per-operation results (then the generic row applies). */
+function partialApplyFailure(args: Record<string, unknown>, result: ChatTurn): StageDescription | null {
+  const parsed = parseJson(result.content);
+  const receipts = parsed?.results;
+  const operations = Array.isArray(args.operations) ? args.operations : [];
+  if (!Array.isArray(receipts) || !receipts.length) return null;
+  const failures = receipts.map(asRecord).filter((receipt): receipt is Record<string, unknown> => !!receipt && receipt.ok === false)
+    .sort((a, b) => Number(a.index) - Number(b.index));
+  if (!failures.length) return null;
+  const first = failures[0];
+  const op = asRecord(operations[Number(first.index)])?.op;
+  const error = typeof first.error === 'string' && first.error.trim() ? firstLine(first.error) : tr('stage.toolFailed');
+  const summary = tr('stage.apply.partial', {
+    failed: failures.length, total: Math.max(operations.length, receipts.length),
+    error: typeof op === 'string' ? `${op}: ${error}` : error,
+  });
+  return { label: toolLabel('apply_graph_operations'), summary: truncate(summary, 160), status: 'error', detail: prettyDetail(result.content) };
+}
+
 function describeApply(args: Record<string, unknown>, result?: ChatTurn): StageDescription {
   const label = toolLabel('apply_graph_operations');
   const kinds = opKindCounts(args);
@@ -429,7 +459,7 @@ function describeCommit(result?: ChatTurn): StageDescription {
 }
 
 /** Tools that can stop at an approval card (clear and mass removal go through apply_graph_operations). */
-export const APPROVAL_TOOLS = new Set(['apply_graph_operations', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit']);
+export const APPROVAL_TOOLS = new Set(['apply_graph_operations', 'run_graph', 'run_graph_experiments', 'optimize_graph_parameters', 'project_commit', 'save_graph', 'project_write_file', 'project_read_file']);
 
 /** Local terminal metadata takes precedence over the tool payload's appearance. */
 export function describeStage(stage: ToolStage, active = false, awaiting = false): StageDescription {
@@ -451,9 +481,15 @@ export function describeStage(stage: ToolStage, active = false, awaiting = false
       case 'unknown': return unknownResult(label, detail,
         call.name === 'run_graph' && parseJson(result.content)?.status === 'detached'
           ? tr('stage.run.detached') : tr('stage.unknown'));
-      case 'error': return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : tr('stage.toolFailed'), status: 'error', detail };
+      case 'error': {
+        if (call.name === 'apply_graph_operations' && typeof error !== 'string') {
+          const partial = partialApplyFailure(asRecord(call.arguments) ?? {}, result);
+          if (partial) return partial;
+        }
+        return { label, summary: typeof error === 'string' ? truncate(firstLine(error), 120) : tr('stage.toolFailed'), status: 'error', detail: errorDetail(error, detail) };
+      }
     }
-    if (typeof error === 'string') return { label, summary: truncate(firstLine(error), 120), status: 'error', detail };
+    if (typeof error === 'string') return { label, summary: truncate(firstLine(error), 120), status: 'error', detail: errorDetail(error, detail) };
   }
   const args = asRecord(call.arguments) ?? {};
   switch (call.name) {

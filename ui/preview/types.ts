@@ -12,6 +12,8 @@ export interface PreviewSnapshot {
   lateInitialId: boolean;
   unreadableRunHistory: boolean;
   hostVersion: number;
+  /** Round 6: what the v7 saveGraph mock wrote. */
+  savedGraphs?: Array<{ name: string; overwrite: boolean }>;
   skills: Array<{ id: string; enabled: boolean }> | null;
   graph: SampleGraph;
   revision: number;

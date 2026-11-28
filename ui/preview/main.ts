@@ -24,7 +24,9 @@ const unreadableRunHistory = serverOwned && params.get('runHistory') === 'unread
 // `host=v6`: CodefyUI with Agent Skills and the side dock (apiVersion 6).
 // `host=v5`: CodefyUI 3.2.0 (apiVersion 5, no skills, floating widget only).
 // Neither: the original apiVersion 1 fixture.
-const hostVersion = params.get('host') === 'v6' || scenario.needsSkills ? 6 : params.get('host') === 'v5' ? 5 : 1;
+// `host=v7` (or a round-6 scenario): CodefyUI 3.5.0, with saveGraph, openSavedGraph and the agent file endpoints.
+const hostVersion = params.get('host') === 'v7' || scenario.needsV7 ? 7
+  : params.get('host') === 'v6' || scenario.needsSkills ? 6 : params.get('host') === 'v5' ? 5 : 1;
 const skills = hostVersion >= 6 ? createMockSkills({
   install: params.get('skillInstall') === 'refused' ? 'refused' : 'ok',
   instructions: scenario.instructions ?? null,
@@ -104,14 +106,17 @@ const byId = <T extends HTMLElement>(id: string): T => {
 
 const graph = scenario.id === 'empty-graph' ? createSampleGraph(render, { nodes: [], edges: [] }) : createSampleGraph(render);
 const execution = createMockExecution(nativeRun, window.location.origin, graph.getGraph, render, (reason) => http.recordBlocked(reason), { serverOwned, lateInitialId });
-const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory, skills, gitProject: params.get('project') === '1' });
+const http = createMockHttp(scenario, manual, graph.getGraph, render, execution.runRows, { execution, unreadableRunHistory, skills, gitProject: params.get('project') === '1', agentFiles: hostVersion >= 7 });
+// v7: the sample tab's saved-graph binding, and what saveGraph wrote.
+let sampleBinding: { name: string; file: string } | null = null;
+const savedGraphs: Array<{ name: string; overwrite: boolean }> = [];
 
 function snapshot(): PreviewSnapshot {
   const graphState = graph.inspect();
   return {
     ready, scenario: scenario.id, entry: bundle ? 'bundle' : 'source', manual,
     serverOwned, lateInitialId, unreadableRunHistory,
-    hostVersion, skills: skills?.inspect() ?? null,
+    hostVersion, skills: skills?.inspect() ?? null, savedGraphs: [...savedGraphs],
     ...graphState, ...http.inspect(), ...execution.inspect(),
     activeRun: JSON.parse(memory.get('active_run') ?? 'null') as unknown,
     conversations: JSON.parse(memory.get('conversations') ?? '[]') as unknown[],
@@ -190,7 +195,8 @@ const api: CodefyUIPluginAPI = {
   http: { fetch: http.fetch },
   ...(hostVersion >= 5 ? { workspace: {
     tabs: () => [
-      { tabId: 'tab-sample', title: 'Sample graph', revision: graph.inspect().revision, readOnly: false, transient: false, source: null, active: extraTabs.length === 0 },
+      { tabId: 'tab-sample', title: 'Sample graph', revision: graph.inspect().revision, readOnly: false, transient: false, source: null, active: extraTabs.length === 0,
+        ...(hostVersion >= 7 ? { unsaved: true, savedGraph: sampleBinding } : {}) },
       ...extraTabs.map((tab, index) => ({ tabId: tab.tabId, title: tab.title, revision: 0, readOnly: false, transient: tab.transient, source: null, active: index === extraTabs.length - 1 })),
     ],
     snapshot(tabId?: string) {
@@ -208,6 +214,23 @@ const api: CodefyUIPluginAPI = {
       return results;
     },
     onChanged: () => () => {},
+    ...(hostVersion >= 7 ? {
+      async saveGraph(request: { tabId?: string; name?: string; overwrite?: boolean }) {
+        const name = request.name ?? sampleBinding?.name;
+        if (!name) return { ok: false as const, code: 'needs_name' as const, message: 'This tab needs a name.' };
+        if (name === 'train' && !request.overwrite) return { ok: false as const, code: 'exists' as const, message: 'A graph named train exists.' };
+        sampleBinding = { name, file: `graphs/${name}` };
+        savedGraphs.push({ name, overwrite: request.overwrite === true });
+        render();
+        return { ok: true as const, tabId: request.tabId ?? 'tab-sample', name, file: `graphs/${name}`, created: !request.overwrite };
+      },
+      async openSavedGraph(name: string) {
+        const tabId = `tab-${extraTabs.length + 1}`;
+        extraTabs.push({ tabId, title: name, graph: { nodes: [], edges: [] }, transient: false });
+        render();
+        return { ok: true as const, tabId, alreadyOpen: false };
+      },
+    } : {}),
   } } : {}),
   storage: {
     get: (key) => memory.get(key) ?? null,

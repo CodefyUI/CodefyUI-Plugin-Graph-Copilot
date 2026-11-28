@@ -27,6 +27,8 @@ import { isPassiveDetach } from './abortReasons';
 export interface ExperimentApprovalRequest {
   hypothesis: string;
   variantCount: number;
+  /** P6: one of the variants is the current graph, unchanged (the baseline row). */
+  includesBaseline?: boolean;
   repetitions: number;
   executionCount: number;
   concurrency: number;
@@ -97,6 +99,8 @@ function approvalOperationSummary(operation: GraphOp): string {
   }
 }
 let liveRunInFlight = false;
+/** P1: how many live runs one agent turn may dispatch, failures included. */
+export const MAX_LIVE_RUNS_PER_TURN = 3;
 
 function declined(context: RuntimeContext, content: string, reason = 'execution_declined'): never {
   context.record(JSON.stringify({ cancelled: true, ...(reason === 'execution_stale' ? { replan: true } : {}), error: content }), 'cancelled');
@@ -152,6 +156,13 @@ async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Pro
   throwIfAborted(signal);
   const validation = await context.validate();
   throwIfAborted(signal);
+  const runs = context.budget.liveRuns;
+  if (runs && runs.used >= MAX_LIVE_RUNS_PER_TURN) return error(
+    `run_graph was already requested ${runs.used} times in this turn (limit ${MAX_LIVE_RUNS_PER_TURN}). Do not run again: tell the user what happened, what you changed, and what they can try next.`,
+  );
+  if (context.budget.failedGraphs?.has(graphSemanticFingerprint(api))) return error(
+    'This exact graph already failed in this turn. Fix the cause of the failure first; the unchanged graph is not run again.',
+  );
   if (!validation.valid) return json({
     error: 'The current graph is not runnable — fix stable structural validation errors before executing; unavailable or stale validation cannot authorize a run.',
     errors: validation.errors, validation_status: validation.status,
@@ -195,6 +206,7 @@ async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Pro
     reason, submittedAt, timeoutMinutes, ...(device ? { device } : {}),
   };
   context.dispatched();
+  if (runs) runs.used += 1;
   let outcome;
   try {
     // Do not awaitWithSignal here: native cancellation has a cleanup handshake.
@@ -268,7 +280,19 @@ async function approvedLiveRun(call: WireToolCall, context: RuntimeContext): Pro
   // Journal it, but never notify an inactive browser turn of a host finish.
   if (!isPassiveDetach(signal) || cancelSignal?.aborted) observe(() => callbacks.onRunFinished?.(outcome));
   if (outcome.status === 'cancelled') throw new RuntimeToolExit('cancelled', 'execution_cancelled', 'The host run was cancelled. External effects are not rolled back.');
+  if (outcome.status === 'error') {
+    // A definite failure: the host reached a terminal state (or nothing was
+    // submitted). The model gets the receipt and may explain, fix the graph and
+    // ask for approval again; the same graph is refused below if re-requested.
+    context.budget.failedGraphs?.add(fingerprint);
+    if (context.budget.liveRuns) context.budget.liveRuns.lastFailed = true;
+    return json({
+      ...receipt,
+      next_step: 'The run failed. Read the error and node_errors, fix the cause in the graph, validate, then call run_graph again (the user approves it on the card). Do not call it again for the same unchanged graph.',
+    }, 'error');
+  }
   if (outcome.status !== 'complete') throw new RuntimeToolExit('incomplete', 'execution_failed', 'The host execution did not complete successfully. Inspect its terminal receipt; do not automatically rerun it.');
+  if (context.budget.liveRuns) context.budget.liveRuns.lastFailed = false;
   return json(receipt, terminal);
 }
 
@@ -296,6 +320,7 @@ async function studyRun(call: WireToolCall, context: RuntimeContext, trustedSear
     try {
       approved = await context.approve({ kind: 'experiment', request: {
         hypothesis: approval.hypothesis, variantCount: request.variants.length,
+        includesBaseline: request.variants.some((variant) => Array.isArray(variant.operations) && variant.operations.length === 0),
         repetitions: request.repetitions ?? 1, executionCount: plannedRuns,
         concurrency: request.concurrency ?? 1, runTimeoutMinutes: Math.round(experimentRunTimeoutMs(request) / 60_000), applyBest: request.apply_best ?? false,
         variants: approval.variants.map((variant) => ({ label: variant.label, operations: variant.operations.map(approvalOperationSummary) })),

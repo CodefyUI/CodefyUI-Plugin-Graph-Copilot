@@ -91,3 +91,37 @@ describe('Markdown', () => {
     expect(container.querySelector('em')).toBeNull();
   });
 });
+
+describe('Markdown ordered list numbers (R3)', () => {
+  const numbersOf = (text: string) => {
+    const { container } = render(<Markdown text={text} />);
+    return [...container.querySelectorAll('ol')].map((ol) => {
+      const start = ol.hasAttribute('start') ? Number(ol.getAttribute('start')) : 1;
+      return [...ol.querySelectorAll(':scope > li')].map((li, i) => (li.hasAttribute('value') ? Number(li.getAttribute('value')) : start + i));
+    }).flat();
+  };
+
+  it('a code block between items keeps the source numbers', () => {
+    const text = '1. Open the graph.\n```\nrun\n```\n2. Validate.\n3. Run.\n```\nx\n```\n4. Read the result.';
+    expect(numbersOf(text)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a blank line between items keeps the source numbers', () => {
+    expect(numbersOf('1. a\n\n2. b\n\n3. c')).toEqual([1, 2, 3]);
+  });
+
+  it('a list that starts at 1 has no start attribute; a sequential list has no item values', () => {
+    const { container } = render(<Markdown text={'1. a\n2. b'} />);
+    expect(container.querySelector('ol')!.hasAttribute('start')).toBe(false);
+    expect(container.querySelectorAll('li[value]')).toHaveLength(0);
+  });
+
+  it('numbers out of sequence are shown as written', () => {
+    expect(numbersOf('3. c\n7. g\n8. h')).toEqual([3, 7, 8]);
+  });
+
+  it('bullet lists are unchanged', () => {
+    const { container } = render(<Markdown text={'- a\n- b'} />);
+    expect(container.querySelector('ul')!.outerHTML).toBe('<ul class="gcp-md-list"><li>a</li><li>b</li></ul>');
+  });
+});

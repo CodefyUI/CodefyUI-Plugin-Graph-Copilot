@@ -73,6 +73,40 @@ Large results are cut, and the cut is marked: skill text and files at 64 KB, dif
 
 `project_commit` lists every file on the approval card. It stages only those paths (never "add all"), refuses `.env` files and files git ignores, refuses files that are only partly staged (finish or discard the staging in the Source Control tab first), refuses during a merge, rebase or conflict, and checks the files again after you approve. It never pushes, pulls or switches branches; do those in CodefyUI's Source Control tab.
 
+## 0.6.0
+
+Changes after testing with real models (Codex and a local reasoning model through Ollama).
+
+**After a failed run.** When the host reports a definite failure (the run finished with an error, or nothing was submitted), the error goes back to the model and the turn continues: it can explain the cause, fix the graph, validate and ask you to approve a new run. The same unchanged graph is refused, and `run_graph` runs at most 3 times per turn. When the outcome is not known (the connection was lost, the run may still be running, a stop was not confirmed) the turn still ends, as before. Studies follow the same rule.
+
+**Validation repair.** The automatic repair prompt lists only errors this turn's edits introduced. Errors the graph already had before the first edit are left out, an empty graph is not validated, and after you approve clearing the graph the agent is not asked to add nodes back.
+
+**Project in the prompt.** With a project open, the system prompt names it, says whether it is a git repository, lists up to 50 saved graphs (then a count) and the mods state; without one it says no project is open. Names are quoted as data. On plugin API 7 the current graph section says whether the active tab is bound to a saved graph and has unsaved changes.
+
+**Turn summary.** A failed operation that a later batch in the same turn corrected (a successful operation of the same kind, then a valid graph) reads "Completed" with "1 operation failed and was corrected later in this run". A successful run says what ran ("Ran the graph once", the run id); the "check before repeating" caution stays for outcomes that are not known. Expanding a tool row shows the whole error.
+
+**Layout and parameter search.** `auto_layout` is used only for batches that add or remove nodes or connections, never for a parameter change. A grid that contains the current value measures that setting as the baseline in the same study ("5 settings (including the current baseline)").
+
+**Reasoning models.** On a host that streams `reasoning_delta`, the run bar shows "Reasoning" and the seconds elapsed. The reasoning text is never shown or stored. When the model request fails, the panel shows the host's message.
+
+### New tools (CodefyUI 3.5.0, plugin API 7)
+
+| Tool | Mode | Approval | What it does |
+| --- | --- | --- | --- |
+| `save_graph` | Edit | Always: "Save as `NAME`?", "Save the changes to `NAME`?", or a danger card naming a saved graph it replaces | Saves the active tab through the editor's own save path. Replacing another saved graph needs `overwrite: true` after you agreed. |
+| `list_data_files` | Ask and Edit | None | Built-in samples, project data files and uploads, with paths as node parameters take them, sizes, CSV column names and row counts. No rows. |
+| `project_list_files` | Ask and Edit | None | One folder of the project. |
+| `project_read_file` | Ask and Edit | For data files only (under `data/` or `assets/data/`, or `.csv .tsv .jsonl .parquet`): the card names the file, its size and the provider | Reads up to 64 KB, quoted as data. |
+| `project_write_file` | Edit | Always: the whole new file, or a diff | Writes `data/**` and `assets/data/**` (`.csv .tsv .json .jsonl .txt .md .yaml .yml`), `docs/**` and `notes/**` (`.md .txt .json .yaml .yml .csv`), root `.md` files, `mods/nodes/<name>.py` and `mods/presets/<name>.json`. `data/samples/` is not writable. |
+
+- A write uses the file's hash from just before the card, so a file that changed in the meantime is not overwritten. A file whose read was cut at 64 KB is not rewritten.
+- `mods/nodes/` files: the card says the code will run on your computer. Saving does not run it. The node exists only after you agree to CodefyUI's trust prompt and press Reload Nodes, and the model is told so.
+- `AGENTS.md`: the card is the danger style, because the file goes into every later conversation's prompt.
+- A refusal from the host is shown as the host wrote it and is not retried under another path.
+- `open_graph` on plugin API 7 opens a tab bound to the saved graph (or switches to it), and `list_tabs` reports `unsaved` and the bound graph.
+
+On CodefyUI 3.4.0 and older (plugin API 6 or lower) none of these tools are offered and the other tools work as before. An endpoint that answers 404 is treated as missing on that host.
+
 ## Language
 
 The panel follows CodefyUI's interface language (English or Traditional Chinese) and switches when you change it.

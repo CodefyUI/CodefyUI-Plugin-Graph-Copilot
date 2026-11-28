@@ -24,7 +24,7 @@ export type ToolGroup = 'graph' | 'run' | 'experiment' | 'workspace' | 'skill' |
 
 /** What a tool's approval card is about. The card's details are filled in at
  * the gate (`ToolContext.approve`), because some need host reads first. */
-export type ApprovalKind = 'clear_graph' | 'run_graph' | 'experiment' | 'project_commit';
+export type ApprovalKind = 'clear_graph' | 'run_graph' | 'experiment' | 'project_commit' | 'save_graph' | 'project_write' | 'data_read';
 
 export interface ApprovalRequirement { kind: ApprovalKind }
 
@@ -34,17 +34,63 @@ export interface ProjectCommitApprovalRequest {
   files: Array<{ path: string; status: string }>;
 }
 
+/** P7: save the active tab as a saved graph. */
+export interface SaveGraphApprovalRequest {
+  action: 'save_graph';
+  /** The saved graph's name after the save. */
+  name: string;
+  /** Saving onto the graph the tab is already bound to. */
+  inPlace: boolean;
+  /** The name of another saved graph this save replaces, or null. */
+  overwrites: string | null;
+  /** The tab being saved. */
+  tab: string;
+}
+
+/** P9: write one project file. */
+export interface ProjectWriteApprovalRequest {
+  action: 'project_write';
+  path: string;
+  created: boolean;
+  /** New file: its whole content (cut for display when long). */
+  content?: string;
+  /** Existing file: a line diff, or null when it is too large to diff. */
+  diff?: string | null;
+  bytes: number;
+  /** Under mods/: code that runs on this computer once trusted. */
+  mods: boolean;
+  /** The root AGENTS.md: added to every later conversation's prompt. */
+  agentInstructions: boolean;
+}
+
+/** P9: read a data file, whose rows go to the LLM provider. */
+export interface DataReadApprovalRequest {
+  action: 'data_read';
+  path: string;
+  size: number | null;
+  /** Where the content goes: provider id, and model or endpoint. */
+  provider: string;
+}
+
+export type FileApprovalRequest = SaveGraphApprovalRequest | ProjectWriteApprovalRequest | DataReadApprovalRequest;
+
 export type ApprovalRequest =
   | { kind: 'clear_graph'; request: ClearGraphRequest }
   | { kind: 'run_graph'; request: RunApprovalRequest }
   | { kind: 'experiment'; request: ExperimentApprovalRequest }
-  | { kind: 'project_commit'; request: ProjectCommitApprovalRequest };
+  | { kind: 'project_commit'; request: ProjectCommitApprovalRequest }
+  | { kind: 'save_graph'; request: SaveGraphApprovalRequest }
+  | { kind: 'project_write'; request: ProjectWriteApprovalRequest }
+  | { kind: 'data_read'; request: DataReadApprovalRequest };
 
 export interface ToolResult {
   content: string;
   outcome: ToolOutcome;
   /** Text CodefyUI can give again: stored as this reference only. */
   ref?: HostRef;
+  /** R3: the host definitely refused an approved action and nothing changed.
+   * The turn is not made incomplete by it; the receipt explains the refusal. */
+  refused?: boolean;
 }
 
 /** What `available` and `approval` may look at: the environment, not the turn. */
@@ -81,6 +127,8 @@ export interface HostFeatures {
   skills: boolean;
   /** The host is in project mode and the project is a git repository. */
   gitProject: boolean;
+  /** The host reported an open project (`/api/agent/context`). */
+  project?: boolean;
 }
 
 /** The loop's own bookkeeping for graph edits, shared with the graph tools. */
@@ -95,8 +143,21 @@ export interface TurnState {
   /** The exact receipt last journaled for this call. */
   rawReceipt(): string | undefined;
   addRoundOps(text: string): void;
+  /** Operation kinds (add_node, connect, ...) that failed and have not been
+   * followed by a successful operation of the same kind in a later batch. */
+  readonly failedOpKinds?: Set<string>;
   /** Tabs this turn opened (open_graph, open_example); approval cards say so. */
   readonly openedTabs: Set<string>;
+}
+
+/** Per-turn execution limits, shared by every runtime tool call of the turn. */
+export interface TurnBudget {
+  /** Study executions left (16 per turn). */
+  remaining: number;
+  /** Live runs dispatched this turn; `lastFailed` when the latest one failed definitely. */
+  liveRuns?: { used: number; lastFailed: boolean };
+  /** Semantic fingerprints of graphs whose live run failed this turn. */
+  failedGraphs?: Set<string>;
 }
 
 export interface ToolContext extends ToolEnvironment {
@@ -106,7 +167,7 @@ export interface ToolContext extends ToolEnvironment {
   cancelSignal?: AbortSignal;
   callbacks: TurnCallbacks;
   turn: TurnState;
-  budget: { remaining: number };
+  budget: TurnBudget;
   phase(value: RunPhase): void;
   /** Journal this call's receipt; `terminal: false` keeps it pending. */
   record(content: string, outcome: ToolOutcome, terminal?: boolean): void;

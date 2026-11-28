@@ -44,7 +44,7 @@ export const applyGraphOperationsTool: ToolDefinition = {
 - {"op":"set_params","node_id":"<node id or ref>","params":{...}}
 - {"op":"remove_node","node_id":"<node id or ref>"} — a batch removing 10 or more nodes, or 3 or more that are at least half the graph, needs the user's approval like clear_graph. Removals add up over the turn: splitting them into smaller batches does not avoid the approval.
 - {"op":"remove_edge","source":"<node id or ref>","target":"<node id or ref>","source_handle":"<optional>","target_handle":"<optional>"}
-- {"op":"clear_graph"} — singleton batch only, requires fresh user confirmation. Never bypass a refusal with node removal.
+- {"op":"clear_graph"} — singleton batch only. When the user asked to clear, call it directly: the editor shows them an approval card, which is the confirmation (do not ask in prose). Never bypass a declined card with node removal.
 - {"op":"auto_layout"} — auto-positions nodes after structural changes.
 Malformed batches are rejected in full before host dispatch. The host validates operation semantics; known failing operations are skipped and reported by index.`,
   input_schema: {
@@ -140,6 +140,13 @@ Malformed batches are rejected in full before host dispatch. The host validates 
       throw new RunExit('incomplete', 'receipt_unknown', 'The host returned missing or invalid indexed receipts. Changes may have occurred; do not retry.');
     }
     ctx.record(turn.rawReceipt()!, review.failed ? 'error' : 'completed');
+    // P4: a failed operation kind counts as corrected only by a successful
+    // operation of the same kind in a LATER batch (never by layout alone).
+    const failedKinds = turn.failedOpKinds;
+    if (failedKinds) {
+      operations.forEach((op, index) => { if (review.byIndex[index]?.ok === true) failedKinds.delete(op.op); });
+      operations.forEach((op, index) => { if (review.byIndex[index]?.ok === false) failedKinds.add(op.op); });
+    }
     if (review.failed) ctx.markIssue();
     if (review.applied > 0) {
       rememberAffectedNodes(operations, review, turn.affectedNodes);

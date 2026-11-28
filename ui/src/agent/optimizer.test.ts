@@ -130,7 +130,8 @@ describe('compileParameterOptimizer grid strategy', () => {
     const result = compileParameterOptimizer(input(), BASE_GRAPH, [MODEL_DEFINITION]);
 
     expect(result.request.variants).toEqual([
-      { id: 'baseline', label: 'Baseline', operations: [] },
+      // P6: the grid cell equal to the live graph is the baseline row, named so.
+      { id: 'baseline', label: 'Baseline (current): model-a.depth=2', operations: [] },
       {
         id: 'optimizer-grid-001',
         label: 'Grid 1: model-a.depth=3',
@@ -452,8 +453,11 @@ describe('compileParameterOptimizer request validation', () => {
         { node_id: 'model-a', param: 'enabled', values: [false, true] },
       ],
     }), BASE_GRAPH, [MODEL_DEFINITION]);
-    expect(allowed.request.variants).toHaveLength(7); // one unchanged assignment was removed
-    expect(allowed.metadata.totalExecutionCount).toBe(14);
+    // P6: the unchanged assignment is measured once, as the baseline row,
+    // even with include_baseline false: 1 baseline + 7 changed = 8 variants.
+    expect(allowed.request.variants).toHaveLength(8);
+    expect(allowed.request.variants[0]).toMatchObject({ id: 'baseline', operations: [] });
+    expect(allowed.metadata.totalExecutionCount).toBe(16);
 
     expect(() => compileParameterOptimizer(input({
       include_baseline: false,
@@ -514,5 +518,30 @@ describe('timeout_minutes passthrough', () => {
     expect(() => compileParameterOptimizer(
       input({ timeout_minutes: 600 }), BASE_GRAPH, [MODEL_DEFINITION],
     )).toThrow(/timeout_minutes/);
+  });
+});
+
+describe('P6: a grid that contains the current value measures it as the baseline (F13)', () => {
+  it('k = 1, 3, 5, 9, 15 with k = 5 current: one study, 5 settings, baseline row first', () => {
+    const graph = { nodes: [{ id: 'model-a', type: 'Model', data: { params: { depth: 5 } } }], edges: [] };
+    const wide = { ...MODEL_DEFINITION, params: MODEL_DEFINITION.params.map((param) => (param.name === 'depth' ? { ...param, max_value: 20 } : param)) };
+    const result = compileParameterOptimizer(input({
+      include_baseline: false, repetitions: 3,
+      bindings: [{ node_id: 'model-a', param: 'depth', values: [1, 3, 5, 9, 15] }],
+    }), graph as never, [wide]);
+    expect(result.request.variants.map((variant) => variant.label)).toEqual([
+      'Baseline (current): model-a.depth=5',
+      'Grid 1: model-a.depth=1', 'Grid 2: model-a.depth=3', 'Grid 3: model-a.depth=9', 'Grid 4: model-a.depth=15',
+    ]);
+    expect(result.metadata).toMatchObject({ includesBaseline: true, totalVariantCount: 5, totalExecutionCount: 15 });
+  });
+
+  it('a grid without the current value still honours include_baseline false', () => {
+    const graph = { nodes: [{ id: 'model-a', type: 'Model', data: { params: { depth: 5 } } }], edges: [] };
+    const result = compileParameterOptimizer(input({
+      include_baseline: false, bindings: [{ node_id: 'model-a', param: 'depth', values: [1, 3] }],
+    }), graph as never, [MODEL_DEFINITION]);
+    expect(result.request.variants.map((variant) => variant.id)).toEqual(['optimizer-grid-001', 'optimizer-grid-002']);
+    expect(result.metadata.includesBaseline).toBe(false);
   });
 });

@@ -3,6 +3,7 @@
 import { streamChat, composeUserContent } from '../llm/client';
 import type { WireMessage, WireToolCall, DoneEvent, Provider } from '../llm/client';
 import { buildSystemPrompt } from './prompt';
+import type { ActiveTabInfo } from './prompt';
 import { historyWindow, historicalCallIds, isToolCall } from './history';
 import {
   awaitWithSignal, buildOpsSummary, comparisonSnapshot,
@@ -29,11 +30,11 @@ import type {
 } from './types';
 import { buildChatBody, copy, observe } from './chatBody';
 import { RunExit } from './runExit';
-import { validateCurrentGraph } from './validation';
+import { validateCurrentGraph, validationErrorsOf } from './validation';
 import { resolveHostRefs } from './historyRefs';
 import { toolRegistry, toWire } from './tools';
 import type {
-  ApprovalRequest, ApprovalRequirement, ProjectCommitApprovalRequest, SkillSession, ToolContext, ToolEnvironment, ToolRegistry, TurnState,
+  ApprovalRequest, ApprovalRequirement, FileApprovalRequest, ProjectCommitApprovalRequest, SkillSession, ToolContext, ToolEnvironment, ToolRegistry, TurnBudget, TurnState,
 } from './tools';
 export { validateCurrentGraph } from './validation';
 export type { CurrentGraphValidation } from './validation';
@@ -56,6 +57,10 @@ export interface TurnCallbacks {
   onExperimentApproval?(request: ExperimentApprovalRequest, signal?: AbortSignal): Promise<boolean>;
   onRunApproval?(request: RunApprovalRequest, signal?: AbortSignal): Promise<boolean>;
   onProjectCommitApproval?(request: ProjectCommitApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  /** P7/P9: save a graph, write a project file, read a data file. */
+  onFileApproval?(request: FileApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  /** P10: the model is reasoning (the host streams reasoning_delta); no content. */
+  onReasoning?(): void;
   onRunProgress?(update: RunProgressUpdate): void;
   onRunFinished?(outcome: RunGraphOutcome): void;
   onRunStarted?(hostRunId: string): void;
@@ -102,7 +107,21 @@ function turnToWire(turn: ChatTurn, provider: Provider): WireMessage {
   return message;
 }
 
-function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: AgentContext | null, readOnlyTools?: string[]): WireMessage[] {
+/** The active tab for the prompt's Current graph section; null when unknown. */
+function activeTabInfo(api: CodefyUIPluginAPI): ActiveTabInfo | null {
+  try {
+    const active = api.workspace?.tabs?.().find((tab) => tab.active);
+    if (!active) return null;
+    return {
+      title: active.title,
+      ...(typeof active.unsaved === 'boolean' ? { unsaved: active.unsaved } : {}),
+      ...(active.savedGraph === null || (isRecord(active.savedGraph) && typeof active.savedGraph.name === 'string')
+        ? { graph: active.savedGraph ? { name: active.savedGraph.name, file: String(active.savedGraph.file ?? '') } : null } : {}),
+    };
+  } catch { return null; }
+}
+
+function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: AgentContext | null, readOnlyTools?: string[], gitProject?: boolean, tools?: string[]): WireMessage[] {
   throwIfAborted(opts.signal);
   const definitions = opts.api.graph.getNodeDefinitions();
   throwIfAborted(opts.signal);
@@ -121,7 +140,7 @@ function buildInitialMessages(opts: RunTurnOpts, mode: AgentMode, context: Agent
     }, opts.settings.provider);
   });
   return [
-    { role: 'system', content: buildSystemPrompt(definitions, graph, mode, { context, readOnlyTools }) },
+    { role: 'system', content: buildSystemPrompt(definitions, graph, mode, { context, readOnlyTools, gitProject, activeTab: activeTabInfo(opts.api), tools }) },
     ...safeHistory,
     { role: 'user', content: composeUserContent(withSkills(opts.userText, opts.skills), opts.attachments, opts.settings.provider) },
   ];
@@ -193,19 +212,33 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
   // Conservative: a later unrelated success does not prove a failed request
   // was corrected. Preserve observed failure obligations for this run.
   const issues = new Set<string>();
+  // R3: tool calls that found nothing or were refused before any dispatch.
+  const notedCalls = new Set<number>();
   const affectedNodes = new Set<string>();
   const openedTabs = new Set<string>();
+  const failedOpKinds = new Set<string>();
   const knownIds = new Set<string>();
   const rawCalls: WireToolCall[] = [];
   const rawReceipts = new Map<number, string>();
   const toolCallsBySlot = new Map<number, WireToolCall>();
   const secretContexts: Array<{ graph: SerializedGraph; definitions: NodeDefinition[] }> = [];
-  const experimentBudget = { remaining: MAX_EXPERIMENT_RUNS };
+  const experimentBudget: TurnBudget = {
+    remaining: MAX_EXPERIMENT_RUNS, liveRuns: { used: 0, lastFailed: false }, failedGraphs: new Set(),
+  };
+  // P2: validation errors that existed before this turn's first edit are not
+  // this turn's to repair. The graph is kept here before the first edit and
+  // validated only if the finish check reports issues.
+  let graphBeforeEdits: SerializedGraph | undefined;
+  let baselineErrors: Set<string> | null | undefined;
+  let clearApproved = false;
+  // P4: which tool slots dispatched host execution, for the run facts.
+  const dispatchedSlots = new Map<number, string>();
+  const hostRunIds: string[] = [];
   // R2: filled in once the turn starts (never before the pre-abort check).
   const removals = { removed: 0, startNodes: null as number | null };
   const env: ToolEnvironment = {
     api, settings, mode, removals,
-    host: { skills: agentContext !== null, gitProject },
+    host: { skills: agentContext !== null, gitProject, project: !!(agentContext as AgentContext | null)?.project },
     ...(agentContext ? { skills: skillSession(agentContext, opts.history, historyWindow(opts.history), opts.skills) } : {}),
   };
   const offeredTools = (opts.registry ?? toolRegistry).list({ mode, env });
@@ -257,6 +290,9 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     throw new RunExit('incomplete', reason, 'The graph changed. Continue from its current state instead of replaying this run.');
   };
   const currentSnapshot = () => { throwIfAborted(signal); return comparisonSnapshot(api.graph.getGraph()); };
+  const graphIsEmpty = (): boolean => {
+    try { return api.graph.getGraph().nodes.every((node) => node.type === 'note'); } catch { return false; }
+  };
   const assertRepairSnapshot = () => {
     if (repairSnapshot !== undefined && currentSnapshot() !== repairSnapshot) stale();
   };
@@ -270,6 +306,19 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       }
       publishTool(slot);
     }
+    if (dispatchedSlots.size) {
+      const executions = { runs: 0, failedRuns: 0, studies: 0, runIds: hostRunIds.slice(-5) };
+      let unknown = false;
+      for (const [index, name] of dispatchedSlots) {
+        const outcome = turns[index]?.toolOutcome;
+        if (outcome !== 'completed' && outcome !== 'error') unknown = true;
+        if (name === 'run_graph') { executions.runs++; if (outcome === 'error') executions.failedRuns++; }
+        else if (name === 'run_graph_experiments' || name === 'optimize_graph_parameters') executions.studies++;
+      }
+      summary.executions = executions;
+      summary.executionUnknown = unknown;
+    }
+    if (notedCalls.size) summary.notedCalls = notedCalls.size;
     const local = { ...summary, validation: localValidation(summary.validation) };
     let lastAssistant = -1;
     turns.forEach((turn, index) => { if (turn.role === 'assistant') lastAssistant = index; });
@@ -301,8 +350,15 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     throwIfAborted(signal);
     assertRepairSnapshot();
     const args = call.arguments;
+    // R3: only a failed or uncertain graph change or approved side effect
+    // leaves an open issue. A read that found nothing, or a refusal before
+    // anything was dispatched, is a neutral note: the model's reply explains it.
+    const settle = (consequential: boolean) => {
+      if (consequential) issues.add(call.name);
+      else notedCalls.add(slot.index);
+    };
     const errorResult = (message: string) => {
-      issues.add(call.name);
+      settle(dispatchedSlots.has(slot.index));
       recordTool(slot, JSON.stringify({ error: message }), 'error');
     };
     // Only the tools offered this turn can run: Ask mode offers read-only ones.
@@ -328,7 +384,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       }
       let answer: boolean;
       // Name the tab the action applies to (the agent may have switched it).
-      if (request.kind !== 'project_commit') request = { ...request, request: { ...request.request, target: approvalTarget(api, openedTabs) } } as ApprovalRequest;
+      if (request.kind === 'clear_graph' || request.kind === 'run_graph' || request.kind === 'experiment') request = { ...request, request: { ...request.request, target: approvalTarget(api, openedTabs) } } as ApprovalRequest;
       switch (request.kind) {
         case 'clear_graph':
           if (!opts.confirmClearGraph) return false;
@@ -342,8 +398,17 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         case 'project_commit':
           if (!callbacks.onProjectCommitApproval) return false;
           answer = await awaitWithSignal(callbacks.onProjectCommitApproval(request.request, signal), signal); break;
+        case 'save_graph':
+        case 'project_write':
+        case 'data_read':
+          if (!callbacks.onFileApproval) return false;
+          answer = await awaitWithSignal(callbacks.onFileApproval(request.request, signal), signal); break;
       }
       granted = answer === true;
+      if (granted && request.kind === 'clear_graph' && call.name === 'apply_graph_operations') {
+        const operations = args.operations;
+        if (Array.isArray(operations) && isRecord(operations[0]) && operations[0].op === 'clear_graph') clearApproved = true;
+      }
       return granted;
     };
     const canApprove = (kind: ApprovalRequest['kind']): boolean => {
@@ -352,6 +417,9 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         case 'run_graph': return !!callbacks.onRunApproval;
         case 'experiment': return !!callbacks.onExperimentApproval;
         case 'project_commit': return !!callbacks.onProjectCommitApproval;
+        case 'save_graph':
+        case 'project_write':
+        case 'data_read': return !!callbacks.onFileApproval;
       }
     };
     const checkRepairScope = (operations: GraphOp[]) => {
@@ -417,23 +485,26 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       currentSnapshot, assertRepairSnapshot, stale,
       rawReceipt: () => rawReceipts.get(slot.index),
       addRoundOps: (text) => { roundOps.push(text); },
-      openedTabs,
+      openedTabs, failedOpKinds,
     };
     const context: ToolContext = {
       ...env, call, signal, cancelSignal: opts.cancelSignal, callbacks, turn: turnState, budget: experimentBudget, phase,
       record: (content, outcome, terminal) => recordRuntime(content, outcome, terminal),
       fail: errorResult,
-      markIssue: () => { issues.add(call.name); },
+      // Called for failed graph operations (after dispatch) and unavailable validation.
+      markIssue: () => { settle(!tool.readOnly); },
       validate: () => validateCurrentGraph(api, signal),
       canApprove, approve, assertApproved,
       dispatched: () => {
         assertApproved();
         summary.sideEffectAttempted = true;
+        dispatchedSlots.set(slot.index, call.name);
         recordTool(slot, JSON.stringify({ outcome: 'unknown', error: 'The approved runner was dispatched; external effects are not yet known.' }), 'unknown', false);
       },
       hostRunStarted: (id) => {
         if (summary.hostRunId === id) return;
         summary.hostRunId = id;
+        if (!hostRunIds.includes(id)) hostRunIds.push(id);
         observe(() => callbacks.onRunStarted?.(id));
       },
       promotionHooks: {
@@ -453,11 +524,16 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
         receiptCaptured: () => promotionCaptured,
       },
     };
+    if (call.name === 'apply_graph_operations' && mode === 'edit' && graphBeforeEdits === undefined) {
+      try { graphBeforeEdits = copy(api.graph.getGraph()); } catch { /* then every error counts as this turn's */ }
+    }
     const result = await tool.execute(args, context);
     if (result) {
       recordRuntime(result.content, result.outcome);
       if (result.ref) turns[slot.index] = { ...turns[slot.index], hostRef: result.ref };
-      if (result.outcome !== 'completed') issues.add(call.name);
+      if (result.outcome !== 'completed') settle((dispatchedSlots.has(slot.index) && !result.refused) || result.outcome === 'unknown');
+      // P1: a later successful live run settles an earlier failed one.
+      else if (call.name === 'run_graph') issues.delete(call.name);
     }
   };
 
@@ -474,7 +550,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
     throwIfAborted(signal);
     historicalCallIds(opts.history).forEach((id) => knownIds.add(id));
     throwIfAborted(signal);
-    const wire = buildInitialMessages(opts, mode, agentContext, mode === 'ask' ? offeredTools.map((tool) => tool.name) : undefined);
+    const wire = buildInitialMessages(opts, mode, agentContext, mode === 'ask' ? offeredTools.map((tool) => tool.name) : undefined, gitProject, offeredTools.map((tool) => tool.name));
     try { removals.startNodes = api.graph.getGraph().nodes.length; } catch { /* then counted from the live graph */ }
     const tools = offeredTools.map(toWire);
     while (true) {
@@ -488,6 +564,7 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       try {
         await awaitWithSignal(streamChat(api, buildChatBody(settings, wire, tools), {
           onText(delta) { if (streamActive && !signal?.aborted && !round.done && !round.error) { round.text += delta; observe(() => callbacks.onTextDelta(delta)); } },
+          onReasoning() { if (streamActive && !signal?.aborted && !round.done && !round.error) observe(() => callbacks.onReasoning?.()); },
           onDone(event) { if (streamActive && !signal?.aborted && !round.done && !round.error) round.done = event; },
           onError(message) { if (streamActive && !signal?.aborted && !round.done && !round.error) round.error = message; },
         }, signal), signal);
@@ -517,21 +594,52 @@ async function runTurnWithContext(opts: RunTurnOpts, agentContext: AgentContext 
       if (!event.message.tool_calls.length) {
         append({ role: 'assistant', content });
         throwIfAborted(signal);
+        let editsSettled = false;
         if (summary.appliedOps > 0 && mode === 'edit') {
-          const report = await validateForFinish();
-          throwIfAborted(signal);
-          if (lastMutationSnapshot !== undefined && currentSnapshot() !== lastMutationSnapshot) stale();
-          if (report.status === 'unavailable') throw new RunExit('incomplete', 'validation_unavailable', 'Structural validation is unavailable. No automatic repair was attempted.');
-          if (report.status === 'invalid') {
-            if (validationNudges >= MAX_VALIDATION_NUDGES || !report.errors.length) {
-              throw new RunExit('incomplete', 'validation_limit', 'Structural validation still reports issues; the bounded repair limit was reached.');
+          if (graphIsEmpty()) {
+            // P2: an empty graph (for example after an approved clear) has
+            // nothing to validate and nothing to repair.
+            if (lastMutationSnapshot !== undefined && currentSnapshot() !== lastMutationSnapshot) stale();
+            summary.validation = { status: 'not_run', errors: [] };
+            editsSettled = true;
+          } else {
+            const report = await validateForFinish();
+            throwIfAborted(signal);
+            if (lastMutationSnapshot !== undefined && currentSnapshot() !== lastMutationSnapshot) stale();
+            if (report.status === 'unavailable') throw new RunExit('incomplete', 'validation_unavailable', 'Structural validation is unavailable. No automatic repair was attempted.');
+            if (report.status === 'valid') editsSettled = true;
+            if (report.status === 'invalid') {
+              // Only errors this turn's edits introduced; pre-existing ones are listed nowhere.
+              if (baselineErrors === undefined) {
+                baselineErrors = graphBeforeEdits && !clearApproved ? await validationErrorsOf(api, graphBeforeEdits, signal) : null;
+                throwIfAborted(signal);
+              }
+              const baseline = baselineErrors;
+              const fresh = baseline ? report.errors.filter((error) => !baseline.has(error)) : report.errors;
+              // After an approved clear the old graph is gone, so every error
+              // is this turn's (the pre-edit comparison is skipped above).
+              if (report.errors.length && !fresh.length) editsSettled = true;
+              else {
+                if (validationNudges >= MAX_VALIDATION_NUDGES || !fresh.length) {
+                  throw new RunExit('incomplete', 'validation_limit', 'Structural validation still reports issues; the bounded repair limit was reached.');
+                }
+                validationNudges++;
+                repairSnapshot = currentSnapshot();
+                wire.push({ role: 'assistant', content });
+                wire.push({ role: 'user', content: 'Current-run edits did not pass structural validation. Correct ONLY issues within these authorized edits, never unrelated graph content. This bounded nudge does not authorize clearing or broader rebuilding. Inspect exact schemas, fix these errors, then validate again:\n' + fresh.map((error) => `- ${error}`).join('\n') });
+                continue;
+              }
             }
-            validationNudges++;
-            repairSnapshot = currentSnapshot();
-            wire.push({ role: 'assistant', content });
-            wire.push({ role: 'user', content: 'Current-run edits did not pass structural validation. Correct ONLY issues within these authorized edits, never unrelated graph content. This bounded nudge does not authorize clearing or broader rebuilding. Inspect exact schemas, fix these errors, then validate again:\n' + report.errors.map((error) => `- ${error}`).join('\n') });
-            continue;
           }
+        }
+        // P4: failed graph operations that a later edit corrected (the graph
+        // now validates, or only pre-existing issues remain) are not open issues.
+        if (editsSettled && !failedOpKinds.size && issues.has('apply_graph_operations') && summary.failedOps > 0) {
+          issues.delete('apply_graph_operations');
+          summary.correctedOps = summary.failedOps;
+        }
+        if (experimentBudget.liveRuns?.lastFailed) {
+          throw new RunExit('incomplete', 'execution_failed', 'The host run failed. The receipt went back to the agent; nothing was rerun automatically.');
         }
         if (issues.size) throw new RunExit('incomplete', 'tool_errors', 'Some tool requests or operations failed and were not corrected. Review their receipts.');
         break;

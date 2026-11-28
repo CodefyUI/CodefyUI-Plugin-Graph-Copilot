@@ -43,12 +43,31 @@ export function RunResult({ summary, error, children }: RunResultProps) {
   const errors = summary.validation.errors.slice(0, 10);
   const facts: string[] = [];
   if (summary.appliedOps > 0) facts.push(tr(summary.appliedOps === 1 ? 'run.ops.applied.one' : 'run.ops.applied.many', { count: summary.appliedOps }));
-  if (summary.failedOps > 0) facts.push(tr(summary.failedOps === 1 ? 'run.ops.failed.one' : 'run.ops.failed.many', { count: summary.failedOps }));
+  const corrected = summary.correctedOps ?? 0;
+  if (corrected > 0) facts.push(tr(corrected === 1 ? 'run.ops.corrected.one' : 'run.ops.corrected.many', { count: corrected }));
+  if (summary.failedOps > corrected) {
+    const failed = summary.failedOps - corrected;
+    facts.push(tr(failed === 1 ? 'run.ops.failed.one' : 'run.ops.failed.many', { count: failed }));
+  }
   if (summary.mutation === 'none') facts.push(tr('run.noChanges'));
   if (summary.mutation === 'applied' && summary.appliedOps === 0) facts.push(tr('run.changesApplied'));
   facts.push(tr(VALIDATION_KEY[summary.validation.status]));
+  const noted = summary.status === 'completed' ? summary.notedCalls ?? 0 : 0;
   // A Stop the user asked for is not an error: no alert, neutral colour.
   const shownError = summary.status === 'cancelled' ? null : error;
+  // P4: a known outcome says what ran; the "check before repeating" caution is
+  // for outcomes that are not known (and for summaries saved before 0.6.0).
+  const executions = summary.executions;
+  const uncertain = summary.sideEffectAttempted && (!executions || summary.executionUnknown === true || summary.status === 'cancelled');
+  const ran: string[] = [];
+  if (executions && summary.sideEffectAttempted) {
+    if (executions.runs > 0) {
+      ran.push(tr(executions.runs === 1 ? 'run.exec.runs.one' : 'run.exec.runs.many', { count: executions.runs })
+        + (executions.failedRuns > 0 ? ` (${tr('run.exec.runsFailed', { count: executions.failedRuns })})` : ''));
+    }
+    if (executions.studies > 0) ran.push(tr(executions.studies === 1 ? 'run.exec.studies.one' : 'run.exec.studies.many', { count: executions.studies }));
+  }
+  const runIds = executions && executions.runIds.length > 1 ? executions.runIds : null;
   return (
     <div className={`gcp-run-result ${summary.status}${detached ? ' detached' : ''}`}>
       <div role="status" aria-live="polite" aria-atomic="true">
@@ -59,8 +78,12 @@ export function RunResult({ summary, error, children }: RunResultProps) {
         {shownError && <p className="gcp-run-result-error" role="alert">{bounded(shownError, 1000)}</p>}
         {detached && <p className="gcp-run-result-detail">{tr('run.detached.note')}</p>}
         {summary.mutation === 'unknown' && <p className="gcp-run-result-detail">{tr('run.mutationUnknown')}</p>}
-        {summary.hostRunId && <p className="gcp-run-result-detail">{tr('run.hostRun', { id: bounded(summary.hostRunId, 160) })}</p>}
-        {summary.sideEffectAttempted && <p className="gcp-run-result-detail">{tr('run.sideEffect')}</p>}
+        {ran.length > 0 && <p className="gcp-run-result-detail">{ran.join(' · ')}</p>}
+        {noted > 0 && <p className="gcp-run-result-detail">{tr(noted === 1 ? 'run.noted.one' : 'run.noted.many', { count: noted })}</p>}
+        {runIds
+          ? <p className="gcp-run-result-detail">{tr('run.hostRuns', { ids: bounded(runIds.join(', '), 400) })}</p>
+          : summary.hostRunId && <p className="gcp-run-result-detail">{tr('run.hostRun', { id: bounded(summary.hostRunId, 160) })}</p>}
+        {uncertain && <p className="gcp-run-result-detail">{tr('run.sideEffect')}</p>}
         {summary.status === 'cancelled' && !detached && summary.sideEffectAttempted && (
           <p className="gcp-run-result-detail">{tr('run.stop.sideEffect')}</p>
         )}
